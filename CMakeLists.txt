@@ -4,6 +4,12 @@ project(AeroBoarEngine LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Set Visual Studio solution and project organization
+if(MSVC)
+    set_property(GLOBAL PROPERTY USE_FOLDERS ON)
+    set_property(GLOBAL PROPERTY PREDEFINED_TARGETS_FOLDER "CMake")
+endif()
+
 # Build options
 option(BUILD_VR "Enable VR mode (OpenXR)" ON)
 option(BUILD_ANDROID "Build for Android (Quest)" OFF)
@@ -60,14 +66,80 @@ endif()
 # Add submodules
 add_subdirectory(external/glfw)
 # add_subdirectory(external/jolt/Build)  # Temporarily disabled due to runtime library conflicts
+
+# Configure OpenXR build options to avoid sanitizers dependency
+set(BUILD_ALL_EXTENSIONS OFF CACHE BOOL "Build loader and layers with all extensions")
+set(BUILD_LOADER_WITH_EXCEPTION_HANDLING ON CACHE BOOL "Enable exception handling in the loader")
+set(BUILD_TESTS OFF CACHE BOOL "Build tests")
+set(BUILD_CONFORMANCE_TESTS OFF CACHE BOOL "Build conformance tests")
+set(BUILD_API_LAYERS OFF CACHE BOOL "Build API layers")
+
 add_subdirectory(external/openxr)
 add_subdirectory(external/vk-bootstrap)
+
+# Configure external library output directories for Visual Studio-like structure
+if(MSVC)
+    # GLFW
+    set_target_properties(glfw PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/External/GLFW/Debug"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/External/GLFW/Release"
+        LIBRARY_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/External/GLFW/Debug"
+        LIBRARY_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/External/GLFW/Release"
+        ARCHIVE_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/External/GLFW/Debug"
+        ARCHIVE_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/External/GLFW/Release"
+    )
+    
+    # OpenXR
+    set_target_properties(openxr_loader PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/External/OpenXR/Debug"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/External/OpenXR/Release"
+        LIBRARY_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/External/OpenXR/Debug"
+        LIBRARY_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/External/OpenXR/Release"
+        ARCHIVE_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/External/OpenXR/Debug"
+        ARCHIVE_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/External/OpenXR/Release"
+    )
+    
+    # VK-Bootstrap
+    set_target_properties(vk-bootstrap PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/External/VK-Bootstrap/Debug"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/External/VK-Bootstrap/Release"
+        LIBRARY_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/External/VK-Bootstrap/Debug"
+        LIBRARY_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/External/VK-Bootstrap/Release"
+        ARCHIVE_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/External/VK-Bootstrap/Debug"
+        ARCHIVE_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/External/VK-Bootstrap/Release"
+    )
+endif()
 
 # Define executable
 if(BUILD_ANDROID)
     add_library(aero_boar_engine SHARED ${SOURCES})
 else()
     add_executable(aero_boar_engine ${SOURCES})
+endif()
+
+# Set Visual Studio-like output directories
+if(MSVC)
+    set_target_properties(aero_boar_engine PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/AeroBoarEngine/Debug"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/AeroBoarEngine/Release"
+        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/AeroBoarEngine/Release"
+        RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}/AeroBoarEngine/Release"
+        
+        LIBRARY_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/AeroBoarEngine/Debug"
+        LIBRARY_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/AeroBoarEngine/Release"
+        LIBRARY_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/AeroBoarEngine/Release"
+        LIBRARY_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}/AeroBoarEngine/Release"
+        
+        ARCHIVE_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/AeroBoarEngine/Debug"
+        ARCHIVE_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/AeroBoarEngine/Release"
+        ARCHIVE_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/AeroBoarEngine/Release"
+        ARCHIVE_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}/AeroBoarEngine/Release"
+        
+        PDB_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/AeroBoarEngine/Debug"
+        PDB_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/AeroBoarEngine/Release"
+        PDB_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/AeroBoarEngine/Release"
+        PDB_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}/AeroBoarEngine/Release"
+    )
 endif()
 
 # Include directories
@@ -120,7 +192,7 @@ if(BUILD_ANDROID)
 file(GLOB SHADERS shaders/*.vert shaders/*.frag shaders/*.tesc shaders/*.tese)
 foreach(SHADER ${SHADERS})
     get_filename_component(SHADER_NAME ${SHADER} NAME)
-    set(SPIRV_OUT "${CMAKE_BINARY_DIR}/shaders/${SHADER_NAME}.spv")
+    set(SPIRV_OUT "${CMAKE_BINARY_DIR}/Shaders/Debug/${SHADER_NAME}.spv")
     add_custom_command(
         OUTPUT ${SPIRV_OUT}
         COMMAND ${GLSLANG_VALIDATOR} -V ${SHADER} -o ${SPIRV_OUT}
@@ -132,17 +204,46 @@ endforeach()
 add_custom_target(shaders ALL DEPENDS ${SPIRV_SHADERS})
 add_dependencies(aero_boar_engine shaders)
 
-# Copy assets and config to build dir
-file(COPY assets DESTINATION ${CMAKE_BINARY_DIR})
-file(COPY config DESTINATION ${CMAKE_BINARY_DIR})
+# Set shader target properties for Visual Studio-like structure
+if(MSVC)
+    set_target_properties(shaders PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/Shaders/Debug"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/Shaders/Release"
+        FOLDER "Shaders"
+    )
+    
+    # Set folder organization for all targets
+    set_target_properties(aero_boar_engine PROPERTIES FOLDER "AeroBoarEngine")
+    set_target_properties(glfw PROPERTIES FOLDER "External/GLFW")
+    set_target_properties(openxr_loader PROPERTIES FOLDER "External/OpenXR")
+    set_target_properties(vk-bootstrap PROPERTIES FOLDER "External/VK-Bootstrap")
+endif()
 
-# Copy shaders to output directory for each configuration
+# Copy assets and config to build dir
+file(COPY assets DESTINATION ${CMAKE_BINARY_DIR}/Assets)
+file(COPY config DESTINATION ${CMAKE_BINARY_DIR}/Config)
+
+# Copy shaders, assets, and config to output directory for each configuration
 if(NOT BUILD_ANDROID)
     # Copy shaders to Debug output directory
     add_custom_command(TARGET aero_boar_engine POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:aero_boar_engine>/shaders
-        COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/shaders $<TARGET_FILE_DIR:aero_boar_engine>/shaders
+        COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/Shaders/Debug $<TARGET_FILE_DIR:aero_boar_engine>/shaders
         COMMENT "Copying shaders to output directory"
+    )
+    
+    # Copy assets to Debug output directory
+    add_custom_command(TARGET aero_boar_engine POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:aero_boar_engine>/assets
+        COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/Assets/assets $<TARGET_FILE_DIR:aero_boar_engine>/assets
+        COMMENT "Copying assets to output directory"
+    )
+    
+    # Copy config to Debug output directory
+    add_custom_command(TARGET aero_boar_engine POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:aero_boar_engine>/config
+        COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/Config/config $<TARGET_FILE_DIR:aero_boar_engine>/config
+        COMMENT "Copying config to output directory"
     )
 endif()
 

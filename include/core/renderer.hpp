@@ -26,8 +26,6 @@ public:
     // Window resize handling
     void OnWindowResize();
 
-    // Frame control
-    bool ShouldSkipFrame() const { return m_skipFrame; }
 
     // Getters
     bool IsInitialized() const { return m_initialized; }
@@ -69,12 +67,23 @@ private:
     VkCommandPool m_commandPool = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> m_commandBuffers;
 
-    // Synchronization
-    std::vector<VkSemaphore> m_imageAvailableSemaphores;
-    std::vector<VkSemaphore> m_renderFinishedSemaphores;
-    std::vector<VkSemaphore> m_imageFinishedSemaphores; // Per-image semaphores
-    std::vector<VkFence> m_inFlightFences;
-    std::vector<VkFence> m_imagesInFlight;
+    // Frame management
+    struct Frame {
+        VkSemaphore imageAvailableSemaphore = VK_NULL_HANDLE;
+        VkSemaphore renderFinishedSemaphore = VK_NULL_HANDLE;
+        VkFence inFlightFence = VK_NULL_HANDLE;
+        VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+        bool isActive = false;  // Whether this frame is currently being processed
+        uint32_t imageIndex = 0;  // Which swapchain image this frame is using
+    };
+    
+    struct ImageResources {
+        VkSemaphore finishedSemaphore = VK_NULL_HANDLE;
+        VkFence fenceInFlight = VK_NULL_HANDLE;  // Fence from the frame that's using this image
+    };
+    
+    std::vector<Frame> m_frames;
+    std::vector<ImageResources> m_imageResources;
     uint32_t m_currentFrame = 0;
     uint32_t m_currentImageIndex = 0;
     static const int MAX_FRAMES_IN_FLIGHT = 2;
@@ -83,7 +92,7 @@ private:
     // State
     bool m_initialized = false;
     bool m_framebufferResized = false;
-    bool m_skipFrame = false;
+    bool m_frameSkipped = false;
 
     // Helper methods
     bool CreateInstance();
@@ -98,9 +107,15 @@ private:
     bool CreateCommandPool();
     bool CreateCommandBuffers();
     bool CreateSyncObjects();
+    bool CreateFrameResources();
 
     void CleanupSwapchain();
     void RecreateSwapchain();
+    
+    // Frame management methods
+    void WaitForActiveFrames();
+    void ResetFrameResources();
+    void CleanupFrameResources();
 
     // Triangle data for Phase 1
     struct Vertex {

@@ -27,12 +27,7 @@ int WindowsMain() {
             window.PollEvents();
             
             renderer.BeginFrame();
-            
-            // Only render if we're not skipping the frame
-            if (!renderer.ShouldSkipFrame()) {
-                renderer.Render();
-            }
-            
+            renderer.Render();
             renderer.EndFrame();
         }
 

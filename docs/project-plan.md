@@ -40,6 +40,22 @@ Located at `W:/git/aero_boar_engine/`:
   - VMA: Vulkan memory management.
   - FMOD: Audio (vendored).
 
+## Architectural Principles
+
+### Multi-Threading and Asynchronous Operations
+The engine is designed with modern multi-threaded architecture in mind:
+
+- **Background Threading**: Asset loading, physics simulation, and audio processing run on dedicated background threads
+- **Transfer Queue Operations**: GPU memory operations use dedicated transfer queues to avoid blocking graphics operations
+- **Frame Management**: The Frame management system ensures proper synchronization between threads without blocking
+- **Non-Blocking Design**: Main render thread must never be blocked by background operations
+
+### Synchronization Strategy
+- **Per-Frame Resource Tracking**: Each frame tracks its own resources (semaphores, fences, command buffers)
+- **Smart Fence Waiting**: Uses `vkGetFenceStatus` for targeted synchronization instead of broad `vkDeviceWaitIdle`
+- **Queue-Specific Operations**: Different operations use appropriate queues (graphics, transfer, compute)
+- **Thread-Safe Resource Management**: All resource creation/destruction is properly synchronized
+
 ## Development Phases
 ### Phase 1: Vulkan Initialization (1-2 weeks)
 - **Goal**: Render a triangle on desktop using Vulkan.
@@ -65,23 +81,37 @@ Located at `W:/git/aero_boar_engine/`:
   - ✅ **Fence Timeout Protection**: Added timeout to fence waits to prevent infinite blocking
   - ✅ **Clean Production Code**: Removed all debug output for production-ready application
   - ✅ **Cross-Platform Ready**: Foundation prepared for both desktop and VR rendering paths
+  - ✅ **Frame Management System**: Implemented comprehensive per-frame resource tracking with Frame and ImageResources structs
+  - ✅ **Advanced Synchronization**: Smart fence waiting with vkGetFenceStatus for optimal performance
+  - ✅ **Instantaneous Resize**: Window resizing now works without lag or freezing
+  - ✅ **Zero Validation Errors**: All Vulkan validation errors resolved with proper resource lifecycle management
 
 ### Phase 2: glTF Asset Loading (1-2 weeks)
-- **Goal**: Load and render `assets/models/cube.glb`.
+- **Goal**: Load and render `assets/models/cube.glb` using background threads and transfer queues.
+- **Architecture**: 
+  - **Background Asset Loading**: Use dedicated background threads for glTF parsing and texture processing
+  - **Transfer Queue Integration**: Utilize Vulkan transfer queues for asynchronous GPU memory operations
+  - **Frame Management Integration**: Leverage the existing Frame management system for proper synchronization
+  - **Non-Blocking Operations**: Asset loading operations must not block the main render thread
 - **Tasks**:
   - Implement `src/assets/gltf_loader.cpp` and `include/assets/gltf_loader.hpp` using tinygltf.
-  - Parse meshes, materials, textures from glTF.
-  - Integrate with renderer to display cube.
-  - Test: Load and render `cube.glb` on desktop.
-- **Files**: `src/assets/gltf_loader.*`, `assets/models/cube.glb`.
+  - Create background thread pool for asset loading operations.
+  - Set up Vulkan transfer queue for GPU memory transfers.
+  - Parse meshes, materials, textures from glTF on background threads.
+  - Implement asynchronous texture upload and buffer staging.
+  - Integrate with renderer's frame management system for proper synchronization.
+  - Test: Load and render `cube.glb` on desktop without blocking main thread.
+- **Files**: `src/assets/gltf_loader.*`, `assets/models/cube.glb`, `src/core/transfer_manager.*` (new).
 
 ### Phase 3: Physics Integration (2-3 weeks)
-- **Goal**: Add physics to cube using Jolt Physics.
+- **Goal**: Add physics to cube using Jolt Physics with background simulation threads.
 - **Tasks**:
   - Implement `src/physics/physics_world.cpp` and `include/physics/physics_world.hpp`.
-  - Create physics world, add cube as dynamic body.
-  - Simulate gravity and collisions.
-  - Test: Cube falls and collides with a ground plane.
+  - Create physics world with dedicated simulation thread.
+  - Add cube as dynamic body with proper synchronization.
+  - Implement physics-to-render synchronization using frame management system.
+  - Simulate gravity and collisions on background thread.
+  - Test: Cube falls and collides with a ground plane without blocking render thread.
 - **Files**: `src/physics/physics_world.*`, `tests/test_physics.cpp`.
 
 ### Phase 4: VR Support (2-3 weeks)
@@ -135,6 +165,7 @@ Located at `W:/git/aero_boar_engine/`:
 - Repo is ~20MB (with submodules and FMOD).
 
 ## Next Steps
-- Start Phase 1: Implement Vulkan init in `renderer.hpp/cpp`.
+- ✅ **Phase 1 Complete**: Vulkan initialization with advanced frame management system
+- 🚀 **Ready for Phase 2**: Begin glTF asset loading with background threads and transfer queues
 - Commit regularly and push to remote.
 - Use `tests/` for unit tests (e.g., `test_renderer.cpp`).

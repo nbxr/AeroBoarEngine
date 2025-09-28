@@ -103,21 +103,8 @@ void Renderer::Shutdown() {
 
     vkDeviceWaitIdle(m_device);
 
-    // Cleanup synchronization objects
-    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        if (m_renderFinishedSemaphores[i] != VK_NULL_HANDLE)
-            vkDestroySemaphore(m_device, m_renderFinishedSemaphores[i], nullptr);
-        if (m_imageAvailableSemaphores[i] != VK_NULL_HANDLE)
-            vkDestroySemaphore(m_device, m_imageAvailableSemaphores[i], nullptr);
-        if (m_inFlightFences[i] != VK_NULL_HANDLE)
-            vkDestroyFence(m_device, m_inFlightFences[i], nullptr);
-    }
-    
-    // Cleanup per-image semaphores
-    for (auto semaphore : m_imageFinishedSemaphores) {
-        if (semaphore != VK_NULL_HANDLE)
-            vkDestroySemaphore(m_device, semaphore, nullptr);
-    }
+    // Cleanup frame resources
+    CleanupFrameResources();
 
     // Cleanup vertex buffer
     if (m_vertexBuffer != VK_NULL_HANDLE) {
@@ -542,11 +529,22 @@ bool Renderer::CreateCommandBuffers() {
 }
 
 bool Renderer::CreateSyncObjects() {
-    m_imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
-    m_renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
-    m_imageFinishedSemaphores.resize(m_swapchainImages.size());
-    m_inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
-    m_imagesInFlight.resize(m_swapchainImages.size(), VK_NULL_HANDLE);
+    // Create frame resources
+    if (!CreateFrameResources()) {
+        return false;
+    }
+    return true;
+}
+
+bool Renderer::CreateFrameResources() {
+    // Resize frame and image resource arrays
+    m_frames.resize(MAX_FRAMES_IN_FLIGHT);
+    m_imageResources.resize(m_swapchainImages.size());
+    
+    // Assign command buffers to frames
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        m_frames[i].commandBuffer = m_commandBuffers[i];
+    }
 
     VkSemaphoreCreateInfo semaphoreInfo{};
     semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -555,21 +553,25 @@ bool Renderer::CreateSyncObjects() {
     fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
+    // Create semaphores and fences for each frame
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        if (vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_imageAvailableSemaphores[i]) != VK_SUCCESS ||
-            vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_renderFinishedSemaphores[i]) != VK_SUCCESS ||
-            vkCreateFence(m_device, &fenceInfo, nullptr, &m_inFlightFences[i]) != VK_SUCCESS) {
+        if (vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_frames[i].imageAvailableSemaphore) != VK_SUCCESS ||
+            vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_frames[i].renderFinishedSemaphore) != VK_SUCCESS ||
+            vkCreateFence(m_device, &fenceInfo, nullptr, &m_frames[i].inFlightFence) != VK_SUCCESS) {
             std::cerr << "Failed to create synchronization objects for frame " << i << std::endl;
             return false;
         }
+        m_frames[i].isActive = false;
+        m_frames[i].imageIndex = 0;
     }
 
     // Create per-image semaphores
     for (size_t i = 0; i < m_swapchainImages.size(); i++) {
-        if (vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_imageFinishedSemaphores[i]) != VK_SUCCESS) {
+        if (vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_imageResources[i].finishedSemaphore) != VK_SUCCESS) {
             std::cerr << "Failed to create image finished semaphore for image " << i << std::endl;
             return false;
         }
+        m_imageResources[i].fenceInFlight = VK_NULL_HANDLE;
     }
 
     return true;
@@ -610,7 +612,19 @@ void Renderer::RecreateSwapchain() {
         glfwWaitEvents();
     }
 
-    vkDeviceWaitIdle(m_device);
+    // Wait for all active frames to complete using our frame management system
+    WaitForActiveFrames();
+    
+    // Wait for queues to ensure all semaphore operations complete
+    VkResult presentResult = vkQueueWaitIdle(m_presentQueue);
+    if (presentResult != VK_SUCCESS) {
+        throw std::runtime_error("Failed to wait for present queue");
+    }
+    
+    VkResult graphicsResult = vkQueueWaitIdle(m_graphicsQueue);
+    if (graphicsResult != VK_SUCCESS) {
+        throw std::runtime_error("Failed to wait for graphics queue");
+    }
 
     CleanupSwapchain();
 
@@ -618,92 +632,77 @@ void Renderer::RecreateSwapchain() {
         throw std::runtime_error("Failed to recreate swapchain");
     }
     
-    // Recreate the imagesInFlight array and per-image semaphores for the new swapchain
-    m_imagesInFlight.clear();
-    m_imagesInFlight.resize(m_swapchainImages.size(), VK_NULL_HANDLE);
-    
-    // Reset current image index since we have a new swapchain
+    // Reset frame state completely
+    m_currentFrame = 0;
     m_currentImageIndex = 0;
     
-    // Destroy old per-image semaphores
-    for (auto semaphore : m_imageFinishedSemaphores) {
-        vkDestroySemaphore(m_device, semaphore, nullptr);
-    }
+    // Clean up old frame resources
+    CleanupFrameResources();
     
-    // Create new per-image semaphores
-    m_imageFinishedSemaphores.resize(m_swapchainImages.size());
-    VkSemaphoreCreateInfo semaphoreInfo{};
-    semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-    
-    for (size_t i = 0; i < m_swapchainImages.size(); i++) {
-        if (vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_imageFinishedSemaphores[i]) != VK_SUCCESS) {
-            throw std::runtime_error("Failed to create image finished semaphore for image " + std::to_string(i));
-        }
+    // Recreate frame resources for the new swapchain
+    if (!CreateFrameResources()) {
+        throw std::runtime_error("Failed to recreate frame resources");
     }
 }
 
 void Renderer::BeginFrame() {
+    // Reset frame skipped flag at the start of each frame
+    m_frameSkipped = false;
+    
+    // Check if we need to recreate the swapchain before doing any work
+    if (m_framebufferResized) {
+        m_framebufferResized = false;
+        RecreateSwapchain();
+        m_frameSkipped = true;
+        return; // Skip this frame entirely
+    }
+
+    Frame& currentFrame = m_frames[m_currentFrame];
+    
     // Wait for the fence for the current frame with timeout to prevent infinite blocking
-    VkResult fenceResult = vkWaitForFences(m_device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, 1000000000); // 1 second timeout
+    VkResult fenceResult = vkWaitForFences(m_device, 1, &currentFrame.inFlightFence, VK_TRUE, 1000000000); // 1 second timeout
     if (fenceResult == VK_TIMEOUT) {
-        vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]);
+        vkResetFences(m_device, 1, &currentFrame.inFlightFence);
     }
     
     // Reset the fence for the current frame after waiting
-    vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]);
+    vkResetFences(m_device, 1, &currentFrame.inFlightFence);
 
-    // Check if we need to recreate the swapchain
-    if (m_framebufferResized) {
-        m_framebufferResized = false;
-        m_skipFrame = true;
-        // Wait for all operations to complete before recreating
-        vkDeviceWaitIdle(m_device);
-        RecreateSwapchain();
-        // Reset ALL fences since we recreated the swapchain
-        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-            vkResetFences(m_device, 1, &m_inFlightFences[i]);
-        }
-        return;
-    }
-
-    VkResult result = vkAcquireNextImageKHR(m_device, m_swapchain, UINT64_MAX, m_imageAvailableSemaphores[m_currentFrame], VK_NULL_HANDLE, &m_currentImageIndex);
+    VkResult result = vkAcquireNextImageKHR(m_device, m_swapchain, UINT64_MAX, currentFrame.imageAvailableSemaphore, VK_NULL_HANDLE, &m_currentImageIndex);
 
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
-        m_skipFrame = true;
-        // Wait for all operations to complete before recreating
-        vkDeviceWaitIdle(m_device);
         RecreateSwapchain();
-        // Reset ALL fences since we recreated the swapchain
-        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-            vkResetFences(m_device, 1, &m_inFlightFences[i]);
-        }
-        return;
+        m_frameSkipped = true;
+        return; // Skip this frame entirely
     } else if (result != VK_SUCCESS) {
         throw std::runtime_error("Failed to acquire swapchain image");
     }
 
     // Check if a previous frame is using this image (i.e. there is its fence to wait on)
-    if (m_imagesInFlight[m_currentImageIndex] != VK_NULL_HANDLE) {
-        vkWaitForFences(m_device, 1, &m_imagesInFlight[m_currentImageIndex], VK_TRUE, UINT64_MAX);
+    ImageResources& imageRes = m_imageResources[m_currentImageIndex];
+    if (imageRes.fenceInFlight != VK_NULL_HANDLE) {
+        vkWaitForFences(m_device, 1, &imageRes.fenceInFlight, VK_TRUE, UINT64_MAX);
     }
-    // Mark the image as now being in use by this frame
-    m_imagesInFlight[m_currentImageIndex] = m_inFlightFences[m_currentFrame];
     
-    // Clear skip frame flag after successful frame setup
-    m_skipFrame = false;
+    // Mark the image as now being in use by this frame
+    imageRes.fenceInFlight = currentFrame.inFlightFence;
+    
+    // Mark frame as active and set its image index
+    currentFrame.isActive = true;
+    currentFrame.imageIndex = m_currentImageIndex;
 }
 
 void Renderer::EndFrame() {
-    // Skip the frame if we recreated the swapchain
-    if (m_skipFrame) {
-        // Don't advance frame counter, reset to 0 for clean state
-        m_currentFrame = 0;
-        m_skipFrame = false;  // Clear the skip flag for next frame
+    // If the frame was skipped, don't submit anything
+    if (m_frameSkipped) {
         return;
     }
 
-    VkSemaphore waitSemaphores[] = { m_imageAvailableSemaphores[m_currentFrame] };
-    VkSemaphore signalSemaphores[] = { m_imageFinishedSemaphores[m_currentImageIndex] };
+    Frame& currentFrame = m_frames[m_currentFrame];
+    ImageResources& imageRes = m_imageResources[m_currentImageIndex];
+
+    VkSemaphore waitSemaphores[] = { currentFrame.imageAvailableSemaphore };
+    VkSemaphore signalSemaphores[] = { imageRes.finishedSemaphore };
     VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
 
     VkSubmitInfo submitInfo{};
@@ -712,11 +711,11 @@ void Renderer::EndFrame() {
     submitInfo.pWaitSemaphores = waitSemaphores;
     submitInfo.pWaitDstStageMask = waitStages;
     submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &m_commandBuffers[m_currentFrame];
+    submitInfo.pCommandBuffers = &currentFrame.commandBuffer;
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = signalSemaphores;
 
-    if (vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, m_inFlightFences[m_currentFrame]) != VK_SUCCESS) {
+    if (vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, currentFrame.inFlightFence) != VK_SUCCESS) {
         throw std::runtime_error("Failed to submit draw command buffer");
     }
 
@@ -732,14 +731,9 @@ void Renderer::EndFrame() {
     VkResult result = vkQueuePresentKHR(m_presentQueue, &presentInfo);
 
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
-        m_skipFrame = true;
-        // Wait for all operations to complete before recreating
-        vkDeviceWaitIdle(m_device);
         RecreateSwapchain();
-        // Reset ALL fences since we recreated the swapchain
-        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-            vkResetFences(m_device, 1, &m_inFlightFences[i]);
-        }
+        // Don't advance frame counter since we skipped this frame
+        return;
     } else if (result != VK_SUCCESS) {
         throw std::runtime_error("Failed to present swapchain image");
     }
@@ -748,17 +742,18 @@ void Renderer::EndFrame() {
 }
 
 void Renderer::Render() {
-    // Don't render if we're skipping this frame
-    if (m_skipFrame) {
+    // If the frame was skipped, don't render anything
+    if (m_frameSkipped) {
         return;
     }
-    
-    vkResetCommandBuffer(m_commandBuffers[m_currentFrame], 0);
+
+    Frame& currentFrame = m_frames[m_currentFrame];
+    vkResetCommandBuffer(currentFrame.commandBuffer, 0);
 
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 
-    if (vkBeginCommandBuffer(m_commandBuffers[m_currentFrame], &beginInfo) != VK_SUCCESS) {
+    if (vkBeginCommandBuffer(currentFrame.commandBuffer, &beginInfo) != VK_SUCCESS) {
         throw std::runtime_error("Failed to begin recording command buffer");
     }
 
@@ -773,9 +768,9 @@ void Renderer::Render() {
     renderPassInfo.clearValueCount = 1;
     renderPassInfo.pClearValues = &clearColor;
 
-    vkCmdBeginRenderPass(m_commandBuffers[m_currentFrame], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdBeginRenderPass(currentFrame.commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-    vkCmdBindPipeline(m_commandBuffers[m_currentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
+    vkCmdBindPipeline(currentFrame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
 
     // Set dynamic viewport and scissor
     VkViewport viewport{};
@@ -785,22 +780,22 @@ void Renderer::Render() {
     viewport.height = static_cast<float>(m_swapchainExtent.height);
     viewport.minDepth = 0.0f;
     viewport.maxDepth = 1.0f;
-    vkCmdSetViewport(m_commandBuffers[m_currentFrame], 0, 1, &viewport);
+    vkCmdSetViewport(currentFrame.commandBuffer, 0, 1, &viewport);
 
     VkRect2D scissor{};
     scissor.offset = { 0, 0 };
     scissor.extent = m_swapchainExtent;
-    vkCmdSetScissor(m_commandBuffers[m_currentFrame], 0, 1, &scissor);
+    vkCmdSetScissor(currentFrame.commandBuffer, 0, 1, &scissor);
 
     VkBuffer vertexBuffers[] = { m_vertexBuffer };
     VkDeviceSize offsets[] = { 0 };
-    vkCmdBindVertexBuffers(m_commandBuffers[m_currentFrame], 0, 1, vertexBuffers, offsets);
+    vkCmdBindVertexBuffers(currentFrame.commandBuffer, 0, 1, vertexBuffers, offsets);
 
-    vkCmdDraw(m_commandBuffers[m_currentFrame], static_cast<uint32_t>(m_triangleVertices.size()), 1, 0, 0);
+    vkCmdDraw(currentFrame.commandBuffer, static_cast<uint32_t>(m_triangleVertices.size()), 1, 0, 0);
 
-    vkCmdEndRenderPass(m_commandBuffers[m_currentFrame]);
+    vkCmdEndRenderPass(currentFrame.commandBuffer);
 
-    if (vkEndCommandBuffer(m_commandBuffers[m_currentFrame]) != VK_SUCCESS) {
+    if (vkEndCommandBuffer(currentFrame.commandBuffer) != VK_SUCCESS) {
         throw std::runtime_error("Failed to record command buffer");
     }
 }
@@ -856,6 +851,60 @@ VkShaderModule Renderer::CreateShaderModule(const std::vector<char>& code) {
     }
 
     return shaderModule;
+}
+
+void Renderer::WaitForActiveFrames() {
+    // Wait for all active frames to complete
+    for (auto& frame : m_frames) {
+        if (frame.isActive && frame.inFlightFence != VK_NULL_HANDLE) {
+            vkWaitForFences(m_device, 1, &frame.inFlightFence, VK_TRUE, UINT64_MAX);
+            vkResetFences(m_device, 1, &frame.inFlightFence);
+            frame.isActive = false;
+        }
+    }
+}
+
+void Renderer::ResetFrameResources() {
+    // Reset all frame resources
+    for (auto& frame : m_frames) {
+        frame.isActive = false;
+        frame.imageIndex = 0;
+        if (frame.inFlightFence != VK_NULL_HANDLE) {
+            vkResetFences(m_device, 1, &frame.inFlightFence);
+        }
+    }
+    
+    // Reset image resources
+    for (auto& imageRes : m_imageResources) {
+        imageRes.fenceInFlight = VK_NULL_HANDLE;
+    }
+}
+
+void Renderer::CleanupFrameResources() {
+    // Cleanup frame resources
+    for (auto& frame : m_frames) {
+        if (frame.imageAvailableSemaphore != VK_NULL_HANDLE) {
+            vkDestroySemaphore(m_device, frame.imageAvailableSemaphore, nullptr);
+            frame.imageAvailableSemaphore = VK_NULL_HANDLE;
+        }
+        if (frame.renderFinishedSemaphore != VK_NULL_HANDLE) {
+            vkDestroySemaphore(m_device, frame.renderFinishedSemaphore, nullptr);
+            frame.renderFinishedSemaphore = VK_NULL_HANDLE;
+        }
+        if (frame.inFlightFence != VK_NULL_HANDLE) {
+            vkDestroyFence(m_device, frame.inFlightFence, nullptr);
+            frame.inFlightFence = VK_NULL_HANDLE;
+        }
+    }
+    
+    // Cleanup image resources
+    for (auto& imageRes : m_imageResources) {
+        if (imageRes.finishedSemaphore != VK_NULL_HANDLE) {
+            vkDestroySemaphore(m_device, imageRes.finishedSemaphore, nullptr);
+            imageRes.finishedSemaphore = VK_NULL_HANDLE;
+        }
+        imageRes.fenceInFlight = VK_NULL_HANDLE;
+    }
 }
 
 } // namespace aero_boar
