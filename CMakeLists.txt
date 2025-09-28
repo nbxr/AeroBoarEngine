@@ -59,7 +59,7 @@ endif()
 
 # Add submodules
 add_subdirectory(external/glfw)
-add_subdirectory(external/jolt)
+add_subdirectory(external/jolt/Build)
 add_subdirectory(external/openxr)
 add_subdirectory(external/vk-bootstrap)
 
@@ -83,13 +83,13 @@ target_link_libraries(aero_boar_engine PRIVATE
 
 # FMOD: Link prebuilt libs
 if(BUILD_ANDROID)
-    find_library(FMOD_LIB NAMES fmod PATHS "${CMAKE_SOURCE_DIR}/external/fmod/lib/android")
+    find_library(FMOD_LIB NAMES fmod PATHS "${CMAKE_SOURCE_DIR}/external/fmod/lib/android/arm64-v8a")
     if(NOT FMOD_LIB)
-        message(FATAL_ERROR "FMOD lib not found in external/fmod/lib/android/")
+        message(FATAL_ERROR "FMOD lib not found in external/fmod/lib/android/arm64-v8a/")
     endif()
     target_link_libraries(aero_boar_engine PRIVATE ${FMOD_LIB})
 else()
-    find_library(FMOD_LIB NAMES fmod fmodL PATHS "${CMAKE_SOURCE_DIR}/external/fmod/lib/win64")
+    find_library(FMOD_LIB NAMES fmod fmodL fmod_vc fmodL_vc PATHS "${CMAKE_SOURCE_DIR}/external/fmod/lib/win64")
     if(NOT FMOD_LIB)
         message(FATAL_ERROR "FMOD lib not found in external/fmod/lib/win64/")
     endif()
@@ -103,7 +103,6 @@ endif()
 if(BUILD_ANDROID)
     target_compile_definitions(aero_boar_engine PRIVATE VK_USE_PLATFORM_ANDROID_KHR)
 else()
-    # Ensure gcc compatibility on Windows
     target_compile_options(aero_boar_engine PRIVATE -Wall -Wextra)
     if (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
         target_link_libraries(aero_boar_engine PRIVATE -static-libgcc -static-libstdc++)
@@ -133,7 +132,6 @@ file(COPY config DESTINATION ${CMAKE_BINARY_DIR})
 # Android-specific
 if(BUILD_ANDROID)
     set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -u ANativeActivity_onCreate")
-    # Verify Android NDK
     set(ANDROID_NDK $ENV{ANDROID_NDK_HOME})
     if(NOT ANDROID_NDK)
         message(FATAL_ERROR "Set ANDROID_NDK_HOME environment variable")
