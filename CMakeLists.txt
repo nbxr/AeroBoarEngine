@@ -136,6 +136,16 @@ add_dependencies(aero_boar_engine shaders)
 file(COPY assets DESTINATION ${CMAKE_BINARY_DIR})
 file(COPY config DESTINATION ${CMAKE_BINARY_DIR})
 
+# Copy shaders to output directory for each configuration
+if(NOT BUILD_ANDROID)
+    # Copy shaders to Debug output directory
+    add_custom_command(TARGET aero_boar_engine POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:aero_boar_engine>/shaders
+        COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/shaders $<TARGET_FILE_DIR:aero_boar_engine>/shaders
+        COMMENT "Copying shaders to output directory"
+    )
+endif()
+
 # Android-specific
 if(BUILD_ANDROID)
     set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -u ANativeActivity_onCreate")

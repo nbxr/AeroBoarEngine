@@ -5,6 +5,9 @@
 #include <fstream>
 #include <stdexcept>
 #include <algorithm>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace aero_boar {
 
@@ -314,8 +317,9 @@ bool Renderer::CreateRenderPass() {
 
 bool Renderer::CreateGraphicsPipeline() {
     // Load shaders
-    auto vertShaderCode = ReadFile("pbr.vert.spv");
-    auto fragShaderCode = ReadFile("pbr.frag.spv");
+    std::string shaderDir = GetExecutableDirectory();
+    auto vertShaderCode = ReadFile(shaderDir + "/shaders/pbr.vert.spv");
+    auto fragShaderCode = ReadFile(shaderDir + "/shaders/pbr.frag.spv");
 
     VkShaderModule vertShaderModule = CreateShaderModule(vertShaderCode);
     VkShaderModule fragShaderModule = CreateShaderModule(fragShaderCode);
@@ -363,24 +367,10 @@ bool Renderer::CreateGraphicsPipeline() {
     inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     inputAssembly.primitiveRestartEnable = VK_FALSE;
 
-    VkViewport viewport{};
-    viewport.x = 0.0f;
-    viewport.y = 0.0f;
-    viewport.width = static_cast<float>(m_swapchainExtent.width);
-    viewport.height = static_cast<float>(m_swapchainExtent.height);
-    viewport.minDepth = 0.0f;
-    viewport.maxDepth = 1.0f;
-
-    VkRect2D scissor{};
-    scissor.offset = { 0, 0 };
-    scissor.extent = m_swapchainExtent;
-
     VkPipelineViewportStateCreateInfo viewportState{};
     viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
     viewportState.viewportCount = 1;
-    viewportState.pViewports = &viewport;
     viewportState.scissorCount = 1;
-    viewportState.pScissors = &scissor;
 
     VkPipelineRasterizationStateCreateInfo rasterizer{};
     rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
@@ -422,6 +412,17 @@ bool Renderer::CreateGraphicsPipeline() {
         return false;
     }
 
+    // Dynamic states for viewport and scissor
+    std::vector<VkDynamicState> dynamicStates = {
+        VK_DYNAMIC_STATE_VIEWPORT,
+        VK_DYNAMIC_STATE_SCISSOR
+    };
+    
+    VkPipelineDynamicStateCreateInfo dynamicState{};
+    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
+    dynamicState.pDynamicStates = dynamicStates.data();
+
     VkGraphicsPipelineCreateInfo pipelineInfo{};
     pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
     pipelineInfo.stageCount = 2;
@@ -432,6 +433,7 @@ bool Renderer::CreateGraphicsPipeline() {
     pipelineInfo.pRasterizationState = &rasterizer;
     pipelineInfo.pMultisampleState = &multisampling;
     pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = m_pipelineLayout;
     pipelineInfo.renderPass = m_renderPass;
     pipelineInfo.subpass = 0;
@@ -617,7 +619,11 @@ void Renderer::RecreateSwapchain() {
     }
     
     // Recreate the imagesInFlight array and per-image semaphores for the new swapchain
+    m_imagesInFlight.clear();
     m_imagesInFlight.resize(m_swapchainImages.size(), VK_NULL_HANDLE);
+    
+    // Reset current image index since we have a new swapchain
+    m_currentImageIndex = 0;
     
     // Destroy old per-image semaphores
     for (auto semaphore : m_imageFinishedSemaphores) {
@@ -637,14 +643,42 @@ void Renderer::RecreateSwapchain() {
 }
 
 void Renderer::BeginFrame() {
-    vkWaitForFences(m_device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX);
+    // Wait for the fence for the current frame with timeout to prevent infinite blocking
+    VkResult fenceResult = vkWaitForFences(m_device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, 1000000000); // 1 second timeout
+    if (fenceResult == VK_TIMEOUT) {
+        vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]);
+    }
+    
+    // Reset the fence for the current frame after waiting
+    vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]);
+
+    // Check if we need to recreate the swapchain
+    if (m_framebufferResized) {
+        m_framebufferResized = false;
+        m_skipFrame = true;
+        // Wait for all operations to complete before recreating
+        vkDeviceWaitIdle(m_device);
+        RecreateSwapchain();
+        // Reset ALL fences since we recreated the swapchain
+        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            vkResetFences(m_device, 1, &m_inFlightFences[i]);
+        }
+        return;
+    }
 
     VkResult result = vkAcquireNextImageKHR(m_device, m_swapchain, UINT64_MAX, m_imageAvailableSemaphores[m_currentFrame], VK_NULL_HANDLE, &m_currentImageIndex);
 
-    if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
+        m_skipFrame = true;
+        // Wait for all operations to complete before recreating
+        vkDeviceWaitIdle(m_device);
         RecreateSwapchain();
+        // Reset ALL fences since we recreated the swapchain
+        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            vkResetFences(m_device, 1, &m_inFlightFences[i]);
+        }
         return;
-    } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+    } else if (result != VK_SUCCESS) {
         throw std::runtime_error("Failed to acquire swapchain image");
     }
 
@@ -654,11 +688,20 @@ void Renderer::BeginFrame() {
     }
     // Mark the image as now being in use by this frame
     m_imagesInFlight[m_currentImageIndex] = m_inFlightFences[m_currentFrame];
-
-    vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]);
+    
+    // Clear skip frame flag after successful frame setup
+    m_skipFrame = false;
 }
 
 void Renderer::EndFrame() {
+    // Skip the frame if we recreated the swapchain
+    if (m_skipFrame) {
+        // Don't advance frame counter, reset to 0 for clean state
+        m_currentFrame = 0;
+        m_skipFrame = false;  // Clear the skip flag for next frame
+        return;
+    }
+
     VkSemaphore waitSemaphores[] = { m_imageAvailableSemaphores[m_currentFrame] };
     VkSemaphore signalSemaphores[] = { m_imageFinishedSemaphores[m_currentImageIndex] };
     VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
@@ -689,7 +732,14 @@ void Renderer::EndFrame() {
     VkResult result = vkQueuePresentKHR(m_presentQueue, &presentInfo);
 
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
+        m_skipFrame = true;
+        // Wait for all operations to complete before recreating
+        vkDeviceWaitIdle(m_device);
         RecreateSwapchain();
+        // Reset ALL fences since we recreated the swapchain
+        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            vkResetFences(m_device, 1, &m_inFlightFences[i]);
+        }
     } else if (result != VK_SUCCESS) {
         throw std::runtime_error("Failed to present swapchain image");
     }
@@ -698,6 +748,11 @@ void Renderer::EndFrame() {
 }
 
 void Renderer::Render() {
+    // Don't render if we're skipping this frame
+    if (m_skipFrame) {
+        return;
+    }
+    
     vkResetCommandBuffer(m_commandBuffers[m_currentFrame], 0);
 
     VkCommandBufferBeginInfo beginInfo{};
@@ -722,6 +777,21 @@ void Renderer::Render() {
 
     vkCmdBindPipeline(m_commandBuffers[m_currentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
 
+    // Set dynamic viewport and scissor
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = static_cast<float>(m_swapchainExtent.width);
+    viewport.height = static_cast<float>(m_swapchainExtent.height);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(m_commandBuffers[m_currentFrame], 0, 1, &viewport);
+
+    VkRect2D scissor{};
+    scissor.offset = { 0, 0 };
+    scissor.extent = m_swapchainExtent;
+    vkCmdSetScissor(m_commandBuffers[m_currentFrame], 0, 1, &scissor);
+
     VkBuffer vertexBuffers[] = { m_vertexBuffer };
     VkDeviceSize offsets[] = { 0 };
     vkCmdBindVertexBuffers(m_commandBuffers[m_currentFrame], 0, 1, vertexBuffers, offsets);
@@ -735,7 +805,27 @@ void Renderer::Render() {
     }
 }
 
+void Renderer::OnWindowResize() {
+    m_framebufferResized = true;
+}
+
 // Helper methods
+std::string Renderer::GetExecutableDirectory() {
+#ifdef _WIN32
+    char path[MAX_PATH];
+    GetModuleFileNameA(NULL, path, MAX_PATH);
+    std::string fullPath(path);
+    size_t lastSlash = fullPath.find_last_of("\\/");
+    if (lastSlash != std::string::npos) {
+        return fullPath.substr(0, lastSlash);
+    }
+    return ".";
+#else
+    // For non-Windows platforms, you might want to use different methods
+    return ".";
+#endif
+}
+
 std::vector<char> Renderer::ReadFile(const std::string& filename) {
     std::ifstream file(filename, std::ios::ate | std::ios::binary);
 

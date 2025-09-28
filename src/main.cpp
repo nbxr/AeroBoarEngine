@@ -17,6 +17,9 @@ int WindowsMain() {
             return -1;
         }
 
+        // Set renderer reference in window for resize callbacks
+        window.SetRenderer(&renderer);
+
         std::cout << "Starting main loop..." << std::endl;
 
         // Main loop
@@ -24,7 +27,12 @@ int WindowsMain() {
             window.PollEvents();
             
             renderer.BeginFrame();
-            renderer.Render();
+            
+            // Only render if we're not skipping the frame
+            if (!renderer.ShouldSkipFrame()) {
+                renderer.Render();
+            }
+            
             renderer.EndFrame();
         }
 

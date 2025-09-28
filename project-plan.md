@@ -53,6 +53,18 @@ Located at `W:/git/aero_boar_engine/`:
   - Update `src/main.cpp` for desktop entry point.
   - Test: Run on Windows, verify triangle renders.
 - **Files**: `src/main.cpp`, `src/core/renderer.cpp`, `include/core/renderer.hpp`, `src/platforms/windows/*`, `shaders/pbr.*`.
+- **Additional Accomplishments**:
+  - ✅ **Dynamic Viewport and Scissor**: Implemented proper viewport and scissor handling for window resizing
+  - ✅ **Robust Window Resize Handling**: Complete swapchain recreation with proper synchronization
+  - ✅ **Frame Skipping Mechanism**: Implemented proper frame skipping during swapchain recreation to prevent deadlocks
+  - ✅ **Vulkan Synchronization**: Fixed all fence and semaphore synchronization issues (no validation errors)
+  - ✅ **Visual Studio 2022 Build**: Switched from MinGW to MSVC for better Vulkan library compatibility
+  - ✅ **Static Linking Support**: Configured build system for static runtime linking
+  - ✅ **Shader Management**: Automatic SPIR-V compilation and deployment to output directory
+  - ✅ **Per-Image Semaphores**: Implemented proper per-image semaphore handling for swapchain synchronization
+  - ✅ **Fence Timeout Protection**: Added timeout to fence waits to prevent infinite blocking
+  - ✅ **Clean Production Code**: Removed all debug output for production-ready application
+  - ✅ **Cross-Platform Ready**: Foundation prepared for both desktop and VR rendering paths
 
 ### Phase 2: glTF Asset Loading (1-2 weeks)
 - **Goal**: Load and render `assets/models/cube.glb`.

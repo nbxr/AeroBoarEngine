@@ -23,6 +23,12 @@ public:
     void EndFrame();
     void Render();
 
+    // Window resize handling
+    void OnWindowResize();
+
+    // Frame control
+    bool ShouldSkipFrame() const { return m_skipFrame; }
+
     // Getters
     bool IsInitialized() const { return m_initialized; }
     VkDevice GetDevice() const { return m_device; }
@@ -76,6 +82,8 @@ private:
 
     // State
     bool m_initialized = false;
+    bool m_framebufferResized = false;
+    bool m_skipFrame = false;
 
     // Helper methods
     bool CreateInstance();
@@ -113,6 +121,7 @@ private:
     uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
 
     // Helper methods
+    std::string GetExecutableDirectory();
     std::vector<char> ReadFile(const std::string& filename);
     VkShaderModule CreateShaderModule(const std::vector<char>& code);
 };

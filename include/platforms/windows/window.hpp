@@ -3,6 +3,7 @@
 #include <GLFW/glfw3.h>
 
 namespace aero_boar {
+class Renderer;
 
 class Window {
 public:
@@ -17,10 +18,13 @@ public:
     int GetWidth() const;
     int GetHeight() const;
 
+    void SetRenderer(Renderer* renderer);
+
 private:
     GLFWwindow* m_window;
     int m_width;
     int m_height;
+    Renderer* m_renderer = nullptr;
 
     static void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
     static void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);

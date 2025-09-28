@@ -1,4 +1,5 @@
 #include "platforms/windows/window.hpp"
+#include "core/renderer.hpp"
 #include <iostream>
 #include <stdexcept>
 
@@ -67,12 +68,20 @@ int Window::GetHeight() const {
     return height;
 }
 
+void Window::SetRenderer(Renderer* renderer) {
+    m_renderer = renderer;
+}
+
 void Window::FramebufferSizeCallback(GLFWwindow* window, int width, int height) {
     Window* win = static_cast<Window*>(glfwGetWindowUserPointer(window));
     if (win) {
         win->m_width = width;
         win->m_height = height;
-        std::cout << "Window resized to: " << width << "x" << height << std::endl;
+        
+        // Notify renderer of resize
+        if (win->m_renderer) {
+            win->m_renderer->OnWindowResize();
+        }
     }
 }
 
