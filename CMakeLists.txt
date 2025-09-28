@@ -32,7 +32,7 @@ set(SOURCES
 if(BUILD_ANDROID)
     set(PLATFORM_SOURCES src/platforms/android/android_main.cpp)
 else()
-    set(PLATFORM_SOURCES src/platforms/windows/main.cpp src/platforms/windows/window.cpp)
+    set(PLATFORM_SOURCES src/platforms/windows/window.cpp)
 endif()
 
 # Combine sources
@@ -59,7 +59,7 @@ endif()
 
 # Add submodules
 add_subdirectory(external/glfw)
-add_subdirectory(external/jolt/Build)
+# add_subdirectory(external/jolt/Build)  # Temporarily disabled due to runtime library conflicts
 add_subdirectory(external/openxr)
 add_subdirectory(external/vk-bootstrap)
 
@@ -77,8 +77,9 @@ target_include_directories(aero_boar_engine PRIVATE ${INCLUDE_DIRS})
 target_link_libraries(aero_boar_engine PRIVATE
     Vulkan::Vulkan
     glfw
-    Jolt
+    # Jolt  # Temporarily disabled due to runtime library conflicts
     openxr_loader
+    vk-bootstrap
 )
 
 # FMOD: Link prebuilt libs
@@ -102,12 +103,18 @@ if(BUILD_VR)
 endif()
 if(BUILD_ANDROID)
     target_compile_definitions(aero_boar_engine PRIVATE VK_USE_PLATFORM_ANDROID_KHR)
-else()
-    target_compile_options(aero_boar_engine PRIVATE -Wall -Wextra)
-    if (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
-        target_link_libraries(aero_boar_engine PRIVATE -static-libgcc -static-libstdc++)
-    endif()
-endif()
+        else()
+            if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+                target_compile_options(aero_boar_engine PRIVATE -Wall -Wextra)
+                if (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+                    target_link_libraries(aero_boar_engine PRIVATE -static-libgcc -static-libstdc++)
+                endif()
+            elseif(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
+                target_compile_options(aero_boar_engine PRIVATE /W4)
+                # Use dynamic runtime to match external libraries
+                target_compile_options(aero_boar_engine PRIVATE /MDd)
+            endif()
+        endif()
 
 # Shader compilation to SPIR-V
 file(GLOB SHADERS shaders/*.vert shaders/*.frag shaders/*.tesc shaders/*.tese)
