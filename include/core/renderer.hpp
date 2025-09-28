@@ -4,6 +4,7 @@
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 #include <VkBootstrap.h>
+#include <vk_mem_alloc.h>
 #include <vector>
 #include <memory>
 
@@ -43,6 +44,9 @@ private:
     VkDevice m_device = VK_NULL_HANDLE;
     VkQueue m_graphicsQueue = VK_NULL_HANDLE;
     VkQueue m_presentQueue = VK_NULL_HANDLE;
+    
+    // VMA allocator
+    VmaAllocator m_allocator = VK_NULL_HANDLE;
 
     // Window and surface
     GLFWwindow* m_window = nullptr;
@@ -99,6 +103,7 @@ private:
     bool CreateSurface();
     bool SelectPhysicalDevice();
     bool CreateLogicalDevice();
+    bool CreateVMAAllocator();
     bool CreateSwapchain();
     bool CreateImageViews();
     bool CreateRenderPass();
@@ -130,7 +135,7 @@ private:
     };
 
     VkBuffer m_vertexBuffer = VK_NULL_HANDLE;
-    VkDeviceMemory m_vertexBufferMemory = VK_NULL_HANDLE;
+    VmaAllocation m_vertexBufferAllocation = VK_NULL_HANDLE;
 
     bool CreateVertexBuffer();
     uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);

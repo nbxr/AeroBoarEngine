@@ -4,6 +4,22 @@ project(AeroBoarEngine LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Configure for static linking
+set(CMAKE_FIND_LIBRARY_SUFFIXES .lib .a)
+set(BUILD_SHARED_LIBS OFF)
+
+# Static runtime library for MSVC
+if(MSVC)
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MT")
+    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MTd")
+    set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /MT")
+    set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} /MTd")
+    
+endif()
+
+# Additional static linking configuration
+set(CMAKE_POSITION_INDEPENDENT_CODE OFF)
+
 # Set Visual Studio solution and project organization
 if(MSVC)
     set_property(GLOBAL PROPERTY USE_FOLDERS ON)
@@ -58,14 +74,20 @@ set(INCLUDE_DIRS
     ${Vulkan_INCLUDE_DIRS}
 )
 
+# Configure external libraries for static linking BEFORE adding subdirectories
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared libraries" FORCE)
+
 # Check for vendored FMOD
 if(NOT EXISTS "${CMAKE_SOURCE_DIR}/external/fmod/inc/fmod.hpp")
     message(FATAL_ERROR "FMOD headers not found. Download from https://fmod.com/download and place in external/fmod/inc/")
 endif()
 
+# Configure external libraries for static runtime
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 # Add submodules
 add_subdirectory(external/glfw)
-# add_subdirectory(external/jolt/Build)  # Temporarily disabled due to runtime library conflicts
+add_subdirectory(external/jolt/Build)
 
 # Configure OpenXR build options to avoid sanitizers dependency
 set(BUILD_ALL_EXTENSIONS OFF CACHE BOOL "Build loader and layers with all extensions")
@@ -73,9 +95,11 @@ set(BUILD_LOADER_WITH_EXCEPTION_HANDLING ON CACHE BOOL "Enable exception handlin
 set(BUILD_TESTS OFF CACHE BOOL "Build tests")
 set(BUILD_CONFORMANCE_TESTS OFF CACHE BOOL "Build conformance tests")
 set(BUILD_API_LAYERS OFF CACHE BOOL "Build API layers")
+set(DYNAMIC_LOADER OFF CACHE BOOL "Build OpenXR loader as static library")
 
 add_subdirectory(external/openxr)
 add_subdirectory(external/vk-bootstrap)
+add_subdirectory(external/vulkan-memory-allocator)
 
 # Configure external library output directories for Visual Studio-like structure
 if(MSVC)
@@ -112,7 +136,7 @@ endif()
 
 # Define executable
 if(BUILD_ANDROID)
-    add_library(aero_boar_engine SHARED ${SOURCES})
+    add_executable(aero_boar_engine ${SOURCES})
 else()
     add_executable(aero_boar_engine ${SOURCES})
 endif()
@@ -149,9 +173,10 @@ target_include_directories(aero_boar_engine PRIVATE ${INCLUDE_DIRS})
 target_link_libraries(aero_boar_engine PRIVATE
     Vulkan::Vulkan
     glfw
-    # Jolt  # Temporarily disabled due to runtime library conflicts
+    Jolt
     openxr_loader
     vk-bootstrap
+    VulkanMemoryAllocator
 )
 
 # FMOD: Link prebuilt libs
@@ -183,8 +208,8 @@ if(BUILD_ANDROID)
                 endif()
             elseif(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
                 target_compile_options(aero_boar_engine PRIVATE /W4)
-                # Use dynamic runtime to match external libraries
-                target_compile_options(aero_boar_engine PRIVATE /MDd)
+                # Force static runtime library for consistency with Jolt
+                target_compile_options(aero_boar_engine PRIVATE $<$<CONFIG:Debug>:/MTd> $<$<CONFIG:Release>:/MT>)
             endif()
         endif()
 

@@ -1,3 +1,4 @@
+#define VMA_IMPLEMENTATION
 #include "core/renderer.hpp"
 #include <vulkan/vulkan.hpp>
 #include <VkBootstrap.h>
@@ -42,6 +43,10 @@ bool Renderer::Initialize(GLFWwindow* window) {
             return false;
         }
 
+        if (!CreateVMAAllocator()) {
+            std::cerr << "Failed to create VMA allocator" << std::endl;
+            return false;
+        }
 
         if (!CreateSwapchain()) {
             std::cerr << "Failed to create swapchain" << std::endl;
@@ -110,8 +115,8 @@ void Renderer::Shutdown() {
     if (m_vertexBuffer != VK_NULL_HANDLE) {
         vkDestroyBuffer(m_device, m_vertexBuffer, nullptr);
     }
-    if (m_vertexBufferMemory != VK_NULL_HANDLE) {
-        vkFreeMemory(m_device, m_vertexBufferMemory, nullptr);
+    if (m_vertexBufferAllocation != VK_NULL_HANDLE) {
+        vmaFreeMemory(m_allocator, m_vertexBufferAllocation);
     }
 
     // Cleanup graphics pipeline
@@ -137,6 +142,11 @@ void Renderer::Shutdown() {
     // Cleanup swapchain
     CleanupSwapchain();
 
+
+    // Cleanup VMA allocator
+    if (m_allocator != VK_NULL_HANDLE) {
+        vmaDestroyAllocator(m_allocator);
+    }
 
     // Cleanup device
     if (m_device != VK_NULL_HANDLE) {
@@ -226,6 +236,23 @@ bool Renderer::CreateLogicalDevice() {
     m_graphicsQueue = m_vkbDevice.get_queue(vkb::QueueType::graphics).value();
     m_presentQueue = m_vkbDevice.get_queue(vkb::QueueType::present).value();
     
+    return true;
+}
+
+bool Renderer::CreateVMAAllocator() {
+    VmaAllocatorCreateInfo allocatorInfo = {};
+    allocatorInfo.vulkanApiVersion = VK_API_VERSION_1_2;
+    allocatorInfo.physicalDevice = m_physicalDevice;
+    allocatorInfo.device = m_device;
+    allocatorInfo.instance = m_instance;
+
+    VkResult result = vmaCreateAllocator(&allocatorInfo, &m_allocator);
+    if (result != VK_SUCCESS) {
+        std::cerr << "Failed to create VMA allocator" << std::endl;
+        return false;
+    }
+
+    std::cout << "VMA allocator created successfully" << std::endl;
     return true;
 }
 
@@ -483,30 +510,21 @@ bool Renderer::CreateVertexBuffer() {
     bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-    if (vkCreateBuffer(m_device, &bufferInfo, nullptr, &m_vertexBuffer) != VK_SUCCESS) {
-        std::cerr << "Failed to create vertex buffer" << std::endl;
+    VmaAllocationCreateInfo allocInfo = {};
+    allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
+    allocInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
+
+    VkResult result = vmaCreateBuffer(m_allocator, &bufferInfo, &allocInfo, &m_vertexBuffer, &m_vertexBufferAllocation, nullptr);
+    if (result != VK_SUCCESS) {
+        std::cerr << "Failed to create vertex buffer with VMA" << std::endl;
         return false;
     }
 
-    VkMemoryRequirements memRequirements;
-    vkGetBufferMemoryRequirements(m_device, m_vertexBuffer, &memRequirements);
-
-    VkMemoryAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocInfo.allocationSize = memRequirements.size;
-    allocInfo.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-    if (vkAllocateMemory(m_device, &allocInfo, nullptr, &m_vertexBufferMemory) != VK_SUCCESS) {
-        std::cerr << "Failed to allocate vertex buffer memory" << std::endl;
-        return false;
-    }
-
-    vkBindBufferMemory(m_device, m_vertexBuffer, m_vertexBufferMemory, 0);
-
+    // Map and copy vertex data
     void* data;
-    vkMapMemory(m_device, m_vertexBufferMemory, 0, bufferInfo.size, 0, &data);
+    vmaMapMemory(m_allocator, m_vertexBufferAllocation, &data);
     memcpy(data, m_triangleVertices.data(), (size_t)bufferInfo.size);
-    vkUnmapMemory(m_device, m_vertexBufferMemory);
+    vmaUnmapMemory(m_allocator, m_vertexBufferAllocation);
 
     return true;
 }

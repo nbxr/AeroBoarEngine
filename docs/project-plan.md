@@ -86,6 +86,24 @@ The engine is designed with modern multi-threaded architecture in mind:
   - ✅ **Instantaneous Resize**: Window resizing now works without lag or freezing
   - ✅ **Zero Validation Errors**: All Vulkan validation errors resolved with proper resource lifecycle management
 
+### Phase 1.5: VMA Integration ✅ **COMPLETE**
+- **Goal**: Integrate Vulkan Memory Allocator for efficient memory management.
+- **Tasks**:
+  - ✅ Add VMA to build system and include headers.
+  - ✅ Initialize VMA allocator in renderer initialization.
+  - ✅ Refactor vertex buffer creation to use VMA.
+  - ✅ Replace manual memory allocation with VMA calls.
+  - ✅ Test: Ensure triangle still renders correctly with VMA.
+- **Files**: `src/core/renderer.cpp`, `include/core/renderer.hpp`, `CMakeLists.txt`.
+- **Benefits**: 
+  - ✅ Memory pooling and efficient allocation
+  - ✅ Automatic memory type selection
+  - ✅ Built-in memory statistics and debugging
+  - ✅ Foundation for asset loading memory management
+  - ✅ Static linking for standalone deployment
+  - ✅ Runtime library consistency: All libraries use static runtime (MT/MTd)
+  - ✅ Jolt Physics integration: Physics library successfully integrated
+
 ### Phase 2: glTF Asset Loading (1-2 weeks)
 - **Goal**: Load and render `assets/models/cube.glb` using background threads and transfer queues.
 - **Architecture**: 
@@ -103,35 +121,64 @@ The engine is designed with modern multi-threaded architecture in mind:
   - Test: Load and render `cube.glb` on desktop without blocking main thread.
 - **Files**: `src/assets/gltf_loader.*`, `assets/models/cube.glb`, `src/core/transfer_manager.*` (new).
 
-### Phase 3: Physics Integration (2-3 weeks)
+### Phase 3: Game Object Management System (1-2 weeks)
+- **Goal**: Implement efficient game object management with GPU buffer optimization and memory tracking.
+- **Architecture**:
+  - **Game Object Buffers**: Transform matrices stored in efficient GPU buffers for rendering
+  - **Handle-Based System**: Game objects use handles for fast lookup and retrieval
+  - **Per-Frame Data Support**: Support for dynamic per-frame game object data
+  - **Smart Buffer Management**: Intelligent buffer patching vs. recreation based on change patterns
+  - **Memory Efficiency**: Advanced memory tracking and reuse for optimal performance
+- **Tasks**:
+  - Implement `src/core/game_object_manager.cpp` and `include/core/game_object_manager.hpp`.
+  - Create game object buffer management system with VMA integration.
+  - Design handle-based game object lookup system for O(1) access.
+  - Implement per-frame data management for dynamic game objects.
+  - Create smart buffer update strategy (patch vs. recreate) based on change analysis.
+  - Integrate with frame management system for proper synchronization.
+  - Add memory tracking and reuse mechanisms for efficient updates.
+  - Test: Create multiple game objects with transforms and verify efficient GPU buffer updates.
+- **Files**: `src/core/game_object_manager.*`, `include/core/game_object_manager.hpp`, `tests/test_game_objects.cpp`.
+- **Key Features**:
+  - Transform matrix storage in game object buffers
+  - Handle-based game object retrieval system
+  - Per-frame data support for dynamic objects
+  - Efficient GPU buffer update strategies
+  - Memory management and reuse tracking
+  - Integration with VMA and frame management systems
+
+### Phase 4: Physics Integration (2-3 weeks)
 - **Goal**: Add physics to cube using Jolt Physics with background simulation threads.
 - **Tasks**:
   - Implement `src/physics/physics_world.cpp` and `include/physics/physics_world.hpp`.
   - Create physics world with dedicated simulation thread.
   - Add cube as dynamic body with proper synchronization.
   - Implement physics-to-render synchronization using frame management system.
+  - Integrate physics bodies with game object management system.
   - Simulate gravity and collisions on background thread.
   - Test: Cube falls and collides with a ground plane without blocking render thread.
 - **Files**: `src/physics/physics_world.*`, `tests/test_physics.cpp`.
 
-### Phase 4: VR Support (2-3 weeks)
+### Phase 5: VR Support (2-3 weeks)
 - **Goal**: Enable VR rendering with OpenXR.
 - **Tasks**:
   - Implement `src/vr/vr_system.cpp` and `include/vr/vr_system.hpp`.
   - Initialize OpenXR session, handle VR input (hand tracking).
   - Update renderer for stereo rendering.
+  - Integrate VR rendering with game object management system.
   - Test: Render cube in VR on PCVR or Quest.
 - **Files**: `src/vr/vr_system.*`, `src/input/hand_tracker.*`.
 
-### Phase 5: Audio and Accessibility (1-2 weeks)
+### Phase 6: Audio and Accessibility (1-2 weeks)
 - **Goal**: Add audio and accessibility features.
 - **Tasks**:
   - Implement FMOD audio in `src/core/audio.cpp` (create new).
   - Load `config/accessibility.json` for settings (high contrast, snap turn).
+  - Integrate audio system with game object management for spatial audio.
   - Test: Play sound from `assets/audio/sfx/` and toggle accessibility.
 - **Files**: `src/core/audio.cpp`, `include/core/audio.hpp`, `config/accessibility.json`.
 
-### Phase 6: Quest Build and Testing (2 weeks)
+### Phase 7: Quest Build and Testing (2 weeks)
 - **Goal**: Build and test on Meta Quest.
 - **Tasks**:
   - Update `src/platforms/android/android_main.cpp` for Android entry point.
