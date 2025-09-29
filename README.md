@@ -5,6 +5,20 @@ Supports desktop (non-VR), PCVR, and Meta Quest.
 ## Current Status
 ✅ **Phase 1 Complete**: Vulkan triangle rendering with robust window handling, swapchain recreation, proper synchronization, and advanced frame management system.
 
+✅ **Phase 2 Complete**: glTF asset loading with background threads, transfer queues, and 3D camera controls (mouse look + WASD movement).
+
+✅ **Phase 2.5 Complete**: Input management system with window abstraction layer, action-based input mapping, and VR-ready architecture.
+
+## Current Features
+- **3D Rendering**: Vulkan-based rendering with PBR shaders and MVP matrices
+- **Asset Loading**: Asynchronous glTF model loading with background threads
+- **Camera Controls**: Mouse look and WASD movement with proper 3D navigation
+- **Input System**: Action-based input mapping with VR-ready abstraction
+- **Window Management**: Cross-platform window abstraction (desktop/VR ready)
+- **Memory Management**: VMA integration for efficient GPU memory allocation
+- **Frame Management**: Advanced per-frame resource tracking and synchronization
+- **Transfer Queues**: Asynchronous GPU memory operations without blocking render thread
+
 ## Clone and Setup
 1. Clone with submodules:
    ```bash
@@ -45,10 +59,12 @@ cmake --build . --config Release
 
 ## Development Phases
 - ✅ **Phase 1**: Vulkan initialization and triangle rendering
-- 🔄 **Phase 2**: glTF asset loading (next)
-- ⏳ **Phase 3**: Physics integration with Jolt
-- ⏳ **Phase 4**: VR support with OpenXR
-- ⏳ **Phase 5**: Audio and accessibility features
-- ⏳ **Phase 6**: Quest build and testing
+- ✅ **Phase 2**: glTF asset loading with background threads and transfer queues
+- ✅ **Phase 2.5**: Input management system with window abstraction
+- 🔄 **Phase 3**: Game object management system (next)
+- ⏳ **Phase 4**: Physics integration with Jolt
+- ⏳ **Phase 5**: VR support with OpenXR
+- ⏳ **Phase 6**: Audio and accessibility features
+- ⏳ **Phase 7**: Quest build and testing
 
 See `docs/project-plan.md` for detailed development roadmap.

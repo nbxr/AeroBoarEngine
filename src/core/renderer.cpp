@@ -1,5 +1,8 @@
 #define VMA_IMPLEMENTATION
 #include "core/renderer.hpp"
+#include "assets/gltf_loader.hpp"
+#include "input/input_manager.hpp"
+#include "core/window_interface.hpp"
 #include <vulkan/vulkan.hpp>
 #include <VkBootstrap.h>
 #include <iostream>
@@ -8,17 +11,27 @@
 #include <algorithm>
 #ifdef _WIN32
 #include <windows.h>
+#include <GLFW/glfw3.h>
 #endif
 
 namespace aero_boar {
 
-Renderer::Renderer() = default;
-
-Renderer::~Renderer() {
-    Shutdown();
+Renderer::Renderer() : m_initialized(false) {
+    // Initialize triangle vertices for Phase 1
+    m_triangleVertices = {
+        {{0.0f, -0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+        {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f}, {0.0f, 1.0f, 0.0f, 1.0f}},
+        {{-0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}, {0.0f, 0.0f, 1.0f, 1.0f}}
+    };
 }
 
-bool Renderer::Initialize(GLFWwindow* window) {
+Renderer::~Renderer() {
+    std::cout << "Renderer destructor called" << std::endl;
+    Shutdown();
+    std::cout << "Renderer destructor completed" << std::endl;
+}
+
+bool Renderer::Initialize(IWindow* window) {
     m_window = window;
 
     try {
@@ -83,6 +96,21 @@ bool Renderer::Initialize(GLFWwindow* window) {
             return false;
         }
 
+        if (!CreateUniformBuffer()) {
+            std::cerr << "Failed to create uniform buffer" << std::endl;
+            return false;
+        }
+
+        if (!CreateDescriptorPool()) {
+            std::cerr << "Failed to create descriptor pool" << std::endl;
+            return false;
+        }
+
+        if (!CreateDescriptorSet()) {
+            std::cerr << "Failed to create descriptor set" << std::endl;
+            return false;
+        }
+
         if (!CreateCommandBuffers()) {
             std::cerr << "Failed to create command buffers" << std::endl;
             return false;
@@ -90,6 +118,20 @@ bool Renderer::Initialize(GLFWwindow* window) {
 
         if (!CreateSyncObjects()) {
             std::cerr << "Failed to create synchronization objects" << std::endl;
+            return false;
+        }
+
+        // Initialize glTF loader
+        m_gltfLoader = std::make_unique<GltfLoader>(m_device, m_physicalDevice, m_allocator);
+        if (!m_gltfLoader->Initialize()) {
+            std::cerr << "Failed to initialize glTF loader" << std::endl;
+            return false;
+        }
+
+        // Initialize input manager
+        m_inputManager = std::make_unique<InputManager>();
+        if (!m_inputManager->Initialize(m_window)) {
+            std::cerr << "Failed to initialize input manager" << std::endl;
             return false;
         }
 
@@ -104,74 +146,157 @@ bool Renderer::Initialize(GLFWwindow* window) {
 }
 
 void Renderer::Shutdown() {
-    if (!m_initialized) return;
-
-    vkDeviceWaitIdle(m_device);
-
-    // Cleanup frame resources
-    CleanupFrameResources();
-
-    // Cleanup vertex buffer
-    if (m_vertexBuffer != VK_NULL_HANDLE) {
-        vkDestroyBuffer(m_device, m_vertexBuffer, nullptr);
-    }
-    if (m_vertexBufferAllocation != VK_NULL_HANDLE) {
-        vmaFreeMemory(m_allocator, m_vertexBufferAllocation);
+    std::cout << "Renderer::Shutdown() called" << std::endl;
+    if (!m_initialized) {
+        std::cout << "Renderer not initialized, skipping shutdown" << std::endl;
+        return;
     }
 
-    // Cleanup graphics pipeline
-    if (m_graphicsPipeline != VK_NULL_HANDLE) {
-        vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
-    }
-
-    // Cleanup pipeline layout
-    if (m_pipelineLayout != VK_NULL_HANDLE) {
-        vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
-    }
-
-    // Cleanup render pass
-    if (m_renderPass != VK_NULL_HANDLE) {
-        vkDestroyRenderPass(m_device, m_renderPass, nullptr);
-    }
-
-    // Cleanup command pool
-    if (m_commandPool != VK_NULL_HANDLE) {
-        vkDestroyCommandPool(m_device, m_commandPool, nullptr);
-    }
-
-    // Cleanup swapchain
-    CleanupSwapchain();
-
-
-    // Cleanup VMA allocator
-    if (m_allocator != VK_NULL_HANDLE) {
-        vmaDestroyAllocator(m_allocator);
-    }
-
-    // Cleanup device
-    if (m_device != VK_NULL_HANDLE) {
-        vkDestroyDevice(m_device, nullptr);
-    }
-
-    // Cleanup surface
-    if (m_surface != VK_NULL_HANDLE) {
-        vkDestroySurfaceKHR(m_instance, m_surface, nullptr);
-    }
-
-    // Cleanup debug messenger
-    if (m_debugMessenger != VK_NULL_HANDLE) {
-        auto func = (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(m_instance, "vkDestroyDebugUtilsMessengerEXT");
-        if (func != nullptr) {
-            func(m_instance, m_debugMessenger, nullptr);
+    try {
+        std::cout << "Waiting for device to be idle..." << std::endl;
+        // Wait for device to be idle before cleanup
+        if (m_device != VK_NULL_HANDLE) {
+            vkDeviceWaitIdle(m_device);
         }
+
+        std::cout << "Shutting down glTF loader..." << std::endl;
+        // Cleanup input manager
+        if (m_inputManager) {
+            m_inputManager->Shutdown();
+            m_inputManager.reset();
+        }
+
+        // Cleanup glTF loader first (it has its own Vulkan resources)
+        if (m_gltfLoader) {
+            m_gltfLoader->Shutdown();
+            m_gltfLoader.reset();
+        }
+        std::cout << "glTF loader shutdown completed" << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "Error during glTF loader shutdown: " << e.what() << std::endl;
     }
 
-    // Cleanup instance
-    if (m_instance != VK_NULL_HANDLE) {
-        vkDestroyInstance(m_instance, nullptr);
+    try {
+        std::cout << "Cleaning up frame resources..." << std::endl;
+        // Cleanup frame resources
+        CleanupFrameResources();
+
+        std::cout << "Cleaning up vertex buffer..." << std::endl;
+        // Cleanup descriptor set
+        if (m_descriptorSet != VK_NULL_HANDLE) {
+            // Descriptor sets are automatically freed when descriptor pool is destroyed
+            m_descriptorSet = VK_NULL_HANDLE;
+        }
+
+        // Cleanup descriptor pool
+        if (m_descriptorPool != VK_NULL_HANDLE) {
+            vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
+            m_descriptorPool = VK_NULL_HANDLE;
+        }
+
+        // Cleanup descriptor set layout
+        if (m_descriptorSetLayout != VK_NULL_HANDLE) {
+            vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayout, nullptr);
+            m_descriptorSetLayout = VK_NULL_HANDLE;
+        }
+
+        // Cleanup uniform buffer
+        if (m_uniformBuffer != VK_NULL_HANDLE) {
+            if (m_uniformBufferMapped) {
+                vmaUnmapMemory(m_allocator, m_uniformBufferAllocation);
+                m_uniformBufferMapped = nullptr;
+            }
+            vkDestroyBuffer(m_device, m_uniformBuffer, nullptr);
+            m_uniformBuffer = VK_NULL_HANDLE;
+        }
+        if (m_uniformBufferAllocation != VK_NULL_HANDLE) {
+            vmaFreeMemory(m_allocator, m_uniformBufferAllocation);
+            m_uniformBufferAllocation = VK_NULL_HANDLE;
+        }
+
+        // Cleanup vertex buffer
+        if (m_vertexBuffer != VK_NULL_HANDLE) {
+            vkDestroyBuffer(m_device, m_vertexBuffer, nullptr);
+            m_vertexBuffer = VK_NULL_HANDLE;
+        }
+        if (m_vertexBufferAllocation != VK_NULL_HANDLE) {
+            vmaFreeMemory(m_allocator, m_vertexBufferAllocation);
+            m_vertexBufferAllocation = VK_NULL_HANDLE;
+        }
+
+        std::cout << "Cleaning up graphics pipeline..." << std::endl;
+        // Cleanup graphics pipeline
+        if (m_graphicsPipeline != VK_NULL_HANDLE) {
+            vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
+            m_graphicsPipeline = VK_NULL_HANDLE;
+        }
+
+        // Cleanup pipeline layout
+        if (m_pipelineLayout != VK_NULL_HANDLE) {
+            vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
+            m_pipelineLayout = VK_NULL_HANDLE;
+        }
+
+        // Cleanup render pass
+        if (m_renderPass != VK_NULL_HANDLE) {
+            vkDestroyRenderPass(m_device, m_renderPass, nullptr);
+            m_renderPass = VK_NULL_HANDLE;
+        }
+
+        // Cleanup command pool
+        if (m_commandPool != VK_NULL_HANDLE) {
+            vkDestroyCommandPool(m_device, m_commandPool, nullptr);
+            m_commandPool = VK_NULL_HANDLE;
+        }
+
+        std::cout << "Cleaning up swapchain..." << std::endl;
+        // Cleanup swapchain
+        CleanupSwapchain();
+
+        std::cout << "Cleaning up VMA allocator..." << std::endl;
+        // Cleanup VMA allocator
+        if (m_allocator != VK_NULL_HANDLE) {
+            vmaDestroyAllocator(m_allocator);
+            m_allocator = VK_NULL_HANDLE;
+        }
+
+        std::cout << "Cleaning up device..." << std::endl;
+        // Cleanup device
+        if (m_device != VK_NULL_HANDLE) {
+            vkDestroyDevice(m_device, nullptr);
+            m_device = VK_NULL_HANDLE;
+        }
+
+        std::cout << "Cleaning up surface..." << std::endl;
+        // Cleanup surface
+        if (m_surface != VK_NULL_HANDLE) {
+            vkDestroySurfaceKHR(m_instance, m_surface, nullptr);
+            m_surface = VK_NULL_HANDLE;
+        }
+
+        std::cout << "Cleaning up debug messenger..." << std::endl;
+        // Cleanup debug messenger
+        if (m_debugMessenger != VK_NULL_HANDLE) {
+            auto func = (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(m_instance, "vkDestroyDebugUtilsMessengerEXT");
+            if (func != nullptr) {
+                func(m_instance, m_debugMessenger, nullptr);
+            }
+            m_debugMessenger = VK_NULL_HANDLE;
+        }
+
+        std::cout << "Cleaning up instance..." << std::endl;
+        // Cleanup instance
+        if (m_instance != VK_NULL_HANDLE) {
+            vkDestroyInstance(m_instance, nullptr);
+            m_instance = VK_NULL_HANDLE;
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Error during Vulkan resource cleanup: " << e.what() << std::endl;
     }
 
+    std::cout << "Setting initialized to false..." << std::endl;
     m_initialized = false;
+    std::cout << "Renderer::Shutdown() completed" << std::endl;
 }
 
 bool Renderer::CreateInstance() {
@@ -196,10 +321,35 @@ bool Renderer::CreateInstance() {
 }
 
 bool Renderer::CreateSurface() {
-    if (glfwCreateWindowSurface(m_instance, m_window, nullptr, &m_surface) != VK_SUCCESS) {
+    // Create Vulkan surface using the abstract window interface
+    // For desktop, this will use GLFW's surface creation
+    // For VR, this will use platform-specific surface creation
+    
+#ifdef _WIN32
+    // For now, we'll use GLFW directly for surface creation
+    // In the future, this will be abstracted through the window interface
+    GLFWwindow* glfwWindow = nullptr;
+    if (m_window) {
+        // Try to get GLFW window from desktop window implementation
+        // This is a temporary solution during the transition
+        glfwWindow = static_cast<GLFWwindow*>(m_window->GetNativeWindowHandle());
+    }
+    
+    if (!glfwWindow) {
+        std::cerr << "Failed to get native window handle" << std::endl;
+        return false;
+    }
+    
+    if (glfwCreateWindowSurface(m_instance, glfwWindow, nullptr, &m_surface) != VK_SUCCESS) {
         std::cerr << "Failed to create window surface" << std::endl;
         return false;
     }
+#else
+    // For non-Windows platforms, implement platform-specific surface creation
+    std::cerr << "Surface creation not implemented for this platform" << std::endl;
+    return false;
+#endif
+    
     return true;
 }
 
@@ -358,16 +508,26 @@ bool Renderer::CreateGraphicsPipeline() {
     bindingDescription.stride = sizeof(Vertex);
     bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
-    std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions{};
+    std::array<VkVertexInputAttributeDescription, 4> attributeDescriptions{};
     attributeDescriptions[0].binding = 0;
     attributeDescriptions[0].location = 0;
-    attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
-    attributeDescriptions[0].offset = offsetof(Vertex, pos);
+    attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+    attributeDescriptions[0].offset = offsetof(Vertex, position);
 
     attributeDescriptions[1].binding = 0;
     attributeDescriptions[1].location = 1;
     attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-    attributeDescriptions[1].offset = offsetof(Vertex, color);
+    attributeDescriptions[1].offset = offsetof(Vertex, normal);
+
+    attributeDescriptions[2].binding = 0;
+    attributeDescriptions[2].location = 2;
+    attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
+    attributeDescriptions[2].offset = offsetof(Vertex, texCoord);
+
+    attributeDescriptions[3].binding = 0;
+    attributeDescriptions[3].location = 3;
+    attributeDescriptions[3].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+    attributeDescriptions[3].offset = offsetof(Vertex, color);
 
     VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
     vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -416,9 +576,30 @@ bool Renderer::CreateGraphicsPipeline() {
     colorBlending.blendConstants[2] = 0.0f;
     colorBlending.blendConstants[3] = 0.0f;
 
+    // Create descriptor set layout
+    VkDescriptorSetLayoutBinding uboLayoutBinding{};
+    uboLayoutBinding.binding = 0;
+    uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    uboLayoutBinding.descriptorCount = 1;
+    uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    uboLayoutBinding.pImmutableSamplers = nullptr;
+
+    VkDescriptorSetLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = 1;
+    layoutInfo.pBindings = &uboLayoutBinding;
+
+    if (vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_descriptorSetLayout) != VK_SUCCESS) {
+        std::cerr << "Failed to create descriptor set layout" << std::endl;
+        vkDestroyShaderModule(m_device, fragShaderModule, nullptr);
+        vkDestroyShaderModule(m_device, vertShaderModule, nullptr);
+        return false;
+    }
+
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipelineLayoutInfo.setLayoutCount = 0;
+    pipelineLayoutInfo.setLayoutCount = 1;
+    pipelineLayoutInfo.pSetLayouts = &m_descriptorSetLayout;
     pipelineLayoutInfo.pushConstantRangeCount = 0;
 
     if (vkCreatePipelineLayout(m_device, &pipelineLayoutInfo, nullptr, &m_pipelineLayout) != VK_SUCCESS) {
@@ -506,7 +687,7 @@ bool Renderer::CreateCommandPool() {
 bool Renderer::CreateVertexBuffer() {
     VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bufferInfo.size = sizeof(m_triangleVertices[0]) * m_triangleVertices.size();
+    bufferInfo.size = sizeof(Vertex) * m_triangleVertices.size();
     bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
@@ -525,6 +706,79 @@ bool Renderer::CreateVertexBuffer() {
     vmaMapMemory(m_allocator, m_vertexBufferAllocation, &data);
     memcpy(data, m_triangleVertices.data(), (size_t)bufferInfo.size);
     vmaUnmapMemory(m_allocator, m_vertexBufferAllocation);
+
+    return true;
+}
+
+bool Renderer::CreateUniformBuffer() {
+    VkBufferCreateInfo bufferInfo{};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = sizeof(UniformBufferObject);
+    bufferInfo.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    VmaAllocationCreateInfo allocInfo = {};
+    allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
+    allocInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+
+    VkResult result = vmaCreateBuffer(m_allocator, &bufferInfo, &allocInfo, &m_uniformBuffer, &m_uniformBufferAllocation, nullptr);
+    if (result != VK_SUCCESS) {
+        std::cerr << "Failed to create uniform buffer with VMA" << std::endl;
+        return false;
+    }
+
+    // Get mapped pointer
+    vmaMapMemory(m_allocator, m_uniformBufferAllocation, &m_uniformBufferMapped);
+
+    return true;
+}
+
+bool Renderer::CreateDescriptorPool() {
+    VkDescriptorPoolSize poolSize{};
+    poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSize.descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes = &poolSize;
+    poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+
+    if (vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_descriptorPool) != VK_SUCCESS) {
+        std::cerr << "Failed to create descriptor pool" << std::endl;
+        return false;
+    }
+
+    return true;
+}
+
+bool Renderer::CreateDescriptorSet() {
+    VkDescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = m_descriptorPool;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &m_descriptorSetLayout;
+
+    if (vkAllocateDescriptorSets(m_device, &allocInfo, &m_descriptorSet) != VK_SUCCESS) {
+        std::cerr << "Failed to allocate descriptor set" << std::endl;
+        return false;
+    }
+
+    VkDescriptorBufferInfo bufferInfo{};
+    bufferInfo.buffer = m_uniformBuffer;
+    bufferInfo.offset = 0;
+    bufferInfo.range = sizeof(UniformBufferObject);
+
+    VkWriteDescriptorSet descriptorWrite{};
+    descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrite.dstSet = m_descriptorSet;
+    descriptorWrite.dstBinding = 0;
+    descriptorWrite.dstArrayElement = 0;
+    descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    descriptorWrite.descriptorCount = 1;
+    descriptorWrite.pBufferInfo = &bufferInfo;
+
+    vkUpdateDescriptorSets(m_device, 1, &descriptorWrite, 0, nullptr);
 
     return true;
 }
@@ -624,10 +878,19 @@ void Renderer::CleanupSwapchain() {
 
 void Renderer::RecreateSwapchain() {
     int width = 0, height = 0;
-    glfwGetFramebufferSize(m_window, &width, &height);
+    if (m_window) {
+        width = m_window->GetWidth();
+        height = m_window->GetHeight();
+    }
+    
     while (width == 0 || height == 0) {
-        glfwGetFramebufferSize(m_window, &width, &height);
-        glfwWaitEvents();
+        if (m_window) {
+            m_window->PollEvents();
+            width = m_window->GetWidth();
+            height = m_window->GetHeight();
+        } else {
+            break;
+        }
     }
 
     // Wait for all active frames to complete using our frame management system
@@ -790,6 +1053,18 @@ void Renderer::Render() {
 
     vkCmdBindPipeline(currentFrame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
 
+    // Update uniform buffer
+    UniformBufferObject ubo{};
+    ubo.model = glm::mat4(1.0f);
+    ubo.view = glm::lookAt(m_camera.position, m_camera.position + m_camera.front, m_camera.up);
+    ubo.proj = glm::perspective(glm::radians(m_camera.fov), (float)m_swapchainExtent.width / (float)m_swapchainExtent.height, m_camera.nearPlane, m_camera.farPlane);
+    ubo.proj[1][1] *= -1; // Flip Y axis for Vulkan
+
+    memcpy(m_uniformBufferMapped, &ubo, sizeof(ubo));
+
+    // Bind descriptor set
+    vkCmdBindDescriptorSets(currentFrame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSet, 0, nullptr);
+
     // Set dynamic viewport and scissor
     VkViewport viewport{};
     viewport.x = 0.0f;
@@ -805,11 +1080,25 @@ void Renderer::Render() {
     scissor.extent = m_swapchainExtent;
     vkCmdSetScissor(currentFrame.commandBuffer, 0, 1, &scissor);
 
+    // Render triangle (Phase 1)
     VkBuffer vertexBuffers[] = { m_vertexBuffer };
     VkDeviceSize offsets[] = { 0 };
     vkCmdBindVertexBuffers(currentFrame.commandBuffer, 0, 1, vertexBuffers, offsets);
-
     vkCmdDraw(currentFrame.commandBuffer, static_cast<uint32_t>(m_triangleVertices.size()), 1, 0, 0);
+
+    // Render loaded models (Phase 2)
+    if (m_gltfLoader) {
+        // Try to render cube model if it's loaded - check multiple possible paths
+        std::string modelPath = "assets/models/cube.glb";
+        if (!m_gltfLoader->GetModel(modelPath)) {
+            // Try alternative paths
+            modelPath = "build/AeroBoarEngine/Debug/assets/models/cube.glb";
+            if (!m_gltfLoader->GetModel(modelPath)) {
+                modelPath = "AeroBoarEngine/Debug/assets/models/cube.glb";
+            }
+        }
+        RenderModel(modelPath);
+    }
 
     vkCmdEndRenderPass(currentFrame.commandBuffer);
 
@@ -820,6 +1109,72 @@ void Renderer::Render() {
 
 void Renderer::OnWindowResize() {
     m_framebufferResized = true;
+}
+
+bool Renderer::LoadModel(const std::string& filepath) {
+    if (!m_gltfLoader) {
+        std::cerr << "glTF loader not initialized" << std::endl;
+        return false;
+    }
+
+    // Load model asynchronously
+    auto future = m_gltfLoader->LoadModelAsync(filepath);
+    auto result = future.get();
+
+    if (!result.success) {
+        std::cerr << "Failed to load model: " << result.errorMessage << std::endl;
+        return false;
+    }
+
+    std::cout << "Model loaded successfully: " << filepath << std::endl;
+    return true;
+}
+
+bool Renderer::CreateCubeModel() {
+    if (!m_gltfLoader) {
+        std::cerr << "glTF loader not initialized" << std::endl;
+        return false;
+    }
+
+    auto result = m_gltfLoader->CreateCubeModel();
+    if (!result.success) {
+        std::cerr << "Failed to create cube model: " << result.errorMessage << std::endl;
+        return false;
+    }
+
+    std::cout << "Cube model created successfully" << std::endl;
+    return true;
+}
+
+void Renderer::RenderModel(const std::string& modelName) {
+    if (!m_gltfLoader) {
+        return;
+    }
+
+    auto model = m_gltfLoader->GetModel(modelName);
+    if (!model || !model->isLoaded) {
+        return;
+    }
+
+    Frame& currentFrame = m_frames[m_currentFrame];
+    
+    // Render each mesh in the model
+    for (const auto& mesh : model->meshes) {
+        if (mesh.vertexBuffer == VK_NULL_HANDLE || mesh.indexBuffer == VK_NULL_HANDLE) {
+            continue;
+        }
+
+        // Bind vertex buffer
+        VkBuffer vertexBuffers[] = { mesh.vertexBuffer };
+        VkDeviceSize offsets[] = { 0 };
+        vkCmdBindVertexBuffers(currentFrame.commandBuffer, 0, 1, vertexBuffers, offsets);
+
+        // Bind index buffer
+        vkCmdBindIndexBuffer(currentFrame.commandBuffer, mesh.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+
+        // Draw indexed
+        vkCmdDrawIndexed(currentFrame.commandBuffer, static_cast<uint32_t>(mesh.indices.size()), 1, 0, 0, 0);
+    }
 }
 
 // Helper methods
@@ -922,6 +1277,92 @@ void Renderer::CleanupFrameResources() {
             imageRes.finishedSemaphore = VK_NULL_HANDLE;
         }
         imageRes.fenceInFlight = VK_NULL_HANDLE;
+    }
+}
+
+void Renderer::UpdateCamera(float deltaTime) {
+    if (!m_inputManager) {
+        return;
+    }
+
+    // Handle mouse look (head movement abstraction) - read values BEFORE updating input manager
+    float lookX = m_inputManager->GetActionValue(InputAction::LOOK_X);
+    float lookY = m_inputManager->GetActionValue(InputAction::LOOK_Y);
+    
+    m_camera.yaw += lookX;
+    m_camera.pitch += lookY;
+
+    // Update input manager (this resets mouse values for next frame)
+    m_inputManager->Update(deltaTime);
+
+    // Constrain pitch
+    if (m_camera.pitch > 89.0f) {
+        m_camera.pitch = 89.0f;
+    }
+    if (m_camera.pitch < -89.0f) {
+        m_camera.pitch = -89.0f;
+    }
+
+    // Update camera vectors based on yaw and pitch
+    glm::vec3 front;
+    front.x = cos(glm::radians(m_camera.yaw)) * cos(glm::radians(m_camera.pitch));
+    front.y = sin(glm::radians(m_camera.pitch));
+    front.z = sin(glm::radians(m_camera.yaw)) * cos(glm::radians(m_camera.pitch));
+    m_camera.front = glm::normalize(front);
+    
+    // Re-calculate the right and up vector
+    m_camera.right = glm::normalize(glm::cross(m_camera.front, m_camera.worldUp));
+    m_camera.up = glm::normalize(glm::cross(m_camera.right, m_camera.front));
+
+    // Handle player movement (player pose movement abstraction)
+    float velocity = m_camera.movementSpeed * deltaTime;
+    
+    if (m_inputManager->IsActionPressed(InputAction::MOVE_FORWARD)) {
+        m_camera.position += m_camera.front * velocity;
+    }
+    if (m_inputManager->IsActionPressed(InputAction::MOVE_BACKWARD)) {
+        m_camera.position -= m_camera.front * velocity;
+    }
+    if (m_inputManager->IsActionPressed(InputAction::MOVE_LEFT)) {
+        m_camera.position -= m_camera.right * velocity;
+    }
+    if (m_inputManager->IsActionPressed(InputAction::MOVE_RIGHT)) {
+        m_camera.position += m_camera.right * velocity;
+    }
+    if (m_inputManager->IsActionPressed(InputAction::MOVE_UP)) {
+        m_camera.position += m_camera.worldUp * velocity;
+    }
+    if (m_inputManager->IsActionPressed(InputAction::MOVE_DOWN)) {
+        m_camera.position -= m_camera.worldUp * velocity;
+    }
+
+    // Handle system actions
+    if (m_inputManager->IsActionJustPressed(InputAction::RESET_CAMERA)) {
+        ResetCamera();
+    }
+    if (m_inputManager->IsActionJustPressed(InputAction::EXIT_APPLICATION)) {
+        if (m_window) {
+            // For now, we'll need to access the GLFW window directly
+            // In the future, this will be abstracted through the window interface
+#ifdef _WIN32
+            GLFWwindow* glfwWindow = static_cast<GLFWwindow*>(m_window->GetNativeWindowHandle());
+            if (glfwWindow) {
+                glfwSetWindowShouldClose(glfwWindow, GLFW_TRUE);
+            }
+#endif
+        }
+    }
+}
+
+
+void Renderer::ResetCamera() {
+    m_camera.position = m_camera.initialPosition;
+    m_camera.yaw = m_camera.initialYaw;
+    m_camera.pitch = m_camera.initialPitch;
+    
+    // Reset input manager mouse state
+    if (m_inputManager) {
+        // The input manager will handle resetting its own mouse state
     }
 }
 

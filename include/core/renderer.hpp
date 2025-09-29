@@ -1,14 +1,24 @@
 #pragma once
 
 #include <vulkan/vulkan.h>
-#include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <VkBootstrap.h>
 #include <vk_mem_alloc.h>
 #include <vector>
 #include <memory>
+#include <string>
+#include <unordered_map>
 
 namespace aero_boar {
+
+// Forward declarations
+class GltfLoader;
+class InputManager;
+class IWindow;
+struct Model;
+struct Mesh;
+struct Vertex;
 
 class Renderer {
 public:
@@ -16,7 +26,7 @@ public:
     ~Renderer();
 
     // Initialize Vulkan and create window
-    bool Initialize(GLFWwindow* window);
+    bool Initialize(IWindow* window);
     void Shutdown();
 
     // Main render loop
@@ -27,11 +37,20 @@ public:
     // Window resize handling
     void OnWindowResize();
 
+    // Asset loading
+    bool LoadModel(const std::string& filepath);
+    bool CreateCubeModel();
+    void RenderModel(const std::string& modelName);
+
+    // Camera controls
+    void UpdateCamera(float deltaTime);
+    void ResetCamera();
 
     // Getters
     bool IsInitialized() const { return m_initialized; }
     VkDevice GetDevice() const { return m_device; }
     VkPhysicalDevice GetPhysicalDevice() const { return m_physicalDevice; }
+    InputManager* GetInputManager() const { return m_inputManager.get(); }
 
 private:
     // Vulkan core objects
@@ -48,8 +67,14 @@ private:
     // VMA allocator
     VmaAllocator m_allocator = VK_NULL_HANDLE;
 
+    // Asset loading
+    std::unique_ptr<GltfLoader> m_gltfLoader;
+    
+    // Input management
+    std::unique_ptr<InputManager> m_inputManager;
+
     // Window and surface
-    GLFWwindow* m_window = nullptr;
+    IWindow* m_window = nullptr;
     VkSurfaceKHR m_surface = VK_NULL_HANDLE;
 
     // Swapchain
@@ -122,22 +147,56 @@ private:
     void ResetFrameResources();
     void CleanupFrameResources();
 
-    // Triangle data for Phase 1
-    struct Vertex {
-        glm::vec2 pos;
-        glm::vec3 color;
+    // Triangle data for Phase 1 (using same Vertex structure as glTF loader)
+    std::vector<Vertex> m_triangleVertices;
+
+    // Camera system
+    struct Camera {
+        glm::vec3 position = glm::vec3(0.0f, 0.0f, 3.0f);
+        glm::vec3 front = glm::vec3(0.0f, 0.0f, -1.0f);
+        glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
+        glm::vec3 right = glm::vec3(1.0f, 0.0f, 0.0f);
+        glm::vec3 worldUp = glm::vec3(0.0f, 1.0f, 0.0f);
+        
+        float yaw = -90.0f;   // Start looking down the negative Z axis
+        float pitch = 0.0f;
+        float fov = 45.0f;
+        float nearPlane = 0.1f;
+        float farPlane = 100.0f;
+        
+        float movementSpeed = 5.0f;
+        float mouseSensitivity = 0.1f;
+        
+        // Initial values for reset
+        glm::vec3 initialPosition = glm::vec3(0.0f, 0.0f, 3.0f);
+        float initialYaw = -90.0f;
+        float initialPitch = 0.0f;
+    } m_camera;
+
+    
+    // Uniform buffer for MVP matrices
+    struct UniformBufferObject {
+        glm::mat4 model;
+        glm::mat4 view;
+        glm::mat4 proj;
     };
     
-    std::vector<Vertex> m_triangleVertices = {
-        {{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-        {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
-        {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
-    };
+    VkBuffer m_uniformBuffer = VK_NULL_HANDLE;
+    VmaAllocation m_uniformBufferAllocation = VK_NULL_HANDLE;
+    void* m_uniformBufferMapped = nullptr;
+    
+    VkDescriptorSetLayout m_descriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
+    VkDescriptorSet m_descriptorSet = VK_NULL_HANDLE;
 
     VkBuffer m_vertexBuffer = VK_NULL_HANDLE;
     VmaAllocation m_vertexBufferAllocation = VK_NULL_HANDLE;
 
     bool CreateVertexBuffer();
+    bool CreateUniformBuffer();
+    bool CreateDescriptorSetLayout();
+    bool CreateDescriptorPool();
+    bool CreateDescriptorSet();
     uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
 
     // Helper methods

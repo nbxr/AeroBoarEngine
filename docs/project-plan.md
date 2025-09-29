@@ -104,7 +104,7 @@ The engine is designed with modern multi-threaded architecture in mind:
   - ✅ Runtime library consistency: All libraries use static runtime (MT/MTd)
   - ✅ Jolt Physics integration: Physics library successfully integrated
 
-### Phase 2: glTF Asset Loading (1-2 weeks)
+### Phase 2: glTF Asset Loading (1-2 weeks) ✅ **COMPLETE**
 - **Goal**: Load and render `assets/models/cube.glb` using background threads and transfer queues.
 - **Architecture**: 
   - **Background Asset Loading**: Use dedicated background threads for glTF parsing and texture processing
@@ -112,14 +112,54 @@ The engine is designed with modern multi-threaded architecture in mind:
   - **Frame Management Integration**: Leverage the existing Frame management system for proper synchronization
   - **Non-Blocking Operations**: Asset loading operations must not block the main render thread
 - **Tasks**:
-  - Implement `src/assets/gltf_loader.cpp` and `include/assets/gltf_loader.hpp` using tinygltf.
-  - Create background thread pool for asset loading operations.
-  - Set up Vulkan transfer queue for GPU memory transfers.
-  - Parse meshes, materials, textures from glTF on background threads.
-  - Implement asynchronous texture upload and buffer staging.
-  - Integrate with renderer's frame management system for proper synchronization.
-  - Test: Load and render `cube.glb` on desktop without blocking main thread.
-- **Files**: `src/assets/gltf_loader.*`, `assets/models/cube.glb`, `src/core/transfer_manager.*` (new).
+  - ✅ Implement `src/assets/gltf_loader.cpp` and `include/assets/gltf_loader.hpp` using tinygltf.
+  - ✅ Create background thread pool for asset loading operations.
+  - ✅ Set up Vulkan transfer queue for GPU memory transfers.
+  - ✅ Parse meshes, materials, textures from glTF on background threads.
+  - ✅ Implement asynchronous texture upload and buffer staging.
+  - ✅ Integrate with renderer's frame management system for proper synchronization.
+  - ✅ Test: Load and render `cube.glb` on desktop without blocking main thread.
+  - ✅ **Camera Controls**: Implemented mouse look and WASD movement with proper 3D rendering
+  - ✅ **Input Handling**: Added GLFW input callbacks for mouse and keyboard
+  - ✅ **3D Rendering Pipeline**: Updated shaders and uniform buffers for proper MVP matrices
+- **Files**: `src/assets/gltf_loader.*`, `assets/models/cube.glb`, `src/core/transfer_manager.*`, `shaders/pbr.*`.
+
+### Phase 2.5: Input Management System (1 week) ✅ **COMPLETE**
+- **Goal**: Implement abstracted input management system for desktop controls with VR-ready architecture.
+- **Architecture**:
+  - **Input Abstraction Layer**: Abstract input types to support both desktop and VR input seamlessly
+  - **Action-Based Input**: Map physical inputs (mouse, keyboard, VR controllers) to logical actions
+  - **Pose and Movement Separation**: Separate head movement from body movement for VR compatibility
+  - **Future VR Integration**: Design system to easily attach OpenXR input types without code changes
+- **Tasks**:
+  - ✅ Implement `src/input/input_manager.cpp` and `include/input/input_manager.hpp`.
+  - ✅ Create input action mapping system (e.g., "look", "move_forward", "move_strafe").
+  - ✅ Abstract mouse input as "head movement" for VR compatibility.
+  - ✅ Abstract keyboard input as "player pose movement" for VR compatibility.
+  - ✅ Implement input state management with proper event handling.
+  - ✅ Create input binding system for customizable controls.
+  - ✅ Integrate with existing camera system in renderer.
+  - ✅ Design VR input attachment points for future OpenXR integration.
+  - ✅ Test: Verify input abstraction works with current desktop controls.
+  - ✅ **Window Abstraction**: Abstracted GLFW dependencies from core renderer for cross-platform compatibility
+  - ✅ **Desktop Window Implementation**: Created GLFW-based desktop window implementation with proper callback handling
+  - ✅ **Input Callback Integration**: Seamless integration of mouse and keyboard callbacks through abstract window interface
+  - ✅ **Mouse Look Controls**: Implemented smooth mouse look with proper delta handling and sensitivity
+  - ✅ **WASD Movement**: Added keyboard movement controls with proper camera-relative movement
+  - ✅ **Escape Key Exit**: Added application exit functionality via Escape key
+  - ✅ **Reset Camera**: Implemented 'R' key for camera reset to initial position
+- **Files**: `src/input/input_manager.*`, `include/input/input_manager.hpp`, `src/core/window_interface.*`, `src/platforms/desktop/desktop_window.*`, `src/core/window_factory.*`, updates to `src/core/renderer.cpp`.
+- **Key Features**:
+  - ✅ Action-based input mapping system
+  - ✅ Head movement abstraction (mouse → VR head tracking)
+  - ✅ Player movement abstraction (keyboard → VR controller movement)
+  - ✅ Input state management and event handling
+  - ✅ Customizable input bindings
+  - ✅ VR-ready architecture for future OpenXR integration
+  - ✅ Cross-platform window abstraction layer
+  - ✅ Desktop-specific window implementation with GLFW
+  - ✅ Factory pattern for window creation
+  - ✅ Complete separation of platform-specific code from core engine
 
 ### Phase 3: Game Object Management System (1-2 weeks)
 - **Goal**: Implement efficient game object management with GPU buffer optimization and memory tracking.
@@ -213,6 +253,8 @@ The engine is designed with modern multi-threaded architecture in mind:
 
 ## Next Steps
 - ✅ **Phase 1 Complete**: Vulkan initialization with advanced frame management system
-- 🚀 **Ready for Phase 2**: Begin glTF asset loading with background threads and transfer queues
+- ✅ **Phase 2 Complete**: glTF asset loading with background threads and transfer queues, plus camera controls
+- ✅ **Phase 2.5 Complete**: Input management system with window abstraction and VR-ready architecture
+- 🚀 **Ready for Phase 3**: Implement game object management system with GPU buffer optimization
 - Commit regularly and push to remote.
 - Use `tests/` for unit tests (e.g., `test_renderer.cpp`).

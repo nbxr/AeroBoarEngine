@@ -41,6 +41,8 @@ endif()
 set(SOURCES
     src/main.cpp
     src/core/renderer.cpp
+    src/core/transfer_manager.cpp
+    src/core/window_factory.cpp
     src/core/skybox.cpp
     src/core/accessibility.cpp
     src/input/input_manager.cpp
@@ -54,7 +56,7 @@ set(SOURCES
 if(BUILD_ANDROID)
     set(PLATFORM_SOURCES src/platforms/android/android_main.cpp)
 else()
-    set(PLATFORM_SOURCES src/platforms/windows/window.cpp)
+    set(PLATFORM_SOURCES src/platforms/desktop/desktop_window.cpp)
 endif()
 
 # Combine sources
@@ -88,6 +90,7 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 # Add submodules
 add_subdirectory(external/glfw)
 add_subdirectory(external/jolt/Build)
+add_subdirectory(external/tinygltf)
 
 # Configure OpenXR build options to avoid sanitizers dependency
 set(BUILD_ALL_EXTENSIONS OFF CACHE BOOL "Build loader and layers with all extensions")
@@ -177,6 +180,7 @@ target_link_libraries(aero_boar_engine PRIVATE
     openxr_loader
     vk-bootstrap
     VulkanMemoryAllocator
+    tinygltf
 )
 
 # FMOD: Link prebuilt libs
