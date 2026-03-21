@@ -91,7 +91,7 @@ This project aims to develop a cross-platform game engine targeting VR via OpenX
 - Final integration
 
 ## Tools and Technologies
-- Programming Language: C++
+- Programming Language: C++ 20
 - Graphics API: Vulkan
 - Windowing: GLFW
 - Math Library: GLM
