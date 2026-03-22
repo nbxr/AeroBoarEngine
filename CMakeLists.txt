@@ -1,78 +1,83 @@
-# CMake minimum version required
-cmake_minimum_required(VERSION 3.50)
-project(AeroBoarEngine)
+cmake_minimum_required(VERSION 3.5...3.10)
 
-# Enable C++20 or later
+project(Aero_Boar_Engine)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Add an executable
-add_executable(${PROJECT_NAME} src/main.cpp)
+# -------------------------------------------------------------------------
+# Dependencies
+# -------------------------------------------------------------------------
 
-# Set the VULKAN_SDK environment variable to point to your Vulkan SDK installation path
-if (NOT DEFINED ENV{VULKAN_SDK})
-    message(FATAL_ERROR "Vulkan SDK not found! Define the VULKAN_SDK environment variable.")
-endif()
-set(VULKAN_SDK $ENV{VULKAN_SDK})
-
-# Include directories for Vulkan and its dependencies
-include_directories(${VULKAN_SDK}/include)
-
-# Add Vulkan libraries if not already added by FetchContent
-if(NOT TARGET Vulkan::Vulkan)
-    find_library(VulkanSDK_LIBRARIES NAMES vulkan HINTS ${VULKAN_SDK}/Lib)
-    find_path(VulkanSDK_INCLUDES NAMES vk_platform.h HINTS ${VULKAN_SDK}/Include/vulkan)
-    
-    # Check if we found the includes
-    if(NOT VulkanSDK_INCLUDES)
-        message(FATAL_ERROR "Vulkan SDK include directory not found at ${VULKAN_SDK}/include")
-    endif()
-    
-    add_library(Vulkan::Vulkan UNKNOWN IMPORTED)
-    set_target_properties(Vulkan::Vulkan PROPERTIES
-        IMPORTED_LOCATION "${VulkanSDK_LIBRARIES}"
-        INTERFACE_INCLUDE_DIRECTORIES "${VulkanSDK_INCLUDES}")
+# Find Vulkan SDK
+find_package(Vulkan REQUIRED)
+if(NOT Vulkan_FOUND)
+    message(FATAL_ERROR "Vulkan SDK not found. Please install Vulkan SDK or set the VULKAN_SDK environment variable.")
+else()
+    message(STATUS "Vulkan SDK found at: ${Vulkan_INCLUDE_DIRS}")
 endif()
 
-# FetchContent for dependencies
+# Setup FetchContent
 include(FetchContent)
 
-# GLFW
+# 1. Vulkan Memory Allocator (VMA)
 FetchContent_Declare(
-    GLFW
-    URL https://github.com/glfw/glfw/archive/refs/tags/3.3.8.zip
+    VulkanMemoryAllocator
+    GIT_REPOSITORY https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
+    GIT_TAG v3.3.0
 )
-FetchContent_GetProperties(GLFW)
-if (NOT GLFW_POPULATED)
-    FetchContent_MakeAvailable(GLFW)
-endif()
 
-# Jolt Physics
+# 2. VK-Bootstrap
 FetchContent_Declare(
-    JoltPhysics
-    URL https://github.com/jrouwe/JoltPhysics/archive/refs/heads/master.zip
+    vk-bootstrap
+    GIT_REPOSITORY https://github.com/charles-lunarg/VK-Bootstrap.git
+    GIT_TAG v1.4.321
 )
-FetchContent_GetProperties(JoltPhysics)
-if (NOT JoltPhysics_POPULATED)
-    FetchContent_MakeAvailable(JoltPhysics)
-endif()
 
-# OpenAL Soft - Set minimum CMake version for OpenAL
-set(CMAKE_POLICY_DEFAULT_CMP0048 NEW)
-set(CMAKE_POLICY_DEFAULT_CMP0091 NEW)
+# 3. tinygltf
 FetchContent_Declare(
-    OpenAL
-    URL https://github.com/kcat/openal-soft/archive/refs/tags/1.22.0.zip
+    tinygltf
+    GIT_REPOSITORY https://github.com/syoyo/tinygltf.git
+    GIT_TAG v2.9.7
 )
-FetchContent_GetProperties(OpenAL)
-if (NOT OpenAL_POPULATED)
-    FetchContent_MakeAvailable(OpenAL)
-endif()
 
-# Link libraries to the target
-target_link_libraries(${PROJECT_NAME} PUBLIC 
-    Vulkan::Vulkan 
-    GLFW::GLFW 
-    OpenAL::openal 
-    JoltPhysics
+# 4. GLFW
+FetchContent_Declare(
+    glfw
+    GIT_REPOSITORY https://github.com/glfw/glfw.git
+    GIT_TAG 3.3.8
 )
+
+# 5. GLM
+FetchContent_Declare(
+    glm
+    GIT_REPOSITORY https://github.com/g-truc/glm.git
+    GIT_TAG 0.9.9.8
+)
+
+# Enable updating dependencies
+set(FETCHCONTENT_QUIET OFF)
+FetchContent_MakeAvailable(VulkanMemoryAllocator vk-bootstrap tinygltf glfw glm)
+
+# -------------------------------------------------------------------------
+# Build Configuration
+# -------------------------------------------------------------------------
+
+add_executable(hello_world src/main.cpp)
+
+# Include directories
+target_include_directories(hello_world PRIVATE
+    ${Vulkan_INCLUDE_DIRS}
+    ${tinygltf_SOURCE_DIR}/src
+    ${GLM_INCLUDE_DIRS}  # Note: GLM_INCLUDE_DIRS should be used here instead of glm_SOURCE_DIR
+)
+
+# Link libraries
+target_link_libraries(hello_world PRIVATE
+    Vulkan::Vulkan
+    vk-bootstrap::vk-bootstrap
+    GPUOpen::VulkanMemoryAllocator
+    glfw
+)
+
