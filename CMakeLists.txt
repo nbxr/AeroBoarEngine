@@ -36,6 +36,8 @@ FetchContent_Declare(
 )
 
 # 3. tinygltf
+set(TINYGLTF_HEADER_ONLY ON CACHE INTERNAL "" FORCE)
+set(TINYGLTF_INSTALL OFF CACHE INTERNAL "" FORCE)
 FetchContent_Declare(
     tinygltf
     GIT_REPOSITORY https://github.com/syoyo/tinygltf.git
@@ -43,6 +45,9 @@ FetchContent_Declare(
 )
 
 # 4. GLFW
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
     glfw
     GIT_REPOSITORY https://github.com/glfw/glfw.git
@@ -53,7 +58,7 @@ FetchContent_Declare(
 FetchContent_Declare(
     glm
     GIT_REPOSITORY https://github.com/g-truc/glm.git
-    GIT_TAG 0.9.9.8
+    GIT_TAG 1.0.3
 )
 
 # Enable updating dependencies
@@ -64,20 +69,26 @@ FetchContent_MakeAvailable(VulkanMemoryAllocator vk-bootstrap tinygltf glfw glm)
 # Build Configuration
 # -------------------------------------------------------------------------
 
-add_executable(hello_world src/main.cpp)
+add_executable(hello_world 
+    src/main.cpp 
+    src/AeroBoar.cpp
+    src/core/Engine.Destroy.cpp
+    src/core/Engine.Initialize.cpp    
+    src/core/Engine.Render.cpp    
+)
 
 # Include directories
 target_include_directories(hello_world PRIVATE
-    ${Vulkan_INCLUDE_DIRS}
     ${tinygltf_SOURCE_DIR}/src
-    ${GLM_INCLUDE_DIRS}  # Note: GLM_INCLUDE_DIRS should be used here instead of glm_SOURCE_DIR
+    ${GLFW_INCLUDE_DIRS}
+    ${Vulkan_INCLUDE_DIRS}
 )
 
 # Link libraries
 target_link_libraries(hello_world PRIVATE
-    Vulkan::Vulkan
+    ${Vulkan_LIBRARIES}
     vk-bootstrap::vk-bootstrap
-    GPUOpen::VulkanMemoryAllocator
+    GPUOpen::VulkanMemoryAllocator    
     glfw
+    glm::glm
 )
-
