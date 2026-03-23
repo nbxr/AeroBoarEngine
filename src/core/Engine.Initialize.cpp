@@ -5,9 +5,34 @@
 #include "VkBootstrap.h"
 #include "vk_mem_alloc.h"
 
-void Core::Engine::initialize(Renderer &renderer) {
+void Core::Engine::initialize(Core::Renderer &renderer) {
     init_vulkan(renderer);
     init_vma(renderer);
+}
+
+inline void init_vk_instance(Core::Renderer &renderer,
+                             vkb::InstanceBuilder &builder) {
+    // vulkan instance
+    auto inst_ret =
+        builder.set_app_name("AeroBoar")
+            .request_validation_layers(renderer.vk.enable_validation_layers)
+            .use_default_debug_messenger()
+            .build();
+
+    if (!inst_ret) {
+        throw std::runtime_error("Failed to create Vulkan instance");
+    }
+
+    renderer.vk.instance = inst_ret.value();
+}
+
+inline void init_surface(Core::Renderer &renderer) {
+    // surface
+    if (glfwCreateWindowSurface(renderer.vk.instance,
+                                renderer.window.glfw_handle, nullptr,
+                                &renderer.vk.surface) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create Vulkan surface");
+    }
 }
 
 inline void add_features(vkb::PhysicalDeviceSelector &selector) {
@@ -44,30 +69,8 @@ inline void add_features(vkb::PhysicalDeviceSelector &selector) {
     selector.add_required_extension_features(featuresIndexing);
 }
 
-void Core::Engine::init_vulkan(Renderer &renderer) {
-    // Initialize Vulkan using vk-bootstrap
-    vkb::InstanceBuilder builder{};
-
-    // vulkan instance
-    auto inst_ret =
-        builder.set_app_name("AeroBoar")
-            .request_validation_layers(renderer.vk.enable_validation_layers)
-            .use_default_debug_messenger()
-            .build();
-
-    if (!inst_ret) {
-        throw std::runtime_error("Failed to create Vulkan instance");
-    }
-    renderer.vk.instance = inst_ret.value();
-
-    // surface
-    if (glfwCreateWindowSurface(renderer.vk.instance,
-                                renderer.window.glfw_handle, nullptr,
-                                &renderer.vk.surface) != VK_SUCCESS) {
-        throw std::runtime_error("Failed to create Vulkan surface");
-    }
-
-    // physical device
+inline void init_physical_device(Core::Renderer &renderer) {
+    // Add
     vkb::PhysicalDeviceSelector selector{renderer.vk.instance};
     add_features(selector);
     auto phys_ret = selector.set_surface(renderer.vk.surface).select();
@@ -76,16 +79,18 @@ void Core::Engine::init_vulkan(Renderer &renderer) {
         throw std::runtime_error("Failed to find suitable physical device");
     }
     renderer.vk.physical_device = phys_ret.value();
+}
 
-    // logical device
+inline void init_logical_device(Core::Renderer &renderer) {
     vkb::DeviceBuilder device_builder{renderer.vk.physical_device};
     auto dev_ret = device_builder.build();
     if (!dev_ret) {
         throw std::runtime_error("Failed to find suitable logical device");
     }
     renderer.vk.device = dev_ret.value();
+}
 
-    // graphics queue
+inline void init_graphics_queue(Core::Renderer &renderer) {
     auto graphics_queue_ret =
         renderer.vk.device.get_queue(vkb::QueueType::graphics);
     if (!graphics_queue_ret) {
@@ -95,7 +100,65 @@ void Core::Engine::init_vulkan(Renderer &renderer) {
     renderer.vk.graphics_queue = graphics_queue;
 }
 
-void Core::Engine::init_vma(Renderer &renderer) {
+inline void init_present_queue(Core::Renderer &renderer) {
+    auto present_queue_ret =
+        renderer.vk.device.get_queue(vkb::QueueType::present);
+    if (!present_queue_ret) {
+        throw std::runtime_error("Failed to find present queue");
+    }
+    VkQueue present_queue = present_queue_ret.value();
+    renderer.vk.present_queue = present_queue;
+}
+
+inline void init_transfer_queue(Core::Renderer &renderer) {
+    auto transfer_queue_ret =
+        renderer.vk.device.get_queue(vkb::QueueType::transfer);
+    if (!transfer_queue_ret) {
+        // If no dedicated transfer queue, fall back to graphics queue
+        transfer_queue_ret = renderer.vk.device.get_queue(vkb::QueueType::graphics);
+        if (!transfer_queue_ret) {
+            throw std::runtime_error("Failed to find transfer queue or graphics queue");
+        }
+    }
+    VkQueue transfer_queue = transfer_queue_ret.value();
+    renderer.vk.transfer_queue = transfer_queue;
+}
+
+inline void init_swapchain(Core::Renderer &renderer) {
+    vkb::SwapchainBuilder swapchain_builder{renderer.vk.device, renderer.vk.surface};
+    auto swapchain_ret = swapchain_builder.build();
+    
+    if (!swapchain_ret) {
+        throw std::runtime_error("Failed to create swapchain");
+    }
+    
+    renderer.vk.swapchain = swapchain_ret.value();
+}
+
+void Core::Engine::init_vulkan(Core::Renderer &renderer) {
+    // Initialize Vulkan using vk-bootstrap
+    vkb::InstanceBuilder builder{};
+
+    // vulkan instance
+    init_vk_instance(renderer, builder);
+
+    // surface
+    init_surface(renderer);
+
+    // physical and logical devices
+    init_physical_device(renderer);
+    init_logical_device(renderer);
+
+    // queues
+    init_graphics_queue(renderer);
+    init_present_queue(renderer);
+    init_transfer_queue(renderer);
+
+    // swapchain
+    init_swapchain(renderer);
+}
+
+void Core::Engine::init_vma(Core::Renderer &renderer) {
     VmaAllocatorCreateInfo alloc_info = {};
     alloc_info.instance = renderer.vk.instance;
     alloc_info.physicalDevice = renderer.vk.physical_device;
@@ -106,3 +169,6 @@ void Core::Engine::init_vma(Renderer &renderer) {
         throw std::runtime_error("Failed to create Vulkan Memory Allocator");
     }
 }
+
+
+

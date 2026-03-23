@@ -9,7 +9,7 @@ void Core::Engine::destroy(Renderer &renderer) {
 }
 
 void Core::Engine::destroy_vulkan(Renderer &renderer) {
-    vkb::destroy_swapchain(renderer.vk.swap_chain);
+    vkb::destroy_swapchain(renderer.vk.swapchain);
     vkb::destroy_device(renderer.vk.device);
     vkb::destroy_instance(renderer.vk.instance);
 }

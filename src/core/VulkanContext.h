@@ -10,10 +10,11 @@ struct VulkanContext {
     vkb::Instance instance;
     vkb::PhysicalDevice physical_device;
     vkb::Device device;
+    vkb::Swapchain swapchain;
     VkQueue graphics_queue;
     VkQueue present_queue;
+    VkQueue transfer_queue;
     VkSurfaceKHR surface;
-    vkb::Swapchain swap_chain;
     VkCommandPool command_pool;
 
     // Integer types
