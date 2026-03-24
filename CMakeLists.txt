@@ -41,7 +41,7 @@ set(TINYGLTF_INSTALL OFF CACHE INTERNAL "" FORCE)
 FetchContent_Declare(
     tinygltf
     GIT_REPOSITORY https://github.com/syoyo/tinygltf.git
-    GIT_TAG v2.9.7
+    GIT_TAG v3.0.0
 )
 
 # 4. GLFW
