@@ -41,6 +41,8 @@ alwaysApply: true
 - Scene management and hierarchy
 - Bindless rendering with PRB pipelines
 - VK_EXT_descriptor_heap for efficient descriptor management
+- Reverse-z depth buffer
+- all GLM implementation must follow Vulkan best practices and conventions
 
 ### Desktop Development Mode
 - Controller visualization in window

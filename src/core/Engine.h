@@ -1,17 +1,19 @@
 #pragma once
 
-namespace Core {
+namespace core {
 struct Renderer;
 class Engine {
   public:
-    static void initialize(Renderer &renderer);
-    static void render(Renderer &renderer);
-    static void destroy(Renderer &renderer);
+    static void initialize(core::Renderer &renderer);
+    static void render(core::Renderer &renderer);
+    static void destroy(core::Renderer &renderer);
 
   private:
-    static void init_vulkan(Renderer &renderer);
-    static void init_vma(Renderer &renderer);
-    static void destroy_vulkan(Renderer &renderer);
-    static void destroy_vma(Renderer &renderer);
+    static void init_vulkan(core::Renderer &renderer);
+    static void init_vma(core::Renderer &renderer);
+    static void init_renderer(core::Renderer &renderer);
+    static void destroy_render_pass(core::Renderer &renderer);
+    static void destroy_vulkan(core::Renderer &renderer);
+    static void destroy_vma(core::Renderer &renderer);
 };
 }; // namespace Core

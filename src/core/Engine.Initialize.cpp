@@ -5,12 +5,12 @@
 #include "VkBootstrap.h"
 #include "vk_mem_alloc.h"
 
-void Core::Engine::initialize(Core::Renderer &renderer) {
+void core::Engine::initialize(core::Renderer &renderer) {
     init_vulkan(renderer);
     init_vma(renderer);
 }
 
-inline void init_vk_instance(Core::Renderer &renderer,
+inline void init_vk_instance(core::Renderer &renderer,
                              vkb::InstanceBuilder &builder) {
     // vulkan instance
     auto inst_ret =
@@ -26,7 +26,7 @@ inline void init_vk_instance(Core::Renderer &renderer,
     renderer.vk.instance = inst_ret.value();
 }
 
-inline void init_surface(Core::Renderer &renderer) {
+inline void init_surface(core::Renderer &renderer) {
     // surface
     if (glfwCreateWindowSurface(renderer.vk.instance,
                                 renderer.window.glfw_handle, nullptr,
@@ -69,7 +69,7 @@ inline void add_features(vkb::PhysicalDeviceSelector &selector) {
     selector.add_required_extension_features(featuresIndexing);
 }
 
-inline void init_physical_device(Core::Renderer &renderer) {
+inline void init_physical_device(core::Renderer &renderer) {
     // Add
     vkb::PhysicalDeviceSelector selector{renderer.vk.instance};
     add_features(selector);
@@ -81,7 +81,7 @@ inline void init_physical_device(Core::Renderer &renderer) {
     renderer.vk.physical_device = phys_ret.value();
 }
 
-inline void init_logical_device(Core::Renderer &renderer) {
+inline void init_logical_device(core::Renderer &renderer) {
     vkb::DeviceBuilder device_builder{renderer.vk.physical_device};
     auto dev_ret = device_builder.build();
     if (!dev_ret) {
@@ -90,7 +90,7 @@ inline void init_logical_device(Core::Renderer &renderer) {
     renderer.vk.device = dev_ret.value();
 }
 
-inline void init_graphics_queue(Core::Renderer &renderer) {
+inline void init_graphics_queue(core::Renderer &renderer) {
     auto graphics_queue_ret =
         renderer.vk.device.get_queue(vkb::QueueType::graphics);
     if (!graphics_queue_ret) {
@@ -100,7 +100,7 @@ inline void init_graphics_queue(Core::Renderer &renderer) {
     renderer.vk.graphics_queue = graphics_queue;
 }
 
-inline void init_present_queue(Core::Renderer &renderer) {
+inline void init_present_queue(core::Renderer &renderer) {
     auto present_queue_ret =
         renderer.vk.device.get_queue(vkb::QueueType::present);
     if (!present_queue_ret) {
@@ -110,7 +110,7 @@ inline void init_present_queue(Core::Renderer &renderer) {
     renderer.vk.present_queue = present_queue;
 }
 
-inline void init_transfer_queue(Core::Renderer &renderer) {
+inline void init_transfer_queue(core::Renderer &renderer) {
     auto transfer_queue_ret =
         renderer.vk.device.get_queue(vkb::QueueType::transfer);
     if (!transfer_queue_ret) {
@@ -124,7 +124,7 @@ inline void init_transfer_queue(Core::Renderer &renderer) {
     renderer.vk.transfer_queue = transfer_queue;
 }
 
-inline void init_swapchain(Core::Renderer &renderer) {
+inline void init_swapchain(core::Renderer &renderer) {
     vkb::SwapchainBuilder swapchain_builder{renderer.vk.device, renderer.vk.surface};
     auto swapchain_ret = swapchain_builder.build();
     
@@ -135,7 +135,50 @@ inline void init_swapchain(Core::Renderer &renderer) {
     renderer.vk.swapchain = swapchain_ret.value();
 }
 
-void Core::Engine::init_vulkan(Core::Renderer &renderer) {
+
+inline void init_render_pass(core::Renderer &renderer) {
+    VkAttachmentDescription color_attachment = {};
+    color_attachment.format = renderer.vk.swapchain.image_format;
+    color_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    color_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    color_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    color_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    color_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+    VkAttachmentReference color_attachment_ref = {};
+    color_attachment_ref.attachment = 0;
+    color_attachment_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+    VkSubpassDescription subpass = {};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 1;
+    subpass.pColorAttachments = &color_attachment_ref;
+
+    VkSubpassDependency dependency = {};
+    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+    dependency.dstSubpass = 0;
+    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.srcAccessMask = 0;
+    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+    VkRenderPassCreateInfo render_pass_info = {};
+    render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    render_pass_info.attachmentCount = 1;
+    render_pass_info.pAttachments = &color_attachment;
+    render_pass_info.subpassCount = 1;
+    render_pass_info.pSubpasses = &subpass;
+    render_pass_info.dependencyCount = 1;
+    render_pass_info.pDependencies = &dependency;
+
+    if (vkCreateRenderPass(renderer.vk.device, &render_pass_info, nullptr, &renderer.vk.render_pass) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create render pass");
+    }
+}
+
+void core::Engine::init_vulkan(core::Renderer &renderer) {
     // Initialize Vulkan using vk-bootstrap
     vkb::InstanceBuilder builder{};
 
@@ -156,9 +199,12 @@ void Core::Engine::init_vulkan(Core::Renderer &renderer) {
 
     // swapchain
     init_swapchain(renderer);
+
+    // render pass
+    init_render_pass(renderer);
 }
 
-void Core::Engine::init_vma(Core::Renderer &renderer) {
+void core::Engine::init_vma(core::Renderer &renderer) {
     VmaAllocatorCreateInfo alloc_info = {};
     alloc_info.instance = renderer.vk.instance;
     alloc_info.physicalDevice = renderer.vk.physical_device;
@@ -170,5 +216,39 @@ void Core::Engine::init_vma(Core::Renderer &renderer) {
     }
 }
 
+void core::Engine::init_renderer(core::Renderer &renderer) {
+        // Initialize per-pass data
+    renderer.pass.clear();
+    
+    // Create pass contexts for different pass types
+    std::vector<core::PassType> pass_types = {
+        core::PassType::Forward,
+        core::PassType::Transparent,
+        core::PassType::Shadow
+    };
+    
+    for (auto pass_type : pass_types) {
+        core::PassContext pass_context = {};
+        pass_context.render_pass = renderer.vk.render_pass;
+        
+        // Create framebuffers for this pass
+        // For now, we'll create framebuffers for each swapchain image
+        pass_context.framebuffers.resize(renderer.vk.swapchain.image_count);
+        
+        for (uint32_t i = 0; i < renderer.vk.swapchain.image_count; i++) {
+            VkFramebufferCreateInfo framebuffer_info = {};
+            framebuffer_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            framebuffer_info.renderPass = renderer.vk.render_pass;
+            framebuffer_info.attachmentCount = 1;
+            //TODO: framebuffer_info.pAttachments = &renderer.vk.image_views[i];
+            framebuffer_info.width = renderer.vk.swapchain.extent.width;
+            framebuffer_info.height = renderer.vk.swapchain.extent.height;
+            framebuffer_info.layers = 1;
+            
+            if (vkCreateFramebuffer(renderer.vk.device, &framebuffer_info, nullptr, &pass_context.framebuffers[i]) != VK_SUCCESS) {
+                throw std::runtime_error("Failed to create framebuffer");
+            }
+        }
+}
 
 

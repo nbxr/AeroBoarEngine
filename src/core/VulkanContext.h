@@ -4,7 +4,7 @@
 #include <vulkan/vulkan.h>
 #include "VkBootstrap.h"
 
-namespace Core {
+namespace core {
 struct VulkanContext {
     // Largest types first to minimize padding
     vkb::Instance instance;
@@ -16,6 +16,7 @@ struct VulkanContext {
     VkQueue transfer_queue;
     VkSurfaceKHR surface;
     VkCommandPool command_pool;
+    VkRenderPass render_pass;
 
     // Integer types
     uint32_t graphics_family_index;

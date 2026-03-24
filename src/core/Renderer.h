@@ -1,17 +1,21 @@
 #pragma once
 
+#include "PassType.h"
+#include "PassContext.h"
+#include "VulkanContext.h"
 #include "vk_mem_alloc.h"
 #include <GLFW/glfw3.h>
-#include "VulkanContext.h"
+#include <unordered_map>
 
-namespace Core {
+namespace core {
 struct Renderer {
-  VulkanContext vk{};
-  VmaAllocator allocator{};
-  struct Window {
-    GLFWwindow *glfw_handle{nullptr};
-    int32_t width{};
-    int32_t height{};
-  } window;
+    VulkanContext vk{};
+    VmaAllocator allocator{};
+    struct Window {
+        GLFWwindow *glfw_handle{nullptr};
+        int32_t width{};
+        int32_t height{};
+    } window;
+    std::unordered_map<core::PassType, core::PassContext> pass{};
 };
-}; // namespace Core
+}; // namespace core

@@ -14,7 +14,7 @@ int AeroBoar::fly() {
     }
 
     // create renderer
-    Core::Renderer renderer{};
+    core::Renderer renderer{};
 
     // Create a windowed mode window and its vulkan context
     // Set GLFW window hints
@@ -33,16 +33,17 @@ int AeroBoar::fly() {
     glfwSwapInterval(1);
 
     // initialize
-    Core::Engine::initialize(renderer);
+    core::Engine::initialize(renderer);
 
     // Main render loop
     while (!glfwWindowShouldClose(renderer.window.glfw_handle)) {
         // Handle events (keyboard, mouse, etc.)
         glfwPollEvents();
-        Core::Engine::render(renderer);
+        core::Engine::render(renderer);
     }
 
-    Core::Engine::destroy(renderer);
+    // cleanup and terminate
+    core::Engine::destroy(renderer);
     glfwTerminate();
     return 0;
 }
