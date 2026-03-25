@@ -5,7 +5,6 @@
 #include "VulkanContext.h"
 #include "vk_mem_alloc.h"
 #include <GLFW/glfw3.h>
-#include <unordered_map>
 
 namespace core {
 struct Renderer {
@@ -16,6 +15,6 @@ struct Renderer {
         int32_t width{};
         int32_t height{};
     } window;
-    std::unordered_map<core::PassType, core::PassContext> pass{};
+    core::PassContext pass{};
 };
 }; // namespace core

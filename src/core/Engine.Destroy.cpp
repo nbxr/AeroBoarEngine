@@ -10,7 +10,7 @@ void core::Engine::destroy(Renderer &renderer) {
 }
 
 void core::Engine::destroy_render_pass(core::Renderer &renderer) {
-    vkDestroyRenderPass(renderer.vk.device, renderer.vk.render_pass, nullptr);
+    vkDestroyRenderPass(renderer.vk.device, renderer.pass.render_pass, nullptr);
 }
 
 void core::Engine::destroy_vulkan(Renderer &renderer) {

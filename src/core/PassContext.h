@@ -1,12 +1,12 @@
 #pragma once
 
-#include "PassType.h"
-#include <vector>
-#include <vulkan/vulkan.h>
-#include <unordered_map>
 #include "AllocatedBuffer.h"
 #include "AllocatedImage.h"
+#include "PassType.h"
 #include "SubpassContext.h"
+#include <unordered_map>
+#include <vector>
+#include <vulkan/vulkan.h>
 
 namespace core {
 struct PassContext {
@@ -28,13 +28,13 @@ struct PassContext {
     PassType type;
 
     // Additional pass-specific fields that might be needed
-    VkCommandPool command_pool;                     // generic pool for this pass
-    std::vector<VkCommandBuffer> command_buffers;   // allocated from this pool
-    VkDescriptorPool descriptor_pool;               // pool that can allocate many descriptors
-    std::vector<VkDescriptorSet> descriptor_sets;   // per-frame descriptor sets
-    
+    VkCommandPool command_pool;                   // generic pool for this pass
+    std::vector<VkCommandBuffer> command_buffers; // allocated from this pool
+    VkDescriptorPool descriptor_pool; // pool that can allocate many descriptors
+    std::vector<VkDescriptorSet> descriptor_sets; // per-frame descriptor sets
+
     std::unordered_map<core::PassType, core::SubpassContext> subpasses{};
-    
+
     core::AllocatedBuffer vertex_buffer;
     core::AllocatedBuffer index_buffer;
     core::AllocatedBuffer uniform_buffer;

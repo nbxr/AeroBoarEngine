@@ -1,8 +1,8 @@
 #define VMA_IMPLEMENTATION
 
+#include "Engine.h"
 #include "AllocatedBuffer.h"
 #include "AllocatedImage.h"
-#include "Engine.h"
 #include "Renderer.h"
 #include "VkBootstrap.h"
 #include "vk_mem_alloc.h"
@@ -117,9 +117,11 @@ inline void init_transfer_queue(core::Renderer &renderer) {
         renderer.vk.device.get_queue(vkb::QueueType::transfer);
     if (!transfer_queue_ret) {
         // If no dedicated transfer queue, fall back to graphics queue
-        transfer_queue_ret = renderer.vk.device.get_queue(vkb::QueueType::graphics);
+        transfer_queue_ret =
+            renderer.vk.device.get_queue(vkb::QueueType::graphics);
         if (!transfer_queue_ret) {
-            throw std::runtime_error("Failed to find transfer queue or graphics queue");
+            throw std::runtime_error(
+                "Failed to find transfer queue or graphics queue");
         }
     }
     VkQueue transfer_queue = transfer_queue_ret.value();
@@ -127,13 +129,14 @@ inline void init_transfer_queue(core::Renderer &renderer) {
 }
 
 inline void init_swapchain(core::Renderer &renderer) {
-    vkb::SwapchainBuilder swapchain_builder{renderer.vk.device, renderer.vk.surface};
+    vkb::SwapchainBuilder swapchain_builder{renderer.vk.device,
+                                            renderer.vk.surface};
     auto swapchain_ret = swapchain_builder.build();
-    
+
     if (!swapchain_ret) {
         throw std::runtime_error("Failed to create swapchain");
     }
-    
+
     renderer.vk.swapchain = swapchain_ret.value();
 }
 
@@ -174,7 +177,8 @@ inline void init_render_pass(core::Renderer &renderer) {
     render_pass_info.dependencyCount = 1;
     render_pass_info.pDependencies = &dependency;
 
-    if (vkCreateRenderPass(renderer.vk.device, &render_pass_info, nullptr, &renderer.vk.render_pass) != VK_SUCCESS) {
+    if (vkCreateRenderPass(renderer.vk.device, &render_pass_info, nullptr,
+                           &renderer.pass.render_pass) != VK_SUCCESS) {
         throw std::runtime_error("Failed to create render pass");
     }
 }
@@ -217,6 +221,4 @@ void core::Engine::init_vma(core::Renderer &renderer) {
     }
 }
 
-void core::Engine::init_renderer(Renderer &renderer) {
-    
-}
+void core::Engine::init_renderer(Renderer &renderer) {}
