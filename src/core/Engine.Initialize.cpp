@@ -1,5 +1,7 @@
 #define VMA_IMPLEMENTATION
 
+#include "AllocatedBuffer.h"
+#include "AllocatedImage.h"
 #include "Engine.h"
 #include "Renderer.h"
 #include "VkBootstrap.h"
@@ -135,7 +137,6 @@ inline void init_swapchain(core::Renderer &renderer) {
     renderer.vk.swapchain = swapchain_ret.value();
 }
 
-
 inline void init_render_pass(core::Renderer &renderer) {
     VkAttachmentDescription color_attachment = {};
     color_attachment.format = renderer.vk.swapchain.image_format;
@@ -216,39 +217,6 @@ void core::Engine::init_vma(core::Renderer &renderer) {
     }
 }
 
-void core::Engine::init_renderer(core::Renderer &renderer) {
-        // Initialize per-pass data
-    renderer.pass.clear();
+void core::Engine::init_renderer(Renderer &renderer) {
     
-    // Create pass contexts for different pass types
-    std::vector<core::PassType> pass_types = {
-        core::PassType::Forward,
-        core::PassType::Transparent,
-        core::PassType::Shadow
-    };
-    
-    for (auto pass_type : pass_types) {
-        core::PassContext pass_context = {};
-        pass_context.render_pass = renderer.vk.render_pass;
-        
-        // Create framebuffers for this pass
-        // For now, we'll create framebuffers for each swapchain image
-        pass_context.framebuffers.resize(renderer.vk.swapchain.image_count);
-        
-        for (uint32_t i = 0; i < renderer.vk.swapchain.image_count; i++) {
-            VkFramebufferCreateInfo framebuffer_info = {};
-            framebuffer_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-            framebuffer_info.renderPass = renderer.vk.render_pass;
-            framebuffer_info.attachmentCount = 1;
-            //TODO: framebuffer_info.pAttachments = &renderer.vk.image_views[i];
-            framebuffer_info.width = renderer.vk.swapchain.extent.width;
-            framebuffer_info.height = renderer.vk.swapchain.extent.height;
-            framebuffer_info.layers = 1;
-            
-            if (vkCreateFramebuffer(renderer.vk.device, &framebuffer_info, nullptr, &pass_context.framebuffers[i]) != VK_SUCCESS) {
-                throw std::runtime_error("Failed to create framebuffer");
-            }
-        }
 }
-
-

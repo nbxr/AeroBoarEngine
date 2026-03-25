@@ -5,6 +5,7 @@
 #include "VkBootstrap.h"
 
 namespace core {
+struct PassContext;
 struct VulkanContext {
     // Largest types first to minimize padding
     vkb::Instance instance;
@@ -15,8 +16,7 @@ struct VulkanContext {
     VkQueue present_queue;
     VkQueue transfer_queue;
     VkSurfaceKHR surface;
-    VkCommandPool command_pool;
-    VkRenderPass render_pass;
+    VkCommandPool command_pool; // *generic* pool for one-time submissions
 
     // Integer types
     uint32_t graphics_family_index;
@@ -27,6 +27,9 @@ struct VulkanContext {
 
     // Extent structures
     VkExtent2D swap_chain_extent;
+
+    // Large structs
+    PassContext pass{};
 
     // Vectors (these have pointer overhead)
     std::vector<VkCommandBuffer> command_buffers;
