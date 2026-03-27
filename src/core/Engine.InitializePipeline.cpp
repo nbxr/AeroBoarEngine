@@ -1,0 +1,182 @@
+#include "Engine.h"
+#include "AllocatedBuffer.h"
+#include "AllocatedImage.h"
+#include "Renderer.h"
+
+void core::Engine::init_pipeline_layout(core::Renderer &renderer) {
+    // Pipeline layout
+    VkPipelineLayoutCreateInfo pipeline_layout_info = {};
+    pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipeline_layout_info.setLayoutCount = 1;
+    pipeline_layout_info.pSetLayouts = &renderer.pass.descriptor_set_layout;
+    pipeline_layout_info.pushConstantRangeCount = 1;
+    pipeline_layout_info.pPushConstantRanges =
+        &renderer.pass.push_constant_range;
+
+    if (vkCreatePipelineLayout(renderer.vk.device, &pipeline_layout_info,
+                               nullptr,
+                               &renderer.pass.pipeline_layout) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create pipeline layout");
+    }
+}
+
+void core::Engine::init_graphics_pipeline(core::Renderer &renderer) {
+    // Vertex shader
+    VkShaderModule vertex_shader_module = {};
+    VkShaderModule fragment_shader_module = {};
+
+    // Create shader modules - in a real implementation you would load these
+    // from files For now, we'll create placeholder shader modules
+    VkShaderModuleCreateInfo vertex_shader_info = {};
+    vertex_shader_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    vertex_shader_info.codeSize =
+        0; // Placeholder - in reality this would be the actual shader bytecode
+    vertex_shader_info.pCode = nullptr; // Placeholder
+
+    VkShaderModuleCreateInfo fragment_shader_info = {};
+    fragment_shader_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    fragment_shader_info.codeSize = 0;    // Placeholder
+    fragment_shader_info.pCode = nullptr; // Placeholder
+
+    if (vkCreateShaderModule(renderer.vk.device, &vertex_shader_info, nullptr,
+                             &vertex_shader_module) != VK_SUCCESS ||
+        vkCreateShaderModule(renderer.vk.device, &fragment_shader_info, nullptr,
+                             &fragment_shader_module) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create shader modules");
+    }
+
+    // Shader stage creation
+    VkPipelineShaderStageCreateInfo vertex_stage_info = {};
+    vertex_stage_info.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    vertex_stage_info.stage = VK_SHADER_STAGE_VERTEX_BIT;
+    vertex_stage_info.module = vertex_shader_module;
+    vertex_stage_info.pName = "main";
+
+    VkPipelineShaderStageCreateInfo fragment_stage_info = {};
+    fragment_stage_info.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    fragment_stage_info.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    fragment_stage_info.module = fragment_shader_module;
+    fragment_stage_info.pName = "main";
+
+    VkPipelineShaderStageCreateInfo shader_stages[] = {vertex_stage_info,
+                                                       fragment_stage_info};
+
+    // Vertex input state
+    VkPipelineVertexInputStateCreateInfo vertex_input_info = {};
+    vertex_input_info.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertex_input_info.vertexBindingDescriptionCount = 0;
+    vertex_input_info.pVertexBindingDescriptions = nullptr;
+    vertex_input_info.vertexAttributeDescriptionCount = 0;
+    vertex_input_info.pVertexAttributeDescriptions = nullptr;
+
+    // Input assembly
+    VkPipelineInputAssemblyStateCreateInfo input_assembly = {};
+    input_assembly.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    input_assembly.primitiveRestartEnable = VK_FALSE;
+
+    // Viewport and scissor
+    VkViewport viewport = {};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = (float)renderer.vk.swap_chain_extent.width;
+    viewport.height = (float)renderer.vk.swap_chain_extent.height;
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+
+    VkRect2D scissor = {};
+    scissor.offset = {0, 0};
+    scissor.extent = renderer.vk.swap_chain_extent;
+
+    VkPipelineViewportStateCreateInfo viewport_state = {};
+    viewport_state.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewport_state.viewportCount = 1;
+    viewport_state.pViewports = &viewport;
+    viewport_state.scissorCount = 1;
+    viewport_state.pScissors = &scissor;
+
+    // Rasterizer
+    VkPipelineRasterizationStateCreateInfo rasterizer = {};
+    rasterizer.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.depthClampEnable = VK_FALSE;
+    rasterizer.rasterizerDiscardEnable = VK_FALSE;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.lineWidth = 1.0f;
+    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rasterizer.depthBiasEnable = VK_FALSE;
+    rasterizer.depthBiasConstantFactor = 0.0f;
+    rasterizer.depthBiasClamp = 0.0f;
+    rasterizer.depthBiasSlopeFactor = 0.0f;
+
+    // Multisampling
+    VkPipelineMultisampleStateCreateInfo multisampling = {};
+    multisampling.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.sampleShadingEnable = VK_FALSE;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    multisampling.minSampleShading = 1.0f;
+    multisampling.pSampleMask = nullptr;
+    multisampling.alphaToCoverageEnable = VK_FALSE;
+    multisampling.alphaToOneEnable = VK_FALSE;
+
+    // Color blending
+    VkPipelineColorBlendAttachmentState color_blend_attachment = {};
+    color_blend_attachment.colorWriteMask =
+        VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+        VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    color_blend_attachment.blendEnable = VK_FALSE;
+    color_blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    color_blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+    color_blend_attachment.colorBlendOp = VK_BLEND_OP_ADD;
+    color_blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    color_blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+    color_blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD;
+
+    VkPipelineColorBlendStateCreateInfo color_blending = {};
+    color_blending.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    color_blending.logicOpEnable = VK_FALSE;
+    color_blending.logicOp = VK_LOGIC_OP_COPY;
+    color_blending.attachmentCount = 1;
+    color_blending.pAttachments = &color_blend_attachment;
+    color_blending.blendConstants[0] = 0.0f;
+    color_blending.blendConstants[1] = 0.0f;
+    color_blending.blendConstants[2] = 0.0f;
+    color_blending.blendConstants[3] = 0.0f;
+
+    // Pipeline creation
+    VkGraphicsPipelineCreateInfo pipeline_info = {};
+    pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipeline_info.stageCount = 2;
+    pipeline_info.pStages = shader_stages;
+    pipeline_info.pVertexInputState = &vertex_input_info;
+    pipeline_info.pInputAssemblyState = &input_assembly;
+    pipeline_info.pViewportState = &viewport_state;
+    pipeline_info.pRasterizationState = &rasterizer;
+    pipeline_info.pMultisampleState = &multisampling;
+    pipeline_info.pDepthStencilState = nullptr;
+    pipeline_info.pColorBlendState = &color_blending;
+    pipeline_info.pDynamicState = nullptr;
+    pipeline_info.layout = renderer.pass.pipeline_layout;
+    pipeline_info.renderPass = renderer.pass.render_pass;
+    pipeline_info.subpass = 0;
+    pipeline_info.basePipelineHandle = VK_NULL_HANDLE;
+    pipeline_info.basePipelineIndex = -1;
+
+    if (vkCreateGraphicsPipelines(renderer.vk.device, VK_NULL_HANDLE, 1,
+                                  &pipeline_info, nullptr,
+                                  &renderer.pass.pipeline) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create graphics pipeline");
+    }
+
+    // Cleanup shader modules
+    vkDestroyShaderModule(renderer.vk.device, vertex_shader_module, nullptr);
+    vkDestroyShaderModule(renderer.vk.device, fragment_shader_module, nullptr);
+}

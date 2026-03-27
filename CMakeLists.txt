@@ -69,23 +69,26 @@ FetchContent_MakeAvailable(VulkanMemoryAllocator vk-bootstrap tinygltf glfw glm)
 # Build Configuration
 # -------------------------------------------------------------------------
 
-add_executable(hello_world 
+add_executable(Aero_Boar_Engine 
     src/main.cpp 
     src/AeroBoar.cpp
     src/core/Engine.Destroy.cpp
-    src/core/Engine.Initialize.cpp    
+    src/core/Engine.Initialize.cpp
+    src/core/Engine.InitializeDevices.cpp
+    src/core/Engine.InitializePasses.cpp
+    src/core/Engine.InitializePipeline.cpp    
     src/core/Engine.Render.cpp    
 )
 
 # Include directories
-target_include_directories(hello_world PRIVATE
+target_include_directories(Aero_Boar_Engine PRIVATE
     ${tinygltf_SOURCE_DIR}/src
     ${GLFW_INCLUDE_DIRS}
     ${Vulkan_INCLUDE_DIRS}
 )
 
 # Link libraries
-target_link_libraries(hello_world PRIVATE
+target_link_libraries(Aero_Boar_Engine PRIVATE
     ${Vulkan_LIBRARIES}
     vk-bootstrap::vk-bootstrap
     GPUOpen::VulkanMemoryAllocator    

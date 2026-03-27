@@ -1,3 +1,5 @@
+
+
 #pragma once
 
 #include <vector>
@@ -8,10 +10,10 @@ namespace core {
 struct PassContext;
 struct VulkanContext {
     // Largest types first to minimize padding
-    vkb::Instance instance;
-    vkb::PhysicalDevice physical_device;
-    vkb::Device device;
-    vkb::Swapchain swapchain;
+    VkInstance instance;
+    VkPhysicalDevice physical_device;
+    VkDevice device;
+    VkSwapchainKHR swapchain;
     VkQueue graphics_queue;
     VkQueue present_queue;
     VkQueue transfer_queue;
@@ -21,6 +23,7 @@ struct VulkanContext {
     // Integer types
     uint32_t graphics_family_index;
     uint32_t present_family_index;
+    uint32_t transfer_family_index;
     VkFormat swap_chain_image_format;
     VkSurfaceFormatKHR surface_format;
     VkPresentModeKHR present_mode;
@@ -45,7 +48,8 @@ struct VulkanContext {
     std::vector<const char *> validation_layers;
     std::vector<const char *> required_extensions;
 
-    // Booleans
+    // Boolean flags
     bool enable_validation_layers;
+    bool use_descriptor_heap; // For runtime switch between descriptor indexing and heap
 };
 }; // namespace Core

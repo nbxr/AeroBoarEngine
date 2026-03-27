@@ -47,5 +47,6 @@ struct PassContext {
     VkExtent2D swapchain_extent{};
     VkFormat swapchain_format{VK_FORMAT_UNDEFINED};
     VkSampleCountFlagBits sample_count{VK_SAMPLE_COUNT_1_BIT};
+    VkPushConstantRange push_constant_range{};
 };
 } // namespace core
