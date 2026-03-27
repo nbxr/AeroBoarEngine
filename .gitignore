@@ -1,4 +1,6 @@
 build/
+.vscode/
+.continue/
 *.o
 *.so
 *.lib

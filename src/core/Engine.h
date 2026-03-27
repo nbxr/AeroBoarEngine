@@ -14,9 +14,9 @@ class Engine {
   private:
   // devices
     static void add_features(vkb::PhysicalDeviceSelector &selector);
-    static vkb::PhysicalDevice &init_physical_device(core::Renderer &renderer,
+    static vkb::PhysicalDevice init_physical_device(core::Renderer &renderer,
                                                      vkb::Instance &inst);
-    static vkb::Device &init_logical_device(core::Renderer &renderer,
+    static vkb::Device init_logical_device(core::Renderer &renderer,
                                             vkb::PhysicalDevice &phys);
     static void init_graphics_queue(core::Renderer &renderer, vkb::Device &dev);
     static void init_present_queue(core::Renderer &renderer, vkb::Device &dev);

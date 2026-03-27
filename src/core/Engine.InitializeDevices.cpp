@@ -53,7 +53,7 @@ void core::Engine::add_features(vkb::PhysicalDeviceSelector &selector) {
     selector.add_required_extension_features(featuresIndexing);
 }
 
-vkb::PhysicalDevice &
+vkb::PhysicalDevice 
 core::Engine::init_physical_device(core::Renderer &renderer,
                                    vkb::Instance &inst) {
     // Add
@@ -64,11 +64,12 @@ core::Engine::init_physical_device(core::Renderer &renderer,
     if (!phys_ret) {
         throw std::runtime_error("Failed to find suitable physical device");
     }
+
     renderer.vk.physical_device = phys_ret.value().physical_device;
     return phys_ret.value();
 }
 
-vkb::Device &core::Engine::init_logical_device(core::Renderer &renderer,
+vkb::Device core::Engine::init_logical_device(core::Renderer &renderer,
                                                vkb::PhysicalDevice &phys) {
     vkb::DeviceBuilder device_builder{phys};
     auto dev_ret = device_builder.build();

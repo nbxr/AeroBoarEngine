@@ -24,6 +24,7 @@ void core::Engine::init_vulkan(core::Renderer &renderer) {
 
     // physical and logical devices
     vkb::PhysicalDevice phys = init_physical_device(renderer, inst);
+    
     vkb::Device dev = init_logical_device(renderer, phys);
 
     // queues

@@ -69,6 +69,11 @@ FetchContent_MakeAvailable(VulkanMemoryAllocator vk-bootstrap tinygltf glfw glm)
 # Build Configuration
 # -------------------------------------------------------------------------
 
+# Windows-specific settings
+if(WIN32)
+    add_definitions(-D_CRT_SECURE_NO_DEPRECATE -D_CRT_SECURE_NO_WARNINGS)
+endif()
+
 add_executable(Aero_Boar_Engine 
     src/main.cpp 
     src/AeroBoar.cpp
