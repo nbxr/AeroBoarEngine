@@ -128,3 +128,26 @@ This document represents best-practice 2026 season architecture for high-perform
 Maintained as of March 2026.
 
 Update this file when VK_EXT_descriptor_heap becomes available on Quest 3 or when new Adreno tile-memory extensions ship.
+
+
+## 9. Shader Strategy - Single Super Shader per Subpass
+
+Given the very limited material and shading variety in this project, using a single super shader (uber shader) per subpass is the recommended approach.
+
+This decision provides several important benefits for Quest 3:
+
+- It minimizes pipeline binding overhead, which is especially valuable in a GPU-driven setup that relies on a single indirect draw call per subpass.
+- It reduces the total number of Vulkan pipelines that need to be created and managed.
+- It keeps the render pass structure simple and allows the Adreno driver to optimize tile memory usage more effectively.
+- With bindless descriptor access and a per-draw material ID, variation between materials is handled inside the shader rather than by switching pipelines.
+
+In practice this means:
+
+- One super shader for the opaque geometry subpass.
+- One super shader for the transparent, lighting, or post-processing subpass.
+
+Material differences are resolved at runtime using a material identifier passed through the indirect draw buffer or instance data, combined with non-uniform indexing into the large bindless descriptor set.
+
+Because the shading variety is intentionally kept low, the cost of controlled branching inside the shader remains acceptable and is generally cheaper than frequent pipeline changes on Quest 3.
+
+This uber-shader approach aligns well with high-performance GPU-driven rendering patterns used on mobile VR hardware in 2026.

@@ -3,7 +3,7 @@
 #include "AllocatedImage.h"
 #include "Renderer.h"
 
-void core::Engine::init_render_pass(core::Renderer &renderer) {
+bool core::Engine::init_render_pass(core::Renderer &renderer) {
     // Multiview render pass for Quest 3
     VkAttachmentDescription color_attachment = {};
     color_attachment.format = renderer.vk.swap_chain_image_format;
@@ -43,11 +43,13 @@ void core::Engine::init_render_pass(core::Renderer &renderer) {
 
     if (vkCreateRenderPass(renderer.vk.device, &render_pass_info, nullptr,
                            &renderer.pass.render_pass) != VK_SUCCESS) {
-        throw std::runtime_error("Failed to create render pass");
+        LOG_ERROR("Failed to create render pass");
+        return false;
     }
+    return true;
 }
 
-void core::Engine::init_descriptor_pool(core::Renderer &renderer) {
+bool core::Engine::init_descriptor_pool(core::Renderer &renderer) {
     // Descriptor pool and set layout for bindless rendering
     VkDescriptorPoolSize pool_sizes[] = {
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000},
@@ -64,11 +66,13 @@ void core::Engine::init_descriptor_pool(core::Renderer &renderer) {
 
     if (vkCreateDescriptorPool(renderer.vk.device, &pool_info, nullptr,
                                &renderer.pass.descriptor_pool) != VK_SUCCESS) {
-        throw std::runtime_error("Failed to create descriptor pool");
+        LOG_ERROR("Failed to create descriptor pool");
+        return false;
     }
+    return true;
 }
 
-void core::Engine::init_descriptor_set_layout(core::Renderer &renderer) {
+bool core::Engine::init_descriptor_set_layout(core::Renderer &renderer) {
     VkDescriptorSetLayoutBinding bindings[4] = {};
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -102,11 +106,13 @@ void core::Engine::init_descriptor_set_layout(core::Renderer &renderer) {
     if (vkCreateDescriptorSetLayout(renderer.vk.device, &layout_info, nullptr,
                                     &renderer.pass.descriptor_set_layout) !=
         VK_SUCCESS) {
-        throw std::runtime_error("Failed to create descriptor set layout");
+        LOG_ERROR("Failed to create descriptor set layout");
+        return false;
     }
+    return true;
 }
 
-void core::Engine::init_command_pool(core::Renderer &renderer) {
+bool core::Engine::init_command_pool(core::Renderer &renderer) {
     // Command pool
     VkCommandPoolCreateInfo cmd_pool_info = {};
     cmd_pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -115,13 +121,17 @@ void core::Engine::init_command_pool(core::Renderer &renderer) {
 
     if (vkCreateCommandPool(renderer.vk.device, &cmd_pool_info, nullptr,
                             &renderer.vk.command_pool) != VK_SUCCESS) {
-        throw std::runtime_error("Failed to create command pool");
+        LOG_ERROR("Failed to create command pool");
+        return false;
     }
+    return true;
 }
 
-void core::Engine::init_command_buffers(core::Renderer &renderer) {}
+bool core::Engine::init_command_buffers(core::Renderer &renderer) {
+    return false; // TODO: Implement init_framebuffers
+}
 
-void core::Engine::init_framebuffers(core::Renderer &renderer) {
+bool core::Engine::init_framebuffers(core::Renderer &renderer) {
     // Framebuffers
     renderer.pass.framebuffers.resize(renderer.vk.swap_chain_images.size());
     for (size_t i = 0; i < renderer.vk.swap_chain_images.size(); i++) {
@@ -136,12 +146,14 @@ void core::Engine::init_framebuffers(core::Renderer &renderer) {
 
         if (vkCreateFramebuffer(renderer.vk.device, &framebuffer_info, nullptr,
                                 &renderer.pass.framebuffers[i]) != VK_SUCCESS) {
-            throw std::runtime_error("Failed to create framebuffer");
+            LOG_ERROR("Failed to create framebuffer");
+            return false;
         }
     }
+    return true;
 }
 
-void core::Engine::init_sync_primitives(core::Renderer &renderer) {
+bool core::Engine::init_sync_primitives(core::Renderer &renderer) {
     // Synchronization primitives
     VkSemaphoreCreateInfo semaphore_info = {};
     semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -159,8 +171,10 @@ void core::Engine::init_sync_primitives(core::Renderer &renderer) {
                 VK_SUCCESS ||
             vkCreateFence(renderer.vk.device, &fence_info, nullptr,
                           &renderer.vk.in_flight_fences[i]) != VK_SUCCESS) {
-            throw std::runtime_error(
-                "Failed to create synchronization primitives");
+            LOG_ERROR("Failed to create synchronization primitives");
+            return false;
         }
     }
+
+    return true;
 }

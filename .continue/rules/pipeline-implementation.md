@@ -62,3 +62,11 @@ Use a single pipeline layout with the bindless set plus push constants.
 Declare large runtime arrays in shaders for textures and buffers.
 
 This setup delivers best-practice on-chip efficiency for GPU-driven VR on Quest 3.
+
+## 7. Shader Strategy
+
+Use a single super shader (uber shader) per subpass.
+This minimizes pipeline binds and reduces total pipeline count, which is ideal for Quest 3's GPU-driven indirect rendering.
+Material variation is handled at runtime via a material ID and bindless descriptor indexing instead of pipeline switches.
+One uber shader for the opaque subpass and one for the transparent/post-processing subpass is sufficient given the low shading variety.
+Branching cost remains acceptable on Adreno when variety is intentionally limited.

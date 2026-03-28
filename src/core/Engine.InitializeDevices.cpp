@@ -53,74 +53,82 @@ void core::Engine::add_features(vkb::PhysicalDeviceSelector &selector) {
     selector.add_required_extension_features(featuresIndexing);
 }
 
-vkb::PhysicalDevice 
-core::Engine::init_physical_device(core::Renderer &renderer,
-                                   vkb::Instance &inst) {
+std::pair<bool, vkb::PhysicalDevice> core::Engine::init_physical_device(core::Renderer &renderer,
+                                                       vkb::Instance &inst) {
     // Add
     vkb::PhysicalDeviceSelector selector{inst};
     add_features(selector);
     auto phys_ret = selector.set_surface(renderer.vk.surface).select();
 
     if (!phys_ret) {
-        throw std::runtime_error("Failed to find suitable physical device");
+        LOG_ERROR("Failed to find suitable physical device");
+        return {false, vkb::PhysicalDevice{}};
     }
 
     renderer.vk.physical_device = phys_ret.value().physical_device;
-    return phys_ret.value();
+    return {true, phys_ret.value()};
 }
 
-vkb::Device core::Engine::init_logical_device(core::Renderer &renderer,
-                                               vkb::PhysicalDevice &phys) {
+std::pair<bool, vkb::Device> core::Engine::init_logical_device(core::Renderer &renderer,
+                                              vkb::PhysicalDevice &phys) {
     vkb::DeviceBuilder device_builder{phys};
     auto dev_ret = device_builder.build();
     if (!dev_ret) {
-        throw std::runtime_error("Failed to find suitable logical device");
+        LOG_ERROR("Failed to find suitable logical device");
+        return {false, vkb::Device{}};        
     }
     renderer.vk.device = dev_ret.value();
-    return dev_ret.value();
+    return {true, dev_ret.value()};
 }
 
-void core::Engine::init_graphics_queue(core::Renderer &renderer,
+bool core::Engine::init_graphics_queue(core::Renderer &renderer,
                                        vkb::Device &dev) {
     auto graphics_queue_ret = dev.get_queue(vkb::QueueType::graphics);
     if (!graphics_queue_ret) {
-        throw std::runtime_error("Failed to find graphics queue");
+        LOG_ERROR("Failed to find graphics queue");
+        return false;
     }
     VkQueue graphics_queue = graphics_queue_ret.value();
     renderer.vk.graphics_queue = graphics_queue;
+    return true;
 }
 
-void core::Engine::init_present_queue(core::Renderer &renderer,
+bool core::Engine::init_present_queue(core::Renderer &renderer,
                                       vkb::Device &dev) {
     auto present_queue_ret = dev.get_queue(vkb::QueueType::present);
     if (!present_queue_ret) {
-        throw std::runtime_error("Failed to find present queue");
+        LOG_ERROR("Failed to find present queue");
+        return false;
     }
     VkQueue present_queue = present_queue_ret.value();
     renderer.vk.present_queue = present_queue;
+    return true;
 }
 
-void core::Engine::init_transfer_queue(core::Renderer &renderer,
+bool core::Engine::init_transfer_queue(core::Renderer &renderer,
                                        vkb::Device &dev) {
     auto transfer_queue_ret = dev.get_queue(vkb::QueueType::transfer);
     if (!transfer_queue_ret) {
         // If no dedicated transfer queue, fall back to graphics queue
         transfer_queue_ret = dev.get_queue(vkb::QueueType::graphics);
         if (!transfer_queue_ret) {
-            throw std::runtime_error(
-                "Failed to find transfer queue or graphics queue");
+            LOG_ERROR("Failed to find transfer queue or graphics queue");
+            return false;
         }
     }
     VkQueue transfer_queue = transfer_queue_ret.value();
     renderer.vk.transfer_queue = transfer_queue;
+
+    return true;
 }
 
-void core::Engine::init_swapchain(core::Renderer &renderer, vkb::Device &dev) {
+bool core::Engine::init_swapchain(core::Renderer &renderer, vkb::Device &dev) {
     vkb::SwapchainBuilder swapchain_builder{dev, renderer.vk.surface};
     auto swapchain_ret = swapchain_builder.build();
 
     if (!swapchain_ret) {
-        throw std::runtime_error("Failed to create swapchain");
+        LOG_ERROR("Failed to create swapchain");
+        return false;
     }
 
     renderer.vk.swapchain = swapchain_ret.value();
@@ -129,4 +137,6 @@ void core::Engine::init_swapchain(core::Renderer &renderer, vkb::Device &dev) {
     renderer.vk.swap_chain_images.resize(swapchain_ret.value().image_count);
     renderer.vk.swap_chain_image_views.resize(
         swapchain_ret.value().image_count);
+
+    return true;
 }

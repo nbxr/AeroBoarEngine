@@ -3,7 +3,7 @@
 #include "AllocatedImage.h"
 #include "Renderer.h"
 
-void core::Engine::init_pipeline_layout(core::Renderer &renderer) {
+bool core::Engine::init_pipeline_layout(core::Renderer &renderer) {
     // Pipeline layout
     VkPipelineLayoutCreateInfo pipeline_layout_info = {};
     pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -16,11 +16,13 @@ void core::Engine::init_pipeline_layout(core::Renderer &renderer) {
     if (vkCreatePipelineLayout(renderer.vk.device, &pipeline_layout_info,
                                nullptr,
                                &renderer.pass.pipeline_layout) != VK_SUCCESS) {
-        throw std::runtime_error("Failed to create pipeline layout");
+        LOG_ERROR("Failed to create pipeline layout");
+        return false;
     }
+    return true;
 }
 
-void core::Engine::init_graphics_pipeline(core::Renderer &renderer) {
+bool core::Engine::init_graphics_pipeline(core::Renderer &renderer) {
     // Vertex shader
     VkShaderModule vertex_shader_module = {};
     VkShaderModule fragment_shader_module = {};
@@ -42,7 +44,8 @@ void core::Engine::init_graphics_pipeline(core::Renderer &renderer) {
                              &vertex_shader_module) != VK_SUCCESS ||
         vkCreateShaderModule(renderer.vk.device, &fragment_shader_info, nullptr,
                              &fragment_shader_module) != VK_SUCCESS) {
-        throw std::runtime_error("Failed to create shader modules");
+        LOG_ERROR("Failed to create shader modules");
+        return false;
     }
 
     // Shader stage creation
@@ -173,10 +176,13 @@ void core::Engine::init_graphics_pipeline(core::Renderer &renderer) {
     if (vkCreateGraphicsPipelines(renderer.vk.device, VK_NULL_HANDLE, 1,
                                   &pipeline_info, nullptr,
                                   &renderer.pass.pipeline) != VK_SUCCESS) {
-        throw std::runtime_error("Failed to create graphics pipeline");
+        LOG_ERROR("Failed to create graphics pipeline");
+        return false;
     }
 
     // Cleanup shader modules
     vkDestroyShaderModule(renderer.vk.device, vertex_shader_module, nullptr);
     vkDestroyShaderModule(renderer.vk.device, fragment_shader_module, nullptr);
+
+    return true;
 }

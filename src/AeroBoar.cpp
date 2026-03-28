@@ -33,7 +33,10 @@ int AeroBoar::fly() {
     glfwSwapInterval(1);
 
     // initialize
-    core::Engine::initialize(renderer);
+    if (!core::Engine::initialize(renderer)) {
+        core::Engine::destroy(renderer);
+        return -1; // Return an error code if initialization fails
+    }
 
     // Main render loop
     while (!glfwWindowShouldClose(renderer.window.glfw_handle)) {

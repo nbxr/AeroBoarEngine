@@ -1,9 +1,8 @@
 #include "AeroBoar.h"
 #include <iostream>
+#include <stdio.h>
 
 #ifdef _WIN32
-#include <stdio.h>
-#include <string>
 #include <windows.h>
 
 void attach() {
@@ -14,7 +13,7 @@ void attach() {
     if (!GetConsoleWindow()) {
         AllocConsole();
     }
-    
+
     // Redirect standard streams to the console
     // Check if streams were redirected successfully
     if (freopen("CONOUT$", "w", stdout) == nullptr) {
@@ -39,19 +38,15 @@ void attach() {
     SetConsoleTitleA("AeroBoar Console");
 }
 #endif
-
 int main() {
     try {
 #ifdef _WIN32
         attach();
 #endif
         AeroBoar aero_boar;
-        std::cout << "Running AeroBoar" << std::endl;
-        std::string line;
-        std::getline(std::cin, line);
-
+        std::cout << "Flying with AeroBoar" << std::endl;
         return aero_boar.fly();
-    } catch (const std::exception &e) {
+    } catch (const std::runtime_error &e) {
         std::cerr << e.what() << std::endl;
         return -1;
     }
