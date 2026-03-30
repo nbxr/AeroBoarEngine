@@ -32,7 +32,7 @@ FetchContent_Declare(
 FetchContent_Declare(
     vk-bootstrap
     GIT_REPOSITORY https://github.com/charles-lunarg/VK-Bootstrap.git
-    GIT_TAG v1.4.321
+    GIT_TAG v1.4.341
 )
 
 # 3. tinygltf
