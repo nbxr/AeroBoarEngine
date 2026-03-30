@@ -39,9 +39,15 @@ class Engine {
     static bool init_vma(core::Renderer &renderer);
     static bool init_pipeline_layout(core::Renderer &renderer);
     static bool init_graphics_pipeline(core::Renderer &renderer);
+    
+    static void destroy_sync_primitives(core::Renderer &renderer);
+    static void destroy_descriptor_pool(core::Renderer &renderer);
+    static void destroy_pipelines(core::Renderer &renderer);
+    static void destroy_render_targets(core::Renderer &renderer);    
+    static void destroy_images(core::Renderer &renderer);
     static void destroy_buffers(core::Renderer &renderer);
-    static void destroy_render_pass(core::Renderer &renderer);
-    static void destroy_vulkan(core::Renderer &renderer);
+    static void destroy_command_buffers(core::Renderer &renderer);
     static void destroy_vma(core::Renderer &renderer);
+    static void destroy_devices(core::Renderer &renderer);
 };
 }; // namespace core

@@ -31,9 +31,6 @@ struct VulkanContext {
     // Extent structures
     VkExtent2D swap_chain_extent;
 
-    // Large structs
-    PassContext pass{};
-
     // Vectors (these have pointer overhead)
     std::vector<VkCommandBuffer> command_buffers;
     std::vector<VkImage> swap_chain_images;

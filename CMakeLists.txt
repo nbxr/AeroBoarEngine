@@ -83,6 +83,7 @@ add_executable(Aero_Boar_Engine
     src/core/Engine.InitializePasses.cpp
     src/core/Engine.InitializePipeline.cpp    
     src/core/Engine.Render.cpp    
+    src/core/MaterialManager.cpp
 )
 
 # Include directories

@@ -4,6 +4,7 @@
 #include "PassType.h"
 #include "VulkanContext.h"
 #include "vk_mem_alloc.h"
+#include "MaterialManager.h"
 #include <GLFW/glfw3.h>
 
 namespace core {
@@ -11,6 +12,7 @@ struct Renderer {
     VmaAllocator allocator{};
     core::VulkanContext vk{};
     core::PassContext pass{};
+    MaterialManager materialManager{};
     struct Window {
         GLFWwindow *glfw_handle{nullptr};
         int32_t width{};

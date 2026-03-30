@@ -7,9 +7,11 @@
 #include "vk_mem_alloc.h"
 
 bool core::Engine::initialize(core::Renderer &renderer) {
-    if (init_vulkan(renderer) && init_vma(renderer))
+    if (init_vulkan(renderer) && init_vma(renderer) &&
+        renderer.materialManager.Initialize(renderer.vk.device,
+                                            renderer.allocator)) {
         return true;
-    else
+    } else
         return false;
 }
 
