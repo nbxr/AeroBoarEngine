@@ -20,8 +20,9 @@ int AeroBoar::fly() {
     // Set GLFW window hints
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
-    renderer.window.glfw_handle =
-        glfwCreateWindow(640, 480, "Hello World", NULL, NULL);
+
+    // Create the window
+    renderer.window.glfw_handle = glfwCreateWindow(640, 480, "Aero Boar", NULL, NULL);
     if (!renderer.window.glfw_handle) {
         std::cerr << "Failed to create GLFW window" << std::endl;
         glfwTerminate();
