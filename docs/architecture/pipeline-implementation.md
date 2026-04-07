@@ -17,11 +17,11 @@ Multiview is mandatory. Leverage multiview for efficient left and right eye rend
 
 GPU-driven everywhere. Perform compute culling and occlusion, write indirect draw buffers, then issue a single indirect draw call.
 
+Compute-based culling: Before the rasterization pass, GPU compute shaders perform culling to reduce geometry throughput. This includes both view frustum culling and HZB (Hierarchical Z-Buffer) occlusion culling based on the previous frame depth buffer.
+
 Bindless heap approach. Use one giant descriptor set bound once per frame today, or a true descriptor heap when the extension becomes available.
 
 Transient attachments. MSAA color and depth should almost never leave on-chip memory.
-
-VMA: Memory allocation and management using Vulkan Memory Allocator.
 
 ## 2. Recommended Render Pass Structure
 
