@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ComputePassContext.h"
 #include "PassContext.h"
 #include "PassType.h"
 #include "VulkanContext.h"
@@ -9,10 +10,14 @@
 
 namespace core {
 struct Renderer {
+    static constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 2;
+    
     VmaAllocator allocator{};
     core::VulkanContext vk{};
     core::PassContext pass{};
-    MaterialManager materialManager{};
+        // Per-frame in flight resources
+    core::ComputePassContext computePasses[MAX_FRAMES_IN_FLIGHT];
+    core::MaterialManager materialManager{};
     struct Window {
         GLFWwindow *glfw_handle{nullptr};
         int32_t width{};

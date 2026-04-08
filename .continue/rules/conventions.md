@@ -9,6 +9,4 @@ alwaysApply: true
 - **Classes/Structs**: Pascal Case
 - **Namespaces**: Lowercase
 - **Fields/Methods/Arguments**: Snake Case
-
-# Tool Use Conventions
-- Only Windows commands should be used. Do not use Linux commands for tools.
+- **Architecture**: Prefer C style structs and static methods to C++ style OOP
