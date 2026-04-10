@@ -1,6 +1,9 @@
 ---
 globs: |-
+  **/*.h
+  **/*.hpp
   **/*.cpp
+  **/*.inl
   **/*.glsl
   **/*.vert
   **/*.frag
@@ -8,12 +11,16 @@ globs: |-
 description: Ensures all new Vulkan rendering implementations follow the
   high-performance GPU-driven architecture optimized for Meta Quest 3 (Adreno
   740).
-alwaysApply: false
+alwaysApply: true
 ---
 
 # Architecture
 
-Details contained in `docs/architecture/pipeline-implementation.md`
+- Agent rules contained in `./.continue/rules`
+- Memory bank contained in `./.continue/memory-bank/`
+- Details contained in `./docs/architecture/pipeline-implementation.md`
+- Shaders contained in `./shaders/`
+- Source code contained in `./src/`
 
 When implementing Vulkan rendering code, strictly follow these Quest 3 optimization standards:
 1. Use Subpasses: Prefer subparts over multiple render passes to keep data on-chip (GMEM).
