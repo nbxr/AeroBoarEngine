@@ -69,6 +69,7 @@ bool core::Engine::init_vulkan(core::Renderer &renderer) {
     // Initialize command pool and buffers
     if (!init_command_pool(renderer))
         return false;
+        
     if (!init_command_buffers(renderer))
         return false;
 

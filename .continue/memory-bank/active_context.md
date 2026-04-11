@@ -1,24 +1,19 @@
 # Active Context
 
 ## Current Focus
-- **Core Engine Initialization**: Implementing the foundational Vulkan bootstrap sequence.
+- **Core Engine Initialization**: Implementing the foundational Vulkan bootstrap sequence and resource intitialization for Linux desktop environment. Note: Android Quest 3 will be implemented in the future after desktop implementation is working.
+
 ## Recent Changes
 - [x] Finalized Memory Bank setup.
-- [x] Established architectural and coding standards in `systemPatterns.ram` and `techContext.md`.
 
 ## Immediate Implementation Tasks
 - [ ] **Vulkan Instance Creation**:
-  - [ ] Setup `VkApplicationInfo`.
   - [ ] Implement `VkInstance` creation with required extensions (e.g., `VK_KHR_surface`).
-  - [ ] Implement Android surface extension support.
-- [ ] **Vulkan Device Setup**:
-  - [ ] Physical Device enumeration and selection (targeting Adreno GPU features).
-  - [ ] Logical Device creation with `VK_KHR_multiview` enabled.
-  - [ ] Queue family discovery (Graphics and Present queues).
+  - [ ] Implement Linux surface creation with GLFW
 - [ ] **VMA Integration**:
-  - [ ] Initialize `VmaAllocator` during the device creation sequence.
+  - [ ] Use `VmaAllocator` for creating buffers necessary for passes
+- [ ] **Pre-Compute Pass**:
+  - [ ] Setup everything necessary for the pre-compute pass where culling will be executed
 
 ## Blockers / Risks
-- **Android Surface Complexity**: Need to ensure `android_native_app_glue` is correctly providing the `ANativeWindow` for the swapchain.
 - **Extension Availability**: Need to verify `VK_EXT_descriptor_indexing` availability on target Quest 3 driver versions during device selection.
-

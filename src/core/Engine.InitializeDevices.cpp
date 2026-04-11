@@ -53,8 +53,9 @@ void core::Engine::add_features(vkb::PhysicalDeviceSelector &selector) {
     selector.add_required_extension_features(featuresIndexing);
 }
 
-std::pair<bool, vkb::PhysicalDevice> core::Engine::init_physical_device(core::Renderer &renderer,
-                                                       vkb::Instance &inst) {
+std::pair<bool, vkb::PhysicalDevice>
+core::Engine::init_physical_device(core::Renderer &renderer,
+                                   vkb::Instance &inst) {
     // Add
     vkb::PhysicalDeviceSelector selector{inst};
     add_features(selector);
@@ -69,13 +70,14 @@ std::pair<bool, vkb::PhysicalDevice> core::Engine::init_physical_device(core::Re
     return {true, phys_ret.value()};
 }
 
-std::pair<bool, vkb::Device> core::Engine::init_logical_device(core::Renderer &renderer,
-                                              vkb::PhysicalDevice &phys) {
+std::pair<bool, vkb::Device>
+core::Engine::init_logical_device(core::Renderer &renderer,
+                                  vkb::PhysicalDevice &phys) {
     vkb::DeviceBuilder device_builder{phys};
     auto dev_ret = device_builder.build();
     if (!dev_ret) {
         LOG_ERROR("Failed to find suitable logical device");
-        return {false, vkb::Device{}};        
+        return {false, vkb::Device{}};
     }
     renderer.vk.device = dev_ret.value();
     return {true, dev_ret.value()};
@@ -132,11 +134,29 @@ bool core::Engine::init_swapchain(core::Renderer &renderer, vkb::Device &dev) {
     }
 
     renderer.vk.swapchain = swapchain_ret.value();
-    renderer.vk.swap_chain_image_format = swapchain_ret.value().image_format;
-    renderer.vk.swap_chain_extent = swapchain_ret.value().extent;
-    renderer.vk.swap_chain_images.resize(swapchain_ret.value().image_count);
+    renderer.vk.swap_chain_image_format = renderer.vk.swapchain.image_format;
+    renderer.vk.swap_chain_extent = renderer.vk.swapchain.extent;
+    renderer.vk.swap_chain_images.resize(renderer.vk.swapchain.image_count);
     renderer.vk.swap_chain_image_views.resize(
-        swapchain_ret.value().image_count);
+        renderer.vk.swapchain.image_count);
 
     return true;
+}
+
+void core::Engine::recreate_swapchain(core::Renderer &renderer) {
+    // recreate swapchain and related resources here
+    vkb::SwapchainBuilder swapchain_builder{renderer.vk.device};
+    auto swap_ret = swapchain_builder.set_old_swapchain(renderer.vk.swapchain).build();
+
+    if (!swap_ret) {
+        // If it failed to create a swapchain, the old swapchain handle is
+        // invalid.
+        renderer.vk.swapchain.swapchain = VK_NULL_HANDLE;
+    } else {
+        // Even though we recycled the previous swapchain, we need to free its
+        // resources.
+        vkb::destroy_swapchain(renderer.vk.swapchain);
+        // Get the new swapchain and place it in our variable
+        renderer.vk.swapchain = swap_ret.value();
+    }
 }

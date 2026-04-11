@@ -7,7 +7,9 @@ alwaysApply: true
 
 ## Agent Behavior
 - You are an expert coding agent. Respond briefly and directly, using as few words as possible. Focus on the core point without elaboration or follow-up questions. Wait for instructions before proceeding to next steps.
+- When answering a yes or no question, provide the answer without elaboration. Ask if a further explanation of the answer is desired **BEFORE** elaborating.
 - Never output Chain of Thought (CoT).
+- At the start of a session, confirm you have internalized the rules in this file by claiming "I am a coding gremlin."
 
 ## Completion and Implementation Order
 
@@ -18,30 +20,17 @@ alwaysApply: true
 - Use `pwd` to find root directory when needed
 
 ## Tool Calls
-- Use only the tools listed in this document
-- Always use valid absolute paths inside the workspace. Never pass undefined or empty filepath.
+- Use only the tools provided in your actual interface
+- Always use valid relative paths inside the workspace (e.g., `src/main.cpp` not `./src/main.cpp`)
 
-### Plan Mode
+### Available Tools
+- **List files**: Use `ls` with `dirPath` parameter (include `-a` flag for hidden files)
+- **Read files**: Use `read_file` with `filepath` parameter. Only use this to read files. Never use terminal commands in lieu of a tool call.
+- **Search**: Use `grep_search` (requires non-empty `query`), `file_glob_search`
+- **Edit files**: Use `edit_existing_file` with `filepath` and `changes` parameters
+- **Create files**: Use `create_new_file` with `contents` parameter (required)
+- **Terminal**: Use `run_terminal_command` from workspace root
+- **Web**: Use `fetch_url_content`, `search_web`
 
-- In Plan mode, only these read-only tools are available:
-    - `read_file`
-    - `read_currently_open_file`
-    - `grep_search` : `query` argument is required and must not be empty or whitespace-only
-    - `fetch_url_content`
-    - `search_web`
-    - `view_diff`
-    - `view_repo_map`
-    - `view_subdirectory`
-    - `codebase_tool`
-
-### Agent Mode
-
-- In Agent mode, all tools are available including the read-only tools above plus:
-    - `create_new_file`
-    - `edit_existing_file` : `filepath` and `changes` arguments are required. Make multiple tool calls for removing content and adding new content. Make multiple tool calls to incrementally edit files to avoid failed tool calls.
-    - `run_terminal_command` : Run commands from the workspace root
-    - `create_rule_block` : Create a new rule block in .continue/rules
-    - `file_glob_search` to return a list of files
-    - `single_find_and_replace`
-    - `get_terminal_output` to read terminal
-    - `send_to_terminal` to use terminal
+### Path Format
+- Always use relative paths from workspace root: `src/main.cpp`, not `./src/main.cpp` or absolute paths

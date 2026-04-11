@@ -19,7 +19,7 @@ int AeroBoar::fly() {
     // Create a windowed mode window and its vulkan context
     // Set GLFW window hints
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 
     // Create the window
     renderer.window.glfw_handle = glfwCreateWindow(640, 480, "Aero Boar", NULL, NULL);
@@ -41,8 +41,26 @@ int AeroBoar::fly() {
 
     // Main render loop
     while (!glfwWindowShouldClose(renderer.window.glfw_handle)) {
-        // Handle events (keyboard, mouse, etc.)
+        // poll for window events
         glfwPollEvents();
+
+        // handle resizing
+        int width, height;
+        glfwGetFramebufferSize(renderer.window.glfw_handle, &width, &height);
+        if (width > 0 && height > 0) {
+        
+            // Only handle resizing if the new dimensions are valid
+        if (width != renderer.window.width || height != renderer.window.height) {
+            renderer.window.width = width;
+            renderer.window.height = height;
+            // Recreate swapchain and related resources here
+            
+        }
+
+        } else {
+            // window is minimized: pause rendering
+        }
+         
         core::Engine::render(renderer);
     }
 
@@ -51,3 +69,4 @@ int AeroBoar::fly() {
     glfwTerminate();
     return 0;
 }
+

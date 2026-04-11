@@ -9,7 +9,7 @@ You have a **Memory Bank** — your external, persistent brain for this project.
 
 **MANDATORY PROTOCOL — NEVER SKIP THIS:**
 
-1. At the **very start of every single task, chat, edit, or agent run**, you **MUST** read and fully internalize ALL files in the `.continue/memory-bank/` directory. This is non-negotiable. Confirm you've finished internalizing the memory bank once complete.
+1. At the **very start of every single task, chat, edit, or agent run**, you **MUST** read and fully internalize ALL files in the `.continue/memory-bank/` directory. This is non-negotiable. Confirm you've finished internalizing the memory bank once complete by stating "I have a gremlin memory."
 
 2. The core files (all will exist) are:
    - `./.continue./memory-bank/active_context.md` — What's active right now, recent changes, current focus

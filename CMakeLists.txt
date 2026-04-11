@@ -11,9 +11,74 @@ if(UNIX AND NOT APPLE)
     set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 endif()
 
-# -------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Shader compilation with glslc
+# -----------------------------------------------------------------------------
+
+# Find glslc (part of Vulkan SDK)
+if(WIN32)
+    find_program(GLSLC glslc HINTS $ENV{VULKAN_SDK}/Bin)
+elseif(APPLE)
+    find_program(GLSLC glslc HINTS $ENV{VULKAN_SDK}/bin)
+else()
+    find_program(GLSLC glslc HINTS $ENV{VULKAN_SDK}/bin /usr/bin)
+endif()
+
+if(NOT GLSLC)
+    message(WARNING "glslc not found. Shaders will not be compiled automatically.")
+    set(GLSLC_AVAILABLE OFF)
+else()
+    message(STATUS "Found glslc: ${GLSLC}")
+    set(GLSLC_AVAILABLE ON)
+endif()
+
+# Set shader directories
+set(SHADER_SOURCE_DIR ${CMAKE_SOURCE_DIR}/shaders)
+set(SHADER_OUTPUT_DIR ${CMAKE_BINARY_DIR}/shaders)
+
+# Create shader output directory
+file(MAKE_DIRECTORY ${SHADER_OUTPUT_DIR})
+
+# Define shader files to compile (add more as needed)
+set(SHADER_FILES
+    screen_clear.vert
+    screen_clear.frag
+    # Add your other shader files here, e.g.:
+    # cube.vert
+    # cube.frag
+)
+
+# Create shader compilation rules
+if(GLSLC_AVAILABLE)
+    foreach(SHADER_FILE ${SHADER_FILES})
+        get_filename_component(SHADER_NAME ${SHADER_FILE} NAME)
+        set(SHADER_SPIRV_OUTPUT ${SHADER_OUTPUT_DIR}/${SHADER_NAME}.spv)
+        set(SHADER_SOURCE ${SHADER_SOURCE_DIR}/${SHADER_FILE})
+        
+        add_custom_command(
+            OUTPUT ${SHADER_SPIRV_OUTPUT}
+            COMMAND ${GLSLC} ${SHADER_SOURCE} -o ${SHADER_SPIRV_OUTPUT}
+            DEPENDS ${SHADER_SOURCE}
+            COMMENT "Compiling shader: ${SHADER_NAME}"
+        )
+    endforeach()
+    
+    # Custom target for all shaders
+    set(SHADER_OUTPUT_FILES "")
+    foreach(SHADER_FILE ${SHADER_FILES})
+        get_filename_component(SHADER_NAME ${SHADER_FILE} NAME)
+        list(APPEND SHADER_OUTPUT_FILES ${SHADER_OUTPUT_DIR}/${SHADER_NAME}.spv)
+    endforeach()
+    
+    add_custom_target(compile_shaders
+        DEPENDS ${SHADER_OUTPUT_FILES}
+        COMMENT "All shaders compiled"
+    )
+endif()
+
+# -----------------------------------------------------------------------------
 # Dependencies
-# -------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 
 # Find Vulkan SDK
 find_package(Vulkan REQUIRED)
@@ -68,28 +133,13 @@ FetchContent_Declare(
 
 # Enable updating dependencies
 set(FETCHCONTENT_QUIET OFF)
-# -------------------------------------------------------------------------
-# Linux-specific dependency checks (BEFORE FetchContent_MakeAvailable)
-# -------------------------------------------------------------------------
-if(UNIX AND NOT APPLE)
-    # Removed: message(STATUS "Checking Linux windowing dependencies...")
-    # Removed: find_package(X11 REQUIRED)
-    # Removed: find_package(Xi REQUIRED)
-    # Removed: find_package(Xrandr REQUIRED)
-    # Removed: find_package(Xinerama REQUIRED)
-    # Removed: find_package(Xcursor REQUIRED)
-    # Removed: if(NOT X11_Xrandr_FOUND) ... endif()
-    # Removed: if(NOT X11_Xinerama_FOUND) ... endif()
-    # Removed: if(NOT X11_Xcursor_FOUND) ... endif()
-    # Removed: message(STATUS "Linux windowing dependencies found.")
-endif()
 
 # Fetch and make dependencies available
 FetchContent_MakeAvailable(VulkanMemoryAllocator vk-bootstrap tinygltf glfw glm)
 
-# -------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 # Build Configuration
-# -------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 
 # Platform-specific settings
 if(WIN32)
@@ -114,13 +164,20 @@ add_executable(Aero_Boar_Engine
     src/core/Engine.InitializePipeline.cpp
     src/core/Engine.Render.cpp
     src/core/MaterialManager.cpp
+    src/core/ShaderLoader.cpp
 )
+
+# Make shaders available during build
+if(GLSLC_AVAILABLE)
+    add_dependencies(Aero_Boar_Engine compile_shaders)
+endif()
 
 # Include directories
 target_include_directories(Aero_Boar_Engine PRIVATE
     ${tinygltf_SOURCE_DIR}/src
     ${GLFW_INCLUDE_DIRS}
     ${Vulkan_INCLUDE_DIRS}
+    ${SHADER_OUTPUT_DIR}  # Add this to include compiled shaders
 )
 
 # Link libraries
@@ -132,21 +189,13 @@ target_link_libraries(Aero_Boar_Engine PRIVATE
     glm::glm
 )
 
-# Linux-specific linking (X11 and Xi for GLFW on Linux)
-if(UNIX AND NOT APPLE)
-    # Removed: target_link_libraries(Aero_Boar_Engine PRIVATE
-    #     ${X11_LIBRARIES}
-    #     ${X11_Xi_LIBRARIES}
-    #     ${X11_Xrandr_LIBRARIES}
-    #     ${X11_Xinerama_LIBRARIES}
-    #     ${X11_Xcursor_LIBRARIES}
-    # )
-
-    # Removed: target_include_directories(Aero_Boar_Engine PRIVATE
-    #     ${X11_INCLUDE_DIR}
-    #     ${X11_Xrandr_INCLUDE_PATH}
-    #     ${X11_Xinerama_INCLUDE_PATH}
-    #     ${X11_Xcursor_INCLUDE_PATH}
-    # )
+# Copy shaders to build directory after compilation (optional, for easier deployment)
+if(GLSLC_AVAILABLE)
+    add_custom_command(
+        TARGET Aero_Boar_Engine POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory 
+        ${SHADER_OUTPUT_DIR} 
+        ${CMAKE_BINARY_DIR}/shaders
+        COMMENT "Copying compiled shaders to build directory"
+    )
 endif()
-

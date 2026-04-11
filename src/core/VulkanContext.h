@@ -12,8 +12,8 @@ struct VulkanContext {
     // Largest types first to minimize padding
     VkInstance instance;
     VkPhysicalDevice physical_device;
-    VkDevice device;
-    VkSwapchainKHR swapchain;
+    vkb::Device device;
+    vkb::Swapchain swapchain;
     VkQueue graphics_queue;
     VkQueue present_queue;
     VkQueue transfer_queue;

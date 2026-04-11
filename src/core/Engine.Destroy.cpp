@@ -76,6 +76,13 @@ void core::Engine::destroy_render_targets(core::Renderer &renderer) {
     vkDestroyRenderPass(renderer.vk.device, renderer.pass.render_pass, nullptr);
 }
 
+void core::Engine::destroy_framebuffers(core::Renderer &renderer) {
+    for (auto &framebuffer : renderer.pass.framebuffers) {
+        vkDestroyFramebuffer(renderer.vk.device, framebuffer, nullptr);
+    }
+    renderer.pass.framebuffers.clear();
+}
+
 void core::Engine::destroy_vma(core::Renderer &renderer) {
     vmaDestroyAllocator(renderer.allocator);
 }

@@ -11,6 +11,7 @@
   - `VK_EXT_descriptor_indexing` (for bindless rendering)
 - **Math Library**: GLM (OpenGL Mathematics)
 - **Android Integration**: `android_native_app_glue` for activity lifecycle management.
+- **Shader Compilation**: `glslc` (SPIR-V compiler from Vulkan SDK)
 
 ## Dependency Management
 - **External Libraries**: Use CMake `FetchContent` or Git Submodules (decide on one) to manage VMA and GLM.
@@ -38,6 +39,7 @@ This section details the implementation-level style. These patterns complement t
 - **Target Platform**: Android (Quest 3 / aarch64).
 - **Optimization Target**: Qualcomm Adreno GPU (optimizing for GMEM/on-chip memory usage).
 - **Continuous Integration**: (e.g., "All builds must pass Android NDK Clang-tidy checks").
+- **Shader Compilation**: Shaders in `shaders/` compile automatically to `build/shaders/*.spv` via `glslc`
 
 ## Resource Lifecycle & Synchronization
 

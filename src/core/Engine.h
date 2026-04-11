@@ -1,7 +1,7 @@
 #pragma once
 #include "VkBootstrap.h"
-#include <stdio.h>
 #include <iostream>
+#include <stdio.h>
 #include <utility>
 #define LOG_ERROR(value) std::cerr << value << std::endl
 #define LOG_INFO(value) std::out << value << std::endl
@@ -16,14 +16,15 @@ class Engine {
     static bool init_surface(core::Renderer &renderer);
     static void render(core::Renderer &renderer);
     static void destroy(core::Renderer &renderer);
+    static void recreate_swapchain(core::Renderer &renderer);
 
   private:
-  // devices
+    // devices
     static void add_features(vkb::PhysicalDeviceSelector &selector);
-    static std::pair<bool, vkb::PhysicalDevice> init_physical_device(core::Renderer &renderer,
-                                                     vkb::Instance &inst);
-    static std::pair<bool, vkb::Device> init_logical_device(core::Renderer &renderer,
-                                            vkb::PhysicalDevice &phys);
+    static std::pair<bool, vkb::PhysicalDevice>
+    init_physical_device(core::Renderer &renderer, vkb::Instance &inst);
+    static std::pair<bool, vkb::Device>
+    init_logical_device(core::Renderer &renderer, vkb::PhysicalDevice &phys);
     static bool init_graphics_queue(core::Renderer &renderer, vkb::Device &dev);
     static bool init_present_queue(core::Renderer &renderer, vkb::Device &dev);
     static bool init_transfer_queue(core::Renderer &renderer, vkb::Device &dev);
@@ -39,11 +40,12 @@ class Engine {
     static bool init_vma(core::Renderer &renderer);
     static bool init_pipeline_layout(core::Renderer &renderer);
     static bool init_graphics_pipeline(core::Renderer &renderer);
-    
+
     static void destroy_sync_primitives(core::Renderer &renderer);
     static void destroy_descriptor_pool(core::Renderer &renderer);
     static void destroy_pipelines(core::Renderer &renderer);
-    static void destroy_render_targets(core::Renderer &renderer);    
+    static void destroy_render_targets(core::Renderer &renderer);
+    static void destroy_framebuffers(core::Renderer &renderer);
     static void destroy_images(core::Renderer &renderer);
     static void destroy_buffers(core::Renderer &renderer);
     static void destroy_command_buffers(core::Renderer &renderer);

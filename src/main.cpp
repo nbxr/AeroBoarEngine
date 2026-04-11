@@ -37,6 +37,9 @@ void attach() {
     // Set console title
     SetConsoleTitleA("AeroBoar Console");
 }
+#elif defined(__linux__)
+// nothing currently, but we could add support for attaching 
+// to a terminal if needed
 #endif
 int main() {
     try {

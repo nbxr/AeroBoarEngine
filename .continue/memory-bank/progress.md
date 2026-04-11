@@ -7,13 +7,12 @@
 - [x] VMA Integration (Memory management)
 - [x] Swapchain & Presentation logic
 - [x] Basic Pipeline creation (Graphics pipeline, Render passes)
-- [x] Descriptor Set & Buffer management
-- [x] Material/Pipeline system initialization
+- [x] CMakeLists.txt shader compilation with glslc
 
 ## In Progress
-- [x] Render Loop implementation
-- [x] Resource management (Buffer/Image lifecycle)
-- [x] Compute Shader integration (for post-processing)
+- [ ] Render Loop implementation
+- [ ] Resource management (Buffer/Image lifecycle)
+- [ ] Compute Shader integration (for culling)
 
 ## Next Steps
 - [ ] The implementation of the pre-compute pass remains pending and is divided into the following planned phases:
