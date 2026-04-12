@@ -1,52 +1,78 @@
 # Tech Context: AeroBoarEngine
+
 ## Core Tech Stack
-- **Language**: C++ (with a preference for C-style architecture: structs and static functions)
-- **Graphics API**: Vulkan
-- **VR Platform**: Meta Quest 3 (Android-based / aarch64)
+- **Language**: C++ (strong preference for C-style structs and static functions)
+- **Graphics API**: Vulkan 1.3+
+- **VR Platform**: Meta Quest 3 (Adreno 740, TBDR architecture)
 - **Memory Management**: VulkanMemoryAllocator (VMA)
 
 ## Key Libraries & Extensions
-- **Vulkan Extensions**: 
-  - `VK_KHR_multiview` (for stereo rendering)
+- **Vulkan Extensions**:
+  - `VK_KHR_multiview` (mandatory for stereo)
   - `VK_EXT_descriptor_indexing` (for bindless rendering)
-- **Math Library**: GLM (OpenGL Mathematics)
-- **Android Integration**: `android_native_app_glue` for activity lifecycle management.
-- **Shader Compilation**: `glslc` (SPIR-V compiler from Vulkan SDK)
+- **Math**: GLM
+- **Build System**: CMake + Android NDK
+- **Shader Compilation**: `glslc` → SPIR-V (shaders in `shaders/` folder)
 
-## Dependency Management
-- **External Libraries**: Use CMake `FetchContent` or Git Submodules (decide on one) to manage VMA and GLM.
-- **Build System**: CMake (targeting Android NDK).
-- **Toolchain**: Android NDK (latest stable).
+## Coding Conventions
+- Prefer **C-style structs** and static functions over class hierarchies (data-oriented design).
+- **Naming**: `PascalCase` for structs/types, `snake_case` for functions/variables.
+- All GPU memory allocated via **VMA**.
+- Use transient/lazily allocated memory for MSAA color and depth to stay in GMEM.
 
-## C++ Coding Conventions
-This section details the implementation-level style. These patterns complement the architectural rules in `systemPatterns.md`.
+## Architecture Principles
 
-- **Architecture** – Prefer C-style structs and static functions over large class hierarchies. This maintains a data-oriented flow compatible with Vulkan.
-- **Naming**
-  - Classes / Structs: `PascalCase`
-  - Namespaces: `lowercase`
-  - Functions / Variables / Arguments: `snake_case`
-- **Memory Management**
-  - All images and buffers **must** be allocated via **VMA**.
-  - Use `VMA_ALLOCATION_CREATE_USER_DATA_CAPTURE_EXT` where appropriate.
-  - Use `ALLOC_MEMORY_TYPE_TRANSIENT` or `ALLOC_MEMORY_TYPE_LAZILY_ALLOCATED` for attachments to minimize DRAM traffic.
-- **Error Handling**
-  - All Vulkan API calls returning `VkResult` must be checked.
-  - For critical failures (e.g., Device Loss), use a controlled shutdown sequence.
-  - For non-critical errors, use the engine's internal logging system (to be implemented).
+### Render Pipeline
+- Single `VkRenderPass` with 2–4 subpasses (opaque + transparent/post-processing).
+- Single `VkPipelineLayout` shared by all pipelines.
+- One uber shader per subpass.
+- Heavy use of input attachments and `VK_ATTACHMENT_STORE_OP_DONT_CARE` for on-chip efficiency.
+- GPU-driven: Compute culling → indirect draw buffers → single `vkCmdDrawIndexedIndirectCount`.
+
+### Material System
+- Simple flat material struct (materialID + PBR params + bindless texture indices).
+- Very low material variety → material variation handled via materialID + bindless indexing inside uber shaders.
+
+### Resource Lifetime Rules
+
+**1. Vulkan Global (created once)**
+- `VkInstance`, `VkPhysicalDevice`, `VkDevice`
+- `VkPipelineLayout` (single)
+- `VkRenderPass` (single multiview)
+- Descriptor set layout + bindless descriptor set
+- All shader modules and `VkPipeline` objects
+- `VkSampler` objects
+
+**2. Per Pass**
+- `VkFramebuffer` (one per swapchain image)
+- Fixed foveated density map image (if used)
+
+**3. Per Subpass**
+- Nothing heavy. Subpasses share render pass, pipeline layout, and bindless set.
+- Only switch `VkPipeline` (still using same layout) on `vkCmdNextSubpass`.
+
+**4. Per Frame in Flight** (`MAX_FRAMES_IN_FLIGHT = 2`)
+- Command buffers
+- Per-frame scene data buffers
+- Indirect draw buffers + draw count buffers
+- Animation & culling storage buffers
+- Synchronization objects (fences, semaphores)
+
+**Rule of thumb**: Immutable interface objects → global. CPU-written data used by GPU → per-frame-in-flight.
+
+## Compute Passes
+- Separate `ComputePassContext` for culling and animation.
+- Run before graphics render pass in the same command buffer.
+- Use pipeline barriers (not extra semaphores) between compute and graphics.
+
+## Synchronization & Frame Handling
+- Use double buffering (`MAX_FRAMES_IN_FLIGHT = 2`).
+- Per-frame synchronization via `VkFence` to prevent CPU overwriting in-flight data.
+- Deferred destruction for resources still in use by the GPU.
 
 ## Build & Deployment
-- **Target Platform**: Android (Quest 3 / aarch64).
-- **Optimization Target**: Qualcomm Adreno GPU (optimizing for GMEM/on-chip memory usage).
-- **Continuous Integration**: (e.g., "All builds must pass Android NDK Clang-tidy checks").
-- **Shader Compilation**: Shaders in `shaders/` compile automatically to `build/shaders/*.spv` via `glslc`
+- Target: Android (Quest 3 / aarch64)
+- Shaders automatically compiled to `build/shaders/*.spv`
+- Optimize for Adreno GMEM / tile-based rendering
 
-## Resource Lifecycle & Synchronization
-
-### 1. Frame-in-Flight Pattern
-- The engine utilizes a **Double/Triple Buffering** strategy for all per-frame data.
-- **Per-Frame Resources**: Any buffer or descriptor set that changes every frame (e.g., Camera UBO, Dynamic Push Constants) must be arrayed by `MAX_FRAMES_IN_FLIGHT`.
-- **Synchronization**: Use `VkFence` to ensure the CPU does not overwrite a buffer that is still being read by the GPU from a previous frame.
-
-### 2. Resource Destruction
-- **Deferred Destruction**: To avoid destroying resources currently in use by the GPU, all `vkDestroy*` calls for transient resources must be queued and executed only after the associated `VkFence` has been signaled.
+This document serves as the single source of truth for all major architectural decisions.

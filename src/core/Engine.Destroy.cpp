@@ -43,44 +43,35 @@ void core::Engine::destroy_command_buffers(core::Renderer &renderer) {
 }
 
 void core::Engine::destroy_sync_primitives(core::Renderer &renderer) {
-    for (auto &semaphore : renderer.vk.render_finished_semaphores) {
-        vkDestroySemaphore(renderer.vk.device, semaphore, nullptr);
+    for (auto &frame : renderer.frames) {
+        vkDestroySemaphore(renderer.vk.device, frame.image_available_semaphore,nullptr);
+        vkDestroySemaphore(renderer.vk.device, frame.render_finished_semaphore,nullptr);
+        vkDestroyFence(renderer.vk.device, frame.in_flight_fence, nullptr);
     }
-    renderer.vk.render_finished_semaphores.clear();
-
-    for (auto &semaphore : renderer.vk.image_available_semaphores) {
-        vkDestroySemaphore(renderer.vk.device, semaphore, nullptr);
-    }
-    renderer.vk.image_available_semaphores.clear();
-
-    for (auto &fence : renderer.vk.in_flight_fences) {
-        vkDestroyFence(renderer.vk.device, fence, nullptr);
-    }
-    renderer.vk.in_flight_fences.clear();
 }
 
 void core::Engine::destroy_descriptor_pool(core::Renderer &renderer) {
     vkDestroyDescriptorSetLayout(renderer.vk.device,
-                                 renderer.pass.descriptor_set_layout, nullptr);
-    vkDestroyDescriptorPool(renderer.vk.device, renderer.pass.descriptor_pool,
-                            nullptr);
+                                 renderer.vk.descriptor_set_layout, nullptr);
+    vkDestroyDescriptorPool(renderer.vk.device, renderer.vk.descriptor_pool, nullptr);
 }
 
 void core::Engine::destroy_pipelines(core::Renderer &renderer) {
-    vkDestroyPipeline(renderer.vk.device, renderer.pass.pipeline, nullptr);
-    vkDestroyPipelineLayout(renderer.vk.device, renderer.pass.pipeline_layout,
+    vkDestroyPipeline(renderer.vk.device, renderer.vk.pipeline, nullptr);
+    vkDestroyPipelineLayout(renderer.vk.device, renderer.vk.pipeline_layout,
                             nullptr);
 }
 
 void core::Engine::destroy_render_targets(core::Renderer &renderer) {
-    vkDestroyRenderPass(renderer.vk.device, renderer.pass.render_pass, nullptr);
+    vkDestroyRenderPass(renderer.vk.device, renderer.main_pass.render_pass,
+         nullptr);
 }
 
 void core::Engine::destroy_framebuffers(core::Renderer &renderer) {
-    for (auto &framebuffer : renderer.pass.framebuffers) {
+    for (auto &framebuffer : renderer.main_pass.framebuffers) {
         vkDestroyFramebuffer(renderer.vk.device, framebuffer, nullptr);
     }
-    renderer.pass.framebuffers.clear();
+    renderer.main_pass.framebuffers.clear();
 }
 
 void core::Engine::destroy_vma(core::Renderer &renderer) {

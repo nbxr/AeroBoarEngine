@@ -18,19 +18,22 @@ namespace core {
  * rendering subpasses.
  */
 struct ComputePassContext {
-    VkPipeline cullingPipeline = VK_NULL_HANDLE;
-    VkPipelineLayout cullingPipelineLayout = VK_NULL_HANDLE;
-    VkDescriptorSet cullingDescriptorSet = VK_NULL_HANDLE;
+    // Pipelines
+    VkPipeline culling_pipeline{VK_NULL_HANDLE};
+    VkPipeline animation_pipeline{VK_NULL_HANDLE};
 
-    // Buffer containing the input draw commands (e.g., DrawIndexedIndirectCommand)
-    AllocatedBuffer inputDrawBuffer;
+    // Descriptor sets (can share the global bindless set, or have own)
+    VkDescriptorSet descriptor_set{VK_NULL_HANDLE};
 
-    // Buffer containing the culled draw commands to be used by the graphics pass
-    AllocatedBuffer indirectDrawBuffer;
+    // Per-frame resources    
+    core::AllocatedBuffer indirect_draw_buffer{};
+    core::AllocatedBuffer draw_count_buffer{};
+    core::AllocatedBuffer animation_storage_buffer{};
 
-    // Buffer for storing culling results or visibility metadata
-    AllocatedBuffer visibilityBuffer;
-
+    // timestamp queries or debug markers (optional, but useful for
+    // profiling the compute pass) 
+    VkQueryPool query_pool{VK_NULL_HANDLE};
+    
     // Synchronization primitives for the compute pass
     VkSemaphore computeFinishedSemaphore = VK_NULL_HANDLE;
 };

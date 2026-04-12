@@ -15,6 +15,16 @@ bool core::Engine::init_render_pass(core::Renderer &renderer) {
     color_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     color_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
+    VkAttachmentDescription depth_attachment = {};
+    depth_attachment.format = renderer.vk.depth_format;
+    depth_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE; // Optimization: Don't write back to DRAM
+    depth_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    depth_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depth_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    depth_attachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
     VkAttachmentReference color_attachment_ref = {};
     color_attachment_ref.attachment = 0;
     color_attachment_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
@@ -42,7 +52,7 @@ bool core::Engine::init_render_pass(core::Renderer &renderer) {
     render_pass_info.pDependencies = &dependency;
 
     if (vkCreateRenderPass(renderer.vk.device, &render_pass_info, nullptr,
-                           &renderer.pass.render_pass) != VK_SUCCESS) {
+                           &renderer.main_pass.render_pass) != VK_SUCCESS) {
         LOG_ERROR("Failed to create render pass");
         return false;
     }
@@ -65,7 +75,7 @@ bool core::Engine::init_descriptor_pool(core::Renderer &renderer) {
     pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
 
     if (vkCreateDescriptorPool(renderer.vk.device, &pool_info, nullptr,
-                               &renderer.pass.descriptor_pool) != VK_SUCCESS) {
+                               &renderer.vk.descriptor_pool) != VK_SUCCESS) {
         LOG_ERROR("Failed to create descriptor pool");
         return false;
     }
@@ -104,7 +114,7 @@ bool core::Engine::init_descriptor_set_layout(core::Renderer &renderer) {
         VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
 
     if (vkCreateDescriptorSetLayout(renderer.vk.device, &layout_info, nullptr,
-                                    &renderer.pass.descriptor_set_layout) !=
+                                    &renderer.vk.descriptor_set_layout) !=
         VK_SUCCESS) {
         LOG_ERROR("Failed to create descriptor set layout");
         return false;
@@ -117,10 +127,10 @@ bool core::Engine::init_command_pool(core::Renderer &renderer) {
     VkCommandPoolCreateInfo cmd_pool_info = {};
     cmd_pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     cmd_pool_info.queueFamilyIndex = renderer.vk.graphics_family_index;
-    cmd_pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    cmd_pool_info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
 
-    if (vkCreateCommandPool(renderer.vk.device, &cmd_pool_info, nullptr,
-                            &renderer.vk.command_pool) != VK_SUCCESS) {
+    if (vkCreateCommandPool(renderer.vk.device.device, &cmd_pool_info, nullptr,
+                            &renderer.vk.generic_command_pool) != VK_SUCCESS) {
         LOG_ERROR("Failed to create command pool");
         return false;
     }
@@ -128,24 +138,24 @@ bool core::Engine::init_command_pool(core::Renderer &renderer) {
 }
 
 bool core::Engine::init_command_buffers(core::Renderer &renderer) {
-    return false; // TODO: Implement init_framebuffers
+    return false; // TODO: Implement init_command_buffers
 }
 
 bool core::Engine::init_framebuffers(core::Renderer &renderer) {
     // Framebuffers
-    renderer.pass.framebuffers.resize(renderer.vk.swap_chain_images.size());
-    for (size_t i = 0; i < renderer.vk.swap_chain_images.size(); i++) {
+    renderer.main_pass.framebuffers.resize(renderer.vk.swapchain.image_count);
+    for (size_t i = 0; i < renderer.vk.swapchain.image_count; i++) {
         VkFramebufferCreateInfo framebuffer_info = {};
         framebuffer_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        framebuffer_info.renderPass = renderer.pass.render_pass;
+        framebuffer_info.renderPass = renderer.main_pass.render_pass;
         framebuffer_info.attachmentCount = 1;
-        framebuffer_info.pAttachments = &renderer.vk.swap_chain_image_views[i];
+        framebuffer_info.pAttachments = renderer.vk.swapchain.get_image_views().value().data();
         framebuffer_info.width = renderer.vk.swap_chain_extent.width;
         framebuffer_info.height = renderer.vk.swap_chain_extent.height;
         framebuffer_info.layers = 1;
 
         if (vkCreateFramebuffer(renderer.vk.device, &framebuffer_info, nullptr,
-                                &renderer.pass.framebuffers[i]) != VK_SUCCESS) {
+                                &renderer.main_pass.framebuffers[i]) != VK_SUCCESS) {
             LOG_ERROR("Failed to create framebuffer");
             return false;
         }
@@ -162,19 +172,21 @@ bool core::Engine::init_sync_primitives(core::Renderer &renderer) {
     fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
-    for (size_t i = 0; i < renderer.vk.swap_chain_images.size(); i++) {
-        if (vkCreateSemaphore(renderer.vk.device, &semaphore_info, nullptr,
-                              &renderer.vk.image_available_semaphores[i]) !=
-                VK_SUCCESS ||
-            vkCreateSemaphore(renderer.vk.device, &semaphore_info, nullptr,
-                              &renderer.vk.render_finished_semaphores[i]) !=
-                VK_SUCCESS ||
-            vkCreateFence(renderer.vk.device, &fence_info, nullptr,
-                          &renderer.vk.in_flight_fences[i]) != VK_SUCCESS) {
-            LOG_ERROR("Failed to create synchronization primitives");
+    for (auto &frame : renderer.frames) {
+
+        if (vkCreateSemaphore(renderer.vk.device, &semaphore_info, nullptr, &frame.image_available_semaphore) != VK_SUCCESS) {
+            LOG_ERROR("Failed to create image available semaphore");
+            return false;
+        }
+        if (vkCreateSemaphore(renderer.vk.device, &semaphore_info, nullptr, &frame.render_finished_semaphore) != VK_SUCCESS) {
+            LOG_ERROR("Failed to create render finished semaphore");
+            return false;
+        }
+        if (vkCreateFence(renderer.vk.device, &fence_info, nullptr, &frame.in_flight_fence) != VK_SUCCESS) {
+            LOG_ERROR("Failed to create in-flight fence");
             return false;
         }
     }
-
+    
     return true;
 }

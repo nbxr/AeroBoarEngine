@@ -126,7 +126,10 @@ bool core::Engine::init_transfer_queue(core::Renderer &renderer,
 
 bool core::Engine::init_swapchain(core::Renderer &renderer, vkb::Device &dev) {
     vkb::SwapchainBuilder swapchain_builder{dev, renderer.vk.surface};
-    auto swapchain_ret = swapchain_builder.build();
+    auto swapchain_ret =
+        swapchain_builder
+            .set_desired_min_image_count(renderer.MAX_FRAMES_IN_FLIGHT)
+            .build();
 
     if (!swapchain_ret) {
         LOG_ERROR("Failed to create swapchain");
@@ -136,9 +139,6 @@ bool core::Engine::init_swapchain(core::Renderer &renderer, vkb::Device &dev) {
     renderer.vk.swapchain = swapchain_ret.value();
     renderer.vk.swap_chain_image_format = renderer.vk.swapchain.image_format;
     renderer.vk.swap_chain_extent = renderer.vk.swapchain.extent;
-    renderer.vk.swap_chain_images.resize(renderer.vk.swapchain.image_count);
-    renderer.vk.swap_chain_image_views.resize(
-        renderer.vk.swapchain.image_count);
 
     return true;
 }
@@ -146,7 +146,8 @@ bool core::Engine::init_swapchain(core::Renderer &renderer, vkb::Device &dev) {
 void core::Engine::recreate_swapchain(core::Renderer &renderer) {
     // recreate swapchain and related resources here
     vkb::SwapchainBuilder swapchain_builder{renderer.vk.device};
-    auto swap_ret = swapchain_builder.set_old_swapchain(renderer.vk.swapchain).build();
+    auto swap_ret =
+        swapchain_builder.set_old_swapchain(renderer.vk.swapchain).build();
 
     if (!swap_ret) {
         // If it failed to create a swapchain, the old swapchain handle is
