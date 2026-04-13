@@ -24,7 +24,7 @@ alwaysApply: true
 
 When implementing Vulkan rendering code, strictly follow these Quest 3 optimization standards:
 1. Use Subpasses: Prefer subparts over multiple render passes to keep data on-chip (GMEM).
-2. Use Multiview: Always use multiview for stereo rendering when targeting Android. Do not use it for desktop builds.
+2. Use Multiview: Use multiview for stereo rendering when targeting Android but not for desktop builds.
 3. GPU-Driven: Implement compute-based culling (frustum/HZB) in a pre-compute pass and use indirect draw calls.
 4. Bindless Strategy: Use descriptor indexing (or VK_EXT_descriptor_heap if available) with a single large descriptor set.
 5. Transient Attachments: Use transient and lazily allocated images for MSAA/Depth to avoid DRAM round-trips.

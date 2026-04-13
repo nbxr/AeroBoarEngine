@@ -5,11 +5,12 @@
 #include "Renderer.h"
 #include "VkBootstrap.h"
 #include "vk_mem_alloc.h"
+#include "GameObject.h"
+#include "RenderMesh.h"
 
 bool core::Engine::initialize(core::Renderer &renderer) {
-    if (init_vulkan(renderer) && init_vma(renderer) &&
-        renderer.materialManager.Initialize(renderer.vk.device,
-                                            renderer.allocator)) {
+    if (init_vulkan(renderer) && renderer.materialManager.Initialize(
+                                     renderer.vk.device, renderer.allocator)) {
         return true;
     } else
         return false;
@@ -36,6 +37,9 @@ bool core::Engine::init_vulkan(core::Renderer &renderer) {
         return false;
     auto dev = init_dev.second;
 
+    if (!init_vma(renderer))
+        return false;
+
     // queues
     if (!init_graphics_queue(renderer, dev))
         return false;
@@ -50,6 +54,13 @@ bool core::Engine::init_vulkan(core::Renderer &renderer) {
 
     // render pass
     if (!init_render_pass(renderer))
+        return false;
+
+    // intialize MSAA and depth images
+    if (!init_msaa_color_image(renderer))
+        return false;
+
+    if (!init_depth_image(renderer))
         return false;
 
     // Initialize descriptor pool and set layout for bindless rendering
@@ -69,7 +80,7 @@ bool core::Engine::init_vulkan(core::Renderer &renderer) {
     // Initialize command pool and buffers
     if (!init_command_pool(renderer))
         return false;
-        
+
     if (!init_command_buffers(renderer))
         return false;
 
@@ -88,8 +99,9 @@ bool core::Engine::init_vma(core::Renderer &renderer) {
     VmaAllocatorCreateInfo alloc_info = {};
     alloc_info.instance = renderer.vk.instance;
     alloc_info.physicalDevice = renderer.vk.physical_device;
-    alloc_info.device = renderer.vk.device;
+    alloc_info.device = renderer.vk.device.device;
     alloc_info.vulkanApiVersion = VK_API_VERSION_1_4;
+    alloc_info.flags |= VMA_ALLOCATOR_CREATE_EXTERNALLY_SYNCHRONIZED_BIT;
 
     if (vmaCreateAllocator(&alloc_info, &renderer.allocator) != VK_SUCCESS) {
         LOG_ERROR("Failed to create Vulkan Memory Allocator");

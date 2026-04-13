@@ -7,6 +7,7 @@ vkb::Instance &core::Engine::init_vk_instance(core::Renderer &renderer,
     // vulkan instance
     auto inst_ret =
         builder.set_app_name("AeroBoar")
+            .require_api_version(1, 4)
             .request_validation_layers(renderer.vk.enable_validation_layers)
             .use_default_debug_messenger()
             .build();
@@ -25,6 +26,8 @@ void core::Engine::add_features(vkb::PhysicalDeviceSelector &selector) {
 
     // enable bindless rendering
     selector.add_required_extension(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
+    selector.add_required_extension(
+        VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME);
 
     VkPhysicalDeviceVulkan12Features features12 = {};
     features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;

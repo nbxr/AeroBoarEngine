@@ -19,11 +19,14 @@ bool core::Engine::init_render_pass(core::Renderer &renderer) {
     depth_attachment.format = renderer.vk.depth_format;
     depth_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
     depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE; // Optimization: Don't write back to DRAM
+    depth_attachment.storeOp =
+        VK_ATTACHMENT_STORE_OP_DONT_CARE; // Optimization: Don't write back to
+                                          // DRAM
     depth_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     depth_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     depth_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    depth_attachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    depth_attachment.finalLayout =
+        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
     VkAttachmentReference color_attachment_ref = {};
     color_attachment_ref.attachment = 0;
@@ -56,6 +59,107 @@ bool core::Engine::init_render_pass(core::Renderer &renderer) {
         LOG_ERROR("Failed to create render pass");
         return false;
     }
+    return true;
+}
+
+bool core::Engine::init_msaa_color_image(core::Renderer &renderer) {
+    // Create transient MSAA color image (on-chip only, no DRAM writes)
+    VkImageCreateInfo color_image_info = {};
+    color_image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    color_image_info.imageType = VK_IMAGE_TYPE_2D;
+    color_image_info.format = renderer.vk.swap_chain_image_format;
+    color_image_info.extent = {renderer.vk.swap_chain_extent.width,
+                               renderer.vk.swap_chain_extent.height, 1};
+    color_image_info.mipLevels = 1;
+    color_image_info.arrayLayers = 1;
+    color_image_info.samples = VK_SAMPLE_COUNT_4_BIT; // 4x MSAA for Quest 3
+    color_image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    color_image_info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                             VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
+    color_image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    color_image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    VmaAllocationCreateInfo alloc_info = {};
+    alloc_info.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+    alloc_info.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+
+    if (vmaCreateImage(renderer.allocator, &color_image_info, &alloc_info,
+                       &renderer.main_pass.msaa_color_image.handle,
+                       &renderer.main_pass.msaa_color_image.allocation,
+                       &renderer.main_pass.msaa_color_image.info) !=
+        VK_SUCCESS) {
+        LOG_ERROR("Failed to create MSAA color image");
+        return false;
+    }
+
+    // Create image view
+    VkImageViewCreateInfo view_info = {};
+    view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    view_info.image = renderer.main_pass.msaa_color_image.handle;
+    view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view_info.format = renderer.vk.swap_chain_image_format;
+    view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    view_info.subresourceRange.baseMipLevel = 0;
+    view_info.subresourceRange.levelCount = 1;
+    view_info.subresourceRange.baseArrayLayer = 0;
+    view_info.subresourceRange.layerCount = 1;
+
+    if (vkCreateImageView(renderer.vk.device, &view_info, nullptr,
+                          &renderer.main_pass.msaa_color_image.view) !=
+        VK_SUCCESS) {
+        LOG_ERROR("Failed to create MSAA color image view");
+        return false;
+    }
+
+    return true;
+}
+
+bool core::Engine::init_depth_image(core::Renderer &renderer) {
+    // Create transient depth image (no DRAM writes, DONT_CARE store)
+    VkImageCreateInfo depth_image_info = {};
+    depth_image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    depth_image_info.imageType = VK_IMAGE_TYPE_2D;
+    depth_image_info.format = renderer.vk.depth_format;
+    depth_image_info.extent = {renderer.vk.swap_chain_extent.width,
+                               renderer.vk.swap_chain_extent.height, 1};
+    depth_image_info.mipLevels = 1;
+    depth_image_info.arrayLayers = 1;
+    depth_image_info.samples = VK_SAMPLE_COUNT_4_BIT; // Match MSAA sample count
+    depth_image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    depth_image_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                             VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
+    depth_image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    depth_image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    VmaAllocationCreateInfo alloc_info = {};
+    alloc_info.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+    alloc_info.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+
+    if (vmaCreateImage(renderer.allocator, &depth_image_info, &alloc_info,
+                       &renderer.main_pass.depth_image.handle,
+                       &renderer.main_pass.depth_image.allocation,
+                       &renderer.main_pass.depth_image.info) != VK_SUCCESS) {
+        LOG_ERROR("Failed to create depth image");
+        return false;
+    }
+
+    VkImageViewCreateInfo view_info = {};
+    view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    view_info.image = renderer.main_pass.depth_image.handle;
+    view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view_info.format = renderer.vk.depth_format;
+    view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    view_info.subresourceRange.baseMipLevel = 0;
+    view_info.subresourceRange.levelCount = 1;
+    view_info.subresourceRange.baseArrayLayer = 0;
+    view_info.subresourceRange.layerCount = 1;
+
+    if (vkCreateImageView(renderer.vk.device, &view_info, nullptr,
+                          &renderer.main_pass.depth_image.view) != VK_SUCCESS) {
+        LOG_ERROR("Failed to create depth image view");
+        return false;
+    }
+
     return true;
 }
 
@@ -138,28 +242,65 @@ bool core::Engine::init_command_pool(core::Renderer &renderer) {
 }
 
 bool core::Engine::init_command_buffers(core::Renderer &renderer) {
-    return false; // TODO: Implement init_command_buffers
+    // Allocate command buffers into per-frame FrameContext
+    for (size_t i = 0; i < core::Renderer::MAX_FRAMES_IN_FLIGHT; i++) {
+        VkCommandBufferAllocateInfo alloc_info = {};
+        alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        alloc_info.commandPool = renderer.vk.generic_command_pool;
+        alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        alloc_info.commandBufferCount = 1; // One per frame
+
+        VkResult result =
+            vkAllocateCommandBuffers(renderer.vk.device, &alloc_info,
+                                     &renderer.frames[i].command_buffer);
+        if (result != VK_SUCCESS) {
+            LOG_ERROR("Failed to allocate command buffer for frame");
+            return false;
+        }
+    }
+    return true;
 }
 
 bool core::Engine::init_framebuffers(core::Renderer &renderer) {
-    // Framebuffers
+    // We need one framebuffer per swapchain image
     renderer.main_pass.framebuffers.resize(renderer.vk.swapchain.image_count);
-    for (size_t i = 0; i < renderer.vk.swapchain.image_count; i++) {
+
+    // Transient MSAA color and depth views are created once and shared across
+    // all framebuffers
+    VkImageView msaa_color_view =
+        renderer.main_pass.msaa_color_image.view; // 2D array, 2 layers
+    VkImageView depth_view =
+        renderer.main_pass.depth_image.view; // 2D array, 2 layers
+
+    for (size_t i = 0; i < renderer.vk.swapchain.image_count; ++i) {
+        VkImageView swapchain_view =
+            renderer.vk.swapchain.get_image_views().value()[i];
+
+        // The three attachments must match the order defined in your
+        // VkRenderPass
+        VkImageView attachments[3] = {
+            msaa_color_view, // 0: Transient MSAA Color
+            swapchain_view,  // 1: Resolved Color (swapchain image)
+            depth_view       // 2: Transient Depth
+        };
+
         VkFramebufferCreateInfo framebuffer_info = {};
         framebuffer_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
         framebuffer_info.renderPass = renderer.main_pass.render_pass;
-        framebuffer_info.attachmentCount = 1;
-        framebuffer_info.pAttachments = renderer.vk.swapchain.get_image_views().value().data();
+        framebuffer_info.attachmentCount = 3;
+        framebuffer_info.pAttachments = attachments;
         framebuffer_info.width = renderer.vk.swap_chain_extent.width;
         framebuffer_info.height = renderer.vk.swap_chain_extent.height;
-        framebuffer_info.layers = 1;
+        framebuffer_info.layers = 1; // Must be 1 with multiview
 
-        if (vkCreateFramebuffer(renderer.vk.device, &framebuffer_info, nullptr,
-                                &renderer.main_pass.framebuffers[i]) != VK_SUCCESS) {
+        if (vkCreateFramebuffer(renderer.vk.device.device, &framebuffer_info,
+                                nullptr, &renderer.main_pass.framebuffers[i]) !=
+            VK_SUCCESS) {
             LOG_ERROR("Failed to create framebuffer");
             return false;
         }
     }
+
     return true;
 }
 
@@ -174,19 +315,22 @@ bool core::Engine::init_sync_primitives(core::Renderer &renderer) {
 
     for (auto &frame : renderer.frames) {
 
-        if (vkCreateSemaphore(renderer.vk.device, &semaphore_info, nullptr, &frame.image_available_semaphore) != VK_SUCCESS) {
+        if (vkCreateSemaphore(renderer.vk.device, &semaphore_info, nullptr,
+                              &frame.image_available_semaphore) != VK_SUCCESS) {
             LOG_ERROR("Failed to create image available semaphore");
             return false;
         }
-        if (vkCreateSemaphore(renderer.vk.device, &semaphore_info, nullptr, &frame.render_finished_semaphore) != VK_SUCCESS) {
+        if (vkCreateSemaphore(renderer.vk.device, &semaphore_info, nullptr,
+                              &frame.render_finished_semaphore) != VK_SUCCESS) {
             LOG_ERROR("Failed to create render finished semaphore");
             return false;
         }
-        if (vkCreateFence(renderer.vk.device, &fence_info, nullptr, &frame.in_flight_fence) != VK_SUCCESS) {
+        if (vkCreateFence(renderer.vk.device, &fence_info, nullptr,
+                          &frame.in_flight_fence) != VK_SUCCESS) {
             LOG_ERROR("Failed to create in-flight fence");
             return false;
         }
     }
-    
+
     return true;
 }

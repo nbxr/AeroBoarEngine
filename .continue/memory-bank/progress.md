@@ -8,6 +8,7 @@
 - [x] Swapchain & Presentation logic
 - [x] Basic Pipeline creation (Graphics pipeline, Render passes)
 - [x] CMakeLists.txt shader compilation with glslc
+- [x] Cleanup memory bank and project files
 
 ## In Progress
 - [ ] Render Loop implementation

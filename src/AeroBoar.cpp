@@ -54,7 +54,7 @@ int AeroBoar::fly() {
             renderer.window.width = width;
             renderer.window.height = height;
             // Recreate swapchain and related resources here
-            
+            core::Engine::recreate_swapchain(renderer);
         }
 
         } else {

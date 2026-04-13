@@ -1,13 +1,13 @@
 #pragma once
 
-#include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
+#include <vulkan/vulkan.h>
 
-namespace core{
-struct AllocatedImage
-{
-    VkImage           image       = VK_NULL_HANDLE;
-    VmaAllocation     allocation  = VK_NULL_HANDLE;
+namespace core {
+struct AllocatedImage {
+    VkImage handle{VK_NULL_HANDLE};
+    VmaAllocation allocation{VK_NULL_HANDLE};
     VmaAllocationInfo info{};
-    VkImageView       view        = VK_NULL_HANDLE;   // often stored together
-};};
+    VkImageView view{VK_NULL_HANDLE}; // often stored together
+};
+}; // namespace core
