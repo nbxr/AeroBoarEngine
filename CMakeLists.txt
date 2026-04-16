@@ -163,6 +163,7 @@ add_executable(Aero_Boar_Engine
     src/core/Engine.InitializePasses.cpp
     src/core/Engine.InitializePipeline.cpp
     src/core/Engine.Render.cpp
+    src/core/GltfLoader.cpp
     src/core/MaterialManager.cpp
     src/core/ShaderLoader.cpp
 )
@@ -174,7 +175,7 @@ endif()
 
 # Include directories
 target_include_directories(Aero_Boar_Engine PRIVATE
-    ${tinygltf_SOURCE_DIR}/src
+    ${tinygltf_SOURCE_DIR}
     ${GLFW_INCLUDE_DIRS}
     ${Vulkan_INCLUDE_DIRS}
     ${SHADER_OUTPUT_DIR}  # Add this to include compiled shaders

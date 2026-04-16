@@ -19,6 +19,7 @@ alwaysApply: true
 - Agent rules contained in `./.continue/rules`
 - Memory bank contained in `./.continue/memory-bank/`
 - Details contained in `./docs/architecture/pipeline-implementation.md`
+- Game Object details contained in `./docs/architecture/game-object-implementation.md`
 - Shaders contained in `./shaders/`
 - Source code contained in `./src/`
 

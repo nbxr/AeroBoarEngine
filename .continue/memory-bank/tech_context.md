@@ -13,6 +13,7 @@
 - **Math**: GLM
 - **Build System**: CMake + Android NDK
 - **Shader Compilation**: `glslc` → SPIR-V (shaders in `shaders/` folder)
+- **GLTF**: tinygltf used for loading models
 
 ## Coding Conventions
 - Prefer **C-style structs** and static functions over class hierarchies (data-oriented design).
