@@ -20,6 +20,7 @@
 - **Naming**: `PascalCase` for structs/types, `snake_case` for functions/variables.
 - All GPU memory allocated via **VMA**.
 - Use transient/lazily allocated memory for MSAA color and depth to stay in GMEM.
+- CPU-side data (e.g., `core::SceneInstance`) should be lightweight and fit in CPU cache.
 
 ## Architecture Principles
 
@@ -77,3 +78,21 @@
 - Optimize for Adreno GMEM / tile-based rendering
 
 This document serves as the single source of truth for all major architectural decisions.
+
+## Bindless Resource Management
+- **Descriptor Sets**: One large descriptor set layout for all bindless resources.
+- **Buffer Layouts**:
+  - `VkDescriptorType::VK_DESCRIPTOR_TYPE_STORAGE_BUFFER` for `MeshSSBO` and `MaterialSSBO`.
+  - `VkDescriptorType::VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER` for auxiliary data (e.g., instance transforms if not in buffer).
+- **Update Frequency**: Descriptor set updates are rare (only on resource add/remove). Buffer content updates are frequent but handled via VMA mapped memory or staging buffers.
+
+## Data Structures
+- **`core::AABB`**:
+  - Represents an Axis-Aligned Bounding Box in local or world space.
+  - Used for culling and intersection tests.
+- **`core::MeshData`**:
+  - Struct for GPU-side mesh information.
+  - Contains `local_aabb`, vertex/index offsets, counts, and stride.
+- **`core::SceneInstance`**:
+  - CPU-side struct for managing scene objects.
+  - Contains world-space AABB, transform, and indices into `MeshSSBO` and `MaterialSSBO`.

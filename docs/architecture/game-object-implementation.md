@@ -28,15 +28,30 @@ Supports both rigid and skinned pieces.
 - **Material**: Global SSBO with texture indices (albedo, normal, MR, etc.) and PBR factors.
 - **MeshStorage**: Global GPU buffers holding all vertex data / meshlets.
 
+## Management Systems
+
+### TransformManager
+Manages a dense, contiguous array of transforms in SOA format.
+- Provides `transform_index` used by `GameObject` and `RenderMesh`.
+- Handles CPU-side updates and efficient GPU buffer uploads (SSBO).
+
+### SceneManager (The Glue)
+Orchestrates the lifecycle of all renderable data.
+- **Registry**: Tracks all active `GameObject` and `RenderMesh` instances.
+- **Buffer Orchestration**: Aggregates `RenderMesh` and `Transform` data into GPU-ready SSBOs for the compute culling pass.
+- **Resource Lifecycle**: Coordinates with `GltfLoader` to populate `MeshStorage` and `MaterialManager`.
+
 ## GLTF Loading Flow
-- Load unique meshes → global MeshStorage.
-- Load unique materials + textures → bindless array + Material SSBO.
-- For each primitive: create one `RenderMesh` (set mesh/material indices).
-- Group under one `GameObject` for logical objects/characters.
-- Build hierarchy and compute initial world transforms / AABBs.
+1. **Load**: `GltfLoader` parses file into `tinygltf::Model`.
+2. **Register**: `SceneManager` iterates nodes, creating `GameObject` and `RenderMesh` entries.
+3. **Populate**:
+   - Meshes $\to$ `MeshStorage`.
+   - Materials/Textures $\to$ Bindless Array + `MaterialManager`.
+   - Transforms $\to$ `TransformManager` (SOA).
+4. **Finalize**: `SceneManager` packs all `RenderMesh` descriptors into a single GPU-resident buffer for the culling pipeline.
 
 ## Handling Complex Objects
-- Characters / multi-part models → single `GameObject` owning multiple `RenderMesh` entries.
+- Characters / multi-part models $\to$ single `GameObject` owning multiple `RenderMesh` entries.
 - Shared skeleton via common `skin_index`.
 - Rigid attachments (weapons, props) use bone-derived transforms copied into their `transform_index`.
 - Multi-material meshes naturally split into separate `RenderMesh` entries.
@@ -47,4 +62,6 @@ Supports both rigid and skinned pieces.
 - Skinning applied in mesh/vertex shader using joint matrices.
 - Optimized for Quest 3: minimal bandwidth, few render passes, bindless resources.
 
-This architecture keeps CPU light, maximizes GPU parallelism, and scales to complex GLTF scenes with many sub-meshes while staying performant on mobile VR hardware.
+## Potential Friction Points to Monitor
+- Ensure that the "Buffer Orchestration" in the SceneManager only uploads changed transforms (dirty flagging) to prevent pipeline stalls.
+- Ensure that when new GameObjects are spawned, they can update the bindless SSBO/Descriptor array without invalidating the bound descriptors mid-frame (usually handled by double-buffering descriptor sets or using `VK_EXT_descriptor_update_template`).

@@ -165,6 +165,8 @@ add_executable(Aero_Boar_Engine
     src/core/Engine.Render.cpp
     src/core/GltfLoader.cpp
     src/core/MaterialManager.cpp
+    src/core/MeshSSBO.cpp
+    src/core/SceneManager.cpp
     src/core/ShaderLoader.cpp
 )
 

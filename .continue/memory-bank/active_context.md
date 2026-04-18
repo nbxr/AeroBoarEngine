@@ -10,6 +10,12 @@
 - [ ] **Vulkan Instance Creation**:
   - [x] Implement `VkInstance` creation with required extensions (e.g., `VK_KHR_surface`).
   - [x] Implement Linux surface creation with GLFW
+- [ ] **Bindless Rendering Data Structures**:
+  - [x] Define `core::AllocatedBuffer` for VMA management
+  - [x] Define `core::AABB` for bounding box logic
+  - [x] Implement `core::MeshSSBO` for geometry data
+  - [ ] Define `core::MaterialSSBO` for material data
+  - [ ] Implement `core::SceneManager` for instance management
 - [ ] **Pre-Compute Pass**:
   - [ ] Setup everything necessary for the pre-compute pass where culling will be executed
 
@@ -18,4 +24,5 @@
 
 ## Blockers / Risks
 - **Extension Availability**: Need to verify `VK_EXT_descriptor_indexing` availability on target Quest 3 driver versions during device selection.
+
 

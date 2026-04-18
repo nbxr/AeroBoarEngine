@@ -39,6 +39,8 @@ int AeroBoar::fly() {
         return -1; // Return an error code if initialization fails
     }
 
+    
+
     // Main render loop
     while (!glfwWindowShouldClose(renderer.window.glfw_handle)) {
         // poll for window events

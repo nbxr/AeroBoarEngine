@@ -38,4 +38,28 @@ To maximize throughput on mobile architectures (Adreno/Mali), the engine follows
 
 ### 4. Rasterization & Fragment Phase
 - **Operation**: Standard hardware rasterization.
-- **Optimization**: Rely on **Subpass Dependencies** (if using Vulran/Vulkan) to keep tile-based memory (on-chip) local, avoiding expensive trips to Main Device Memory (LPDDR).
+- **Optimization**: Rely on **Subpass Dependencies** (if using Vulran/Vulkan) to keep tile-based memory (on-chic) local, avoiding expensive trips to Main Device Memory (LPDDR).
+
+## Bindless Architecture
+
+To support high draw call counts on mobile (Quest 3), we use a **Bindless Rendering** strategy.
+
+### Data Layout
+1. **`core::MeshSSBO`**:
+   - Contains `core::MeshData` entries.
+   - Each entry includes `local_aabb`, vertex/index offsets, and counts.
+   - Accessed via descriptor indexing in vertex/geometry shaders.
+
+2. **`core::MaterialSSBO`**:
+   - Contains `core::MaterialData` entries.
+   - Includes PBR parameters and bindless texture indices.
+   - Accessed via descriptor indexing in fragment shaders.
+
+3. **`core::SceneInstance`** (CPU-side):
+   - Struct containing `core::AABB` (world space), transform, and indices into `MeshSSBO` and `MaterialSSBO`.
+   - Used for culling and instance management.
+
+### Flow
+- **CPU**: Manages `SceneInstance` list. Updates world-space AABBs.
+- **Compute**: Reads world-space AABBs, performs culling, writes visible indices to a draw indirect buffer.
+- **Graphics**: Binds `MeshSSBO` and `MaterialSSBO` as descriptor sets. Uses indirect draw calls based on visible indices.
