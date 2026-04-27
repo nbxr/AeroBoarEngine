@@ -4,7 +4,7 @@
 #include "Renderer.h"
 #include "ShaderLoader.h"
 
-bool core::Engine::init_pipeline_layout(core::Renderer &renderer) {
+bool core::Engine::init_pipeline_layout() {
     // Pipeline layout
     VkPipelineLayoutCreateInfo pipeline_layout_info = {};
     pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -22,7 +22,7 @@ bool core::Engine::init_pipeline_layout(core::Renderer &renderer) {
     return true;
 }
 
-bool core::Engine::init_graphics_pipeline(core::Renderer &renderer) {
+bool core::Engine::init_graphics_pipeline() {
     std::vector<unsigned int> vertex_code;
     std::vector<unsigned int> fragment_code;
 

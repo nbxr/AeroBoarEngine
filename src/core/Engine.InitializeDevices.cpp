@@ -2,8 +2,7 @@
 #include "Renderer.h"
 #include "VkBootstrap.h"
 
-vkb::Instance &core::Engine::init_vk_instance(core::Renderer &renderer,
-                                              vkb::InstanceBuilder &builder) {
+vkb::Instance &core::Engine::init_vk_instance(vkb::InstanceBuilder &builder) {
     // vulkan instance
     auto inst_ret =
         builder.set_app_name("AeroBoar")
@@ -57,8 +56,7 @@ void core::Engine::add_features(vkb::PhysicalDeviceSelector &selector) {
 }
 
 std::pair<bool, vkb::PhysicalDevice>
-core::Engine::init_physical_device(core::Renderer &renderer,
-                                   vkb::Instance &inst) {
+core::Engine::init_physical_device(vkb::Instance &inst) {
     // Add
     vkb::PhysicalDeviceSelector selector{inst};
     add_features(selector);
@@ -74,8 +72,7 @@ core::Engine::init_physical_device(core::Renderer &renderer,
 }
 
 std::pair<bool, vkb::Device>
-core::Engine::init_logical_device(core::Renderer &renderer,
-                                  vkb::PhysicalDevice &phys) {
+core::Engine::init_logical_device(vkb::PhysicalDevice &phys) {
     vkb::DeviceBuilder device_builder{phys};
     auto dev_ret = device_builder.build();
     if (!dev_ret) {
@@ -86,8 +83,7 @@ core::Engine::init_logical_device(core::Renderer &renderer,
     return {true, dev_ret.value()};
 }
 
-bool core::Engine::init_graphics_queue(core::Renderer &renderer,
-                                       vkb::Device &dev) {
+bool core::Engine::init_graphics_queue(vkb::Device &dev) {
     auto graphics_queue_ret = dev.get_queue(vkb::QueueType::graphics);
     if (!graphics_queue_ret) {
         LOG_ERROR("Failed to find graphics queue");
@@ -98,8 +94,7 @@ bool core::Engine::init_graphics_queue(core::Renderer &renderer,
     return true;
 }
 
-bool core::Engine::init_present_queue(core::Renderer &renderer,
-                                      vkb::Device &dev) {
+bool core::Engine::init_present_queue(vkb::Device &dev) {
     auto present_queue_ret = dev.get_queue(vkb::QueueType::present);
     if (!present_queue_ret) {
         LOG_ERROR("Failed to find present queue");
@@ -110,8 +105,7 @@ bool core::Engine::init_present_queue(core::Renderer &renderer,
     return true;
 }
 
-bool core::Engine::init_transfer_queue(core::Renderer &renderer,
-                                       vkb::Device &dev) {
+bool core::Engine::init_transfer_queue(vkb::Device &dev) {
     auto transfer_queue_ret = dev.get_queue(vkb::QueueType::transfer);
     if (!transfer_queue_ret) {
         // If no dedicated transfer queue, fall back to graphics queue
@@ -127,7 +121,7 @@ bool core::Engine::init_transfer_queue(core::Renderer &renderer,
     return true;
 }
 
-bool core::Engine::init_swapchain(core::Renderer &renderer, vkb::Device &dev) {
+bool core::Engine::init_swapchain(vkb::Device &dev) {
     vkb::SwapchainBuilder swapchain_builder{dev, renderer.vk.surface};
     auto swapchain_ret =
         swapchain_builder
@@ -146,7 +140,7 @@ bool core::Engine::init_swapchain(core::Renderer &renderer, vkb::Device &dev) {
     return true;
 }
 
-void core::Engine::recreate_swapchain(core::Renderer &renderer) {
+void core::Engine::recreate_swapchain() {
     // recreate swapchain and related resources here
     vkb::SwapchainBuilder swapchain_builder{renderer.vk.device};
     auto swap_ret =

@@ -3,7 +3,10 @@
 #include <cstring>
 #include <mutex>
 
-gfx::MaterialManager::~MaterialManager() { shutdown(); }
+gfx::MaterialManager::~MaterialManager() {
+    if (is_initialized())
+        shutdown();
+}
 
 bool gfx::MaterialManager::is_initialized() {
     return device != VK_NULL_HANDLE && allocator != VK_NULL_HANDLE;
@@ -63,14 +66,6 @@ void gfx::MaterialManager::remove_material(const MaterialID material_id) {
     recycle_cache.push(material_id);
 }
 
-const gfx::Material &
-gfx::MaterialManager::get_material(MaterialID material_id) const {
-    if (material_id >= material_count)
-        return gfx::Material{}; // TODO: handle this failure case
-    else
-        return cpu_materials[material_id];
-}
-
 void gfx::MaterialManager::update_material(MaterialID material_id,
                                            const gfx::Material &material) {
     std::scoped_lock lock(material_mutex);
@@ -108,28 +103,9 @@ void gfx::MaterialManager::bind_descriptor(uint32_t binding_index) {
 void gfx::MaterialManager::shutdown() {
     std::scoped_lock lock(material_mutex);
 
-    if (get_upload_buffer().allocation != VK_NULL_HANDLE) {
-        vmaDestroyBuffer(allocator, get_upload_buffer().buffer,
-                         get_upload_buffer().allocation);
-        get_upload_buffer().buffer = VK_NULL_HANDLE;
-        get_upload_buffer().allocation = VK_NULL_HANDLE;
-        get_upload_buffer().mapped_data = nullptr;
-    }
-
-    if (get_render_buffer().allocation != VK_NULL_HANDLE) {
-        vmaDestroyBuffer(allocator, get_render_buffer().buffer,
-                         get_render_buffer().allocation);
-        get_render_buffer().buffer = VK_NULL_HANDLE;
-        get_render_buffer().allocation = VK_NULL_HANDLE;
-        get_render_buffer().mapped_data = nullptr;
-    }
-
-    get_upload_buffer().info = {};
-    get_upload_buffer().device_address = 0;
-
-    get_render_buffer().info = {};
-    get_render_buffer().device_address = 0;
-
+    core::BufferUtils::destroy_buffer(device, allocator, get_upload_buffer());
+    core::BufferUtils::destroy_buffer(device, allocator, get_render_buffer());
+    
     cpu_materials.clear();
     while (!recycle_cache.empty())
         recycle_cache.pop();

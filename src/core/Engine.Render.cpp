@@ -5,6 +5,6 @@
 #include "PassContext.h"
 #include "SubpassContext.h"
 
-void core::Engine::render(Renderer &renderer) {
+void core::Engine::render() {
     
 }

@@ -57,9 +57,6 @@ class MaterialManager {
     MaterialID create_material(const gfx::Material &material);
     void remove_material(const MaterialID material_id);
 
-    // Get a material by its ID
-    const gfx::Material &get_material(MaterialID material_id) const;
-
     // Update a material by its ID
     void update_material(MaterialID material_id, const gfx::Material &material);
 

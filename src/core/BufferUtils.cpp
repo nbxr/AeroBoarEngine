@@ -97,6 +97,22 @@ bool core::BufferUtils::resize_buffer(VkDevice device, VmaAllocator allocator,
     return true;
 }
 
+bool core::BufferUtils::destroy_buffer(
+    VkDevice device, VmaAllocator allocator,
+    core::AllocatedBuffer &allocated_buffer) {
+    if (allocated_buffer.allocation == VK_NULL_HANDLE)
+        return false;
+
+    vmaDestroyBuffer(allocator, allocated_buffer.buffer,
+                     allocated_buffer.allocation);
+    allocated_buffer.buffer = VK_NULL_HANDLE;
+    allocated_buffer.allocation = VK_NULL_HANDLE;
+    allocated_buffer.mapped_data = nullptr;
+    allocated_buffer.info = {};
+    allocated_buffer.device_address = 0;
+    return true;
+}
+
 bool core::BufferUtils::update_descriptor(
     VkDevice device, const core::AllocatedBuffer &allocated_buffer,
     VkDescriptorSet descriptor_set, VkDeviceSize buffer_size,

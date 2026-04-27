@@ -3,7 +3,7 @@
 #include "AllocatedImage.h"
 #include "Renderer.h"
 
-bool core::Engine::init_render_pass(core::Renderer &renderer) {
+bool core::Engine::init_render_pass() {
     // Multiview render pass for Quest 3
     VkAttachmentDescription color_attachment = {};
     color_attachment.format = renderer.vk.swap_chain_image_format;
@@ -62,7 +62,7 @@ bool core::Engine::init_render_pass(core::Renderer &renderer) {
     return true;
 }
 
-bool core::Engine::init_msaa_color_image(core::Renderer &renderer) {
+bool core::Engine::init_msaa_color_image() {
     // Create transient MSAA color image (on-chip only, no DRAM writes)
     VkImageCreateInfo color_image_info = {};
     color_image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -114,7 +114,7 @@ bool core::Engine::init_msaa_color_image(core::Renderer &renderer) {
     return true;
 }
 
-bool core::Engine::init_depth_image(core::Renderer &renderer) {
+bool core::Engine::init_depth_image() {
     // Create transient depth image (no DRAM writes, DONT_CARE store)
     VkImageCreateInfo depth_image_info = {};
     depth_image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -163,7 +163,7 @@ bool core::Engine::init_depth_image(core::Renderer &renderer) {
     return true;
 }
 
-bool core::Engine::init_descriptor_pool(core::Renderer &renderer) {
+bool core::Engine::init_descriptor_pool() {
     // Descriptor pool and set layout for bindless rendering
     VkDescriptorPoolSize pool_sizes[] = {
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000},
@@ -186,7 +186,7 @@ bool core::Engine::init_descriptor_pool(core::Renderer &renderer) {
     return true;
 }
 
-bool core::Engine::init_descriptor_set_layout(core::Renderer &renderer) {
+bool core::Engine::init_descriptor_set_layout() {
     VkDescriptorSetLayoutBinding bindings[4] = {};
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -226,7 +226,7 @@ bool core::Engine::init_descriptor_set_layout(core::Renderer &renderer) {
     return true;
 }
 
-bool core::Engine::init_command_pool(core::Renderer &renderer) {
+bool core::Engine::init_command_pool() {
     // Command pool
     VkCommandPoolCreateInfo cmd_pool_info = {};
     cmd_pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -241,7 +241,7 @@ bool core::Engine::init_command_pool(core::Renderer &renderer) {
     return true;
 }
 
-bool core::Engine::init_command_buffers(core::Renderer &renderer) {
+bool core::Engine::init_command_buffers() {
     // Allocate command buffers into per-frame FrameContext
     for (size_t i = 0; i < core::Renderer::MAX_FRAMES_IN_FLIGHT; i++) {
         VkCommandBufferAllocateInfo alloc_info = {};
@@ -261,7 +261,7 @@ bool core::Engine::init_command_buffers(core::Renderer &renderer) {
     return true;
 }
 
-bool core::Engine::init_framebuffers(core::Renderer &renderer) {
+bool core::Engine::init_framebuffers() {
     // We need one framebuffer per swapchain image
     renderer.main_pass.framebuffers.resize(renderer.vk.swapchain.image_count);
 
@@ -304,7 +304,7 @@ bool core::Engine::init_framebuffers(core::Renderer &renderer) {
     return true;
 }
 
-bool core::Engine::init_sync_primitives(core::Renderer &renderer) {
+bool core::Engine::init_sync_primitives() {
     // Synchronization primitives
     VkSemaphoreCreateInfo semaphore_info = {};
     semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;

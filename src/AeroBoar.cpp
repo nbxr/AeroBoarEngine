@@ -14,7 +14,7 @@ int AeroBoar::fly() {
     }
 
     // create renderer
-    core::Renderer renderer{};
+    core::Engine engine{};
 
     // Create a windowed mode window and its vulkan context
     // Set GLFW window hints
@@ -22,59 +22,60 @@ int AeroBoar::fly() {
     glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 
     // Create the window
-    renderer.window.glfw_handle = glfwCreateWindow(640, 480, "Aero Boar", NULL, NULL);
-    if (!renderer.window.glfw_handle) {
+    engine.renderer.window.glfw_handle = glfwCreateWindow(640, 480, "Aero Boar", NULL, NULL);
+    if (!engine.renderer.window.glfw_handle) {
         std::cerr << "Failed to create GLFW window" << std::endl;
         glfwTerminate();
         return -1;
     }
 
     // Make the window's context current
-    glfwMakeContextCurrent(renderer.window.glfw_handle);
+    glfwMakeContextCurrent(engine.renderer.window.glfw_handle);
     glfwSwapInterval(1);
 
     // initialize
-    if (!core::Engine::initialize(renderer)) {
-        core::Engine::destroy(renderer);
+    if (!engine.initialize()) {
+        engine.destroy();
         return -1; // Return an error code if initialization fails
     }
 
     // load the default scene defined in configuration.yaml
-    if (!core::Engine::load_default_scene(renderer)) {
+    if (!engine.load_default_scene()) {
         std::cerr << "Failed to load default scene" << std::endl;
-        core::Engine::destroy(renderer);
+        engine.destroy();
         glfwTerminate();
         return -1;
     }
 
     // Main render loop
-    while (!glfwWindowShouldClose(renderer.window.glfw_handle)) {
+    while (!glfwWindowShouldClose(engine.renderer.window.glfw_handle)) {
         // poll for window events
         glfwPollEvents();
 
         // handle resizing
         int width, height;
-        glfwGetFramebufferSize(renderer.window.glfw_handle, &width, &height);
+        glfwGetFramebufferSize(engine.renderer.window.glfw_handle, &width, &height);
         if (width > 0 && height > 0) {
         
             // Only handle resizing if the new dimensions are valid
-        if (width != renderer.window.width || height != renderer.window.height) {
-            renderer.window.width = width;
-            renderer.window.height = height;
+        if (width != engine.renderer.window.width || 
+            height != engine.renderer.window.height) {
+            engine.renderer.window.width = width;
+            engine.renderer.window.height = height;
             // Recreate swapchain and related resources here
-            core::Engine::recreate_swapchain(renderer);
+            engine.recreate_swapchain();
         }
 
         } else {
             // window is minimized: pause rendering
         }
          
-        core::Engine::render(renderer);
+        engine.render();
     }
 
     // cleanup and terminate
-    core::Engine::cleanup_scene(renderer);
-    core::Engine::destroy(renderer);
+    engine.cleanup_scene();
+    engine.destroy();
     glfwTerminate();
     return 0;
 }

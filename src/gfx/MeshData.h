@@ -13,7 +13,7 @@ namespace gfx {
  */
 struct MeshData {
     std::vector<Vertex> vertices;
-    std::vector<uint32_t> indices;
+    std::vector<Index> indices;
     core::AABB local_aabb;
 };
 }; // namespace core

@@ -8,7 +8,7 @@
 #include <fstream>
 #include <iostream>
 
-bool core::Engine::load_default_scene(core::Renderer &renderer) {
+bool core::Engine::load_default_scene() {
     // get scene name from configuration.json
     nlohmann::json config;
     try {
@@ -28,11 +28,10 @@ bool core::Engine::load_default_scene(core::Renderer &renderer) {
         return false;
     }
 
-    return load_scene(renderer, config["defaultScene"].get<std::string>());
+    return load_scene(config["defaultScene"].get<std::string>());
 }
 
-bool core::Engine::load_scene(core::Renderer &renderer,
-                              const std::string &scene_name) {
+bool core::Engine::load_scene(const std::string &scene_name) {
     // get scene name from configuration.json
     nlohmann::json config;
     try {
@@ -113,31 +112,16 @@ bool core::Engine::load_scene(core::Renderer &renderer,
         }
     }
 
-    // ensure scene manager is initialized
-    if (!renderer.scene_manager.is_initialized()) {
-        renderer.scene_manager.initialize(
-            renderer.vk.device.device, renderer.allocator,
-            renderer.vk.bindless_descriptor_set, 100);
-    }
-
-    if (!renderer.material_manager.is_initialized()) {
-        renderer.material_manager.initialize(
-            renderer.vk.device.device, renderer.allocator,
-            renderer.vk.bindless_descriptor_set, 100);
-    }
-
-
     // At this point, the scene manager has CPU-side data for instances and
     // materials. We can call update_buffers() to upload this data to the GPU.
     renderer.scene_manager.update_buffers();
     renderer.material_manager.update_buffers();
-    
-
+    renderer.mesh_manager.update_buffers();
     // Implementation for loading scene
     return true; // Placeholder return value
 }
 
-void core::Engine::cleanup_scene(core::Renderer &renderer) {
+void core::Engine::cleanup_scene() {
 
     // finally, clean up the scene manager
 }
