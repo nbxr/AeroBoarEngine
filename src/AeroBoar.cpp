@@ -39,7 +39,13 @@ int AeroBoar::fly() {
         return -1; // Return an error code if initialization fails
     }
 
-    
+    // load the default scene defined in configuration.yaml
+    if (!core::Engine::load_default_scene(renderer)) {
+        std::cerr << "Failed to load default scene" << std::endl;
+        core::Engine::destroy(renderer);
+        glfwTerminate();
+        return -1;
+    }
 
     // Main render loop
     while (!glfwWindowShouldClose(renderer.window.glfw_handle)) {
@@ -67,6 +73,7 @@ int AeroBoar::fly() {
     }
 
     // cleanup and terminate
+    core::Engine::cleanup_scene(renderer);
     core::Engine::destroy(renderer);
     glfwTerminate();
     return 0;

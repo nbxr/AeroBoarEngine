@@ -2,15 +2,14 @@
 #include "Engine.h"
 #include "AllocatedBuffer.h"
 #include "AllocatedImage.h"
+#include "GameObject.h"
+#include "RenderMesh.h"
 #include "Renderer.h"
 #include "VkBootstrap.h"
 #include "vk_mem_alloc.h"
-#include "GameObject.h"
-#include "RenderMesh.h"
 
 bool core::Engine::initialize(core::Renderer &renderer) {
-    if (init_vulkan(renderer) && renderer.materialManager.Initialize(
-                                     renderer.vk.device, renderer.allocator)) {
+    if (init_vulkan(renderer)) {
         return true;
     } else
         return false;

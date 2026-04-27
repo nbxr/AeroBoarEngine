@@ -1,17 +1,44 @@
 #pragma once
 
 #include "AllocatedBuffer.h"
+#include "SceneInstance.h"
+#include <array>
 #include <cstdint>
 #include <glm/glm.hpp>
+#include <mutex>
+#include <shared_mutex>
 #include <vector>
+#include <vma/vk_mem_alloc.h>
 #include <vulkan/vulkan.h>
-#include "SceneInstance.h"
 
+namespace core {
 /**
  * @brief Manages the lifecycle and GPU buffers for scene instances.
  * Encapsulates VmaAllocation and VkBuffer via AllocatedBuffer.
  */
 class SceneManager {
+  private:
+    VkDevice device{VK_NULL_HANDLE};
+    VmaAllocator allocator{VK_NULL_HANDLE};
+    VkDescriptorSet descriptor_set{VK_NULL_HANDLE};
+
+    // Internal storage using AllocatedBuffer
+    std::array<core::AllocatedBuffer, 2> instance_buffer{};
+
+    // Indexes to control which buffers are used for uploading
+    // and which are used for rendering
+    uint32_t upload = 1;
+    uint32_t render = 0;
+
+    // CPU-side mirror for quick access/add/remove
+    std::vector<SceneInstance> cpu_instances{};
+
+    uint32_t instance_count = 0;
+    std::array<uint32_t, 2> max_instances{0, 0};
+    uint32_t growth_step_size = 50;
+
+    mutable std::shared_mutex instance_mutex;
+
   public:
     SceneManager() = default;
     ~SceneManager();
@@ -20,92 +47,30 @@ class SceneManager {
     SceneManager(const SceneManager &) = delete;
     SceneManager &operator=(const SceneManager &) = delete;
 
-    /**
-     * @brief Initialize SceneManager resources.
-     * @param device Vulkan logical device.
-     * @param allocator VMA allocator handle.
-     * @param descriptor_set Bindless descriptor set containing
-     * materials/meshes.
-     * @param initial_capacity Initial capacity for scene instances.
-     * @return true if initialization succeeded.
-     */
-    bool Initialize(VkDevice device, VmaAllocator allocator,
+    // Common buffer management methods
+    bool is_initialized();
+    bool initialize(VkDevice device, VmaAllocator allocator,
                     VkDescriptorSet descriptor_set, uint32_t initial_capacity);
 
-    /**
-     * @brief Add a new instance to the scene.
-     * @param instance The SceneInstance data to add.
-     * @return true if added successfully, false if capacity exceeded.
-     */
-    bool AddInstance(const SceneInstance &instance);
-
-    /**
-     * @brief Remove an instance by swapping it with the last element (O(1)).
-     * @param index Index of the instance to remove.
-     */
-    void RemoveInstance(uint32_t index);
-
-    /**
-     * @brief Update GPU buffers with current CPU-side instance data.
-     * Must be called before each frame if data has changed.
-     */
-    void UpdateBuffers();
-
-    /**
-     * @brief Bind the scene instance SSBO to the current command buffer.
-     * @param command_buffer Vulkan command buffer.
-     * @param binding_index Descriptor binding index.
-     */
-    void BindDescriptor(VkCommandBuffer command_buffer,
-                        uint32_t binding_index) const;
-
-    /**
-     * @brief Get the number of active instances.
-     */
-    [[nodiscard]] uint32_t GetInstanceCount() const { return instance_count_; }
-
-    /**
-     * @brief Get the maximum capacity of the buffer.
-     */
-    [[nodiscard]] uint32_t GetMaxCapacity() const { return max_instances_; }
-
-    /**
-     * @brief Get pointer to CPU-accessible data for direct manipulation.
-     * @return Pointer to the array of SceneInstance.
-     */
-    [[nodiscard]] const SceneInstance *GetInstances() const {
-        return cpu_instances.data();
+    bool add_instance(const core::SceneInstance &instance);
+    void remove_instance(uint32_t index);
+    void update_buffers();
+    void bind_descriptor(uint32_t binding_index);
+    
+    [[nodiscard]] core::AllocatedBuffer &get_buffer() {
+        return get_render_buffer();
     }
-
-    /**
-     * @brief Get the underlying AllocatedBuffer for barrier operations etc.
-     */
-    [[nodiscard]] core::AllocatedBuffer &GetBuffer() {
-        return instance_buffer;
-    }
-
-    /**
-     * @brief Get the bindless descriptor set for materials/meshes.
-     */
-    [[nodiscard]] VkDescriptorSet GetDescriptorSet() const {
+    
+    [[nodiscard]] VkDescriptorSet get_descriptor_set() const {
         return descriptor_set;
     }
 
-    void Shutdown();
+    void shutdown();
 
   private:
-    void ResizeBuffer(uint32_t new_capacity);
-
-    VkDevice device = VK_NULL_HANDLE;
-    VmaAllocator allocator_ = VK_NULL_HANDLE;
-    VkDescriptorSet descriptor_set = VK_NULL_HANDLE;
-
-    // Internal storage using AllocatedBuffer
-    core::AllocatedBuffer instance_buffer;
-
-    // CPU-side mirror for quick access/add/remove
-    std::vector<SceneInstance> cpu_instances;
-
-    uint32_t instance_count_ = 0;
-    uint32_t max_instances_ = 0;
+    void resize_buffer(uint32_t new_capacity);
+    void toggle_buffers();
+    [[nodiscard]] core::AllocatedBuffer &get_upload_buffer();
+    [[nodiscard]] core::AllocatedBuffer &get_render_buffer();
 };
+}; // namespace core

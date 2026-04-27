@@ -131,11 +131,19 @@ FetchContent_Declare(
     GIT_TAG 1.0.3
 )
 
+# 6. nlohmann/json (header-only library)
+set(JSON_BuildTests OFF CACHE INTERNAL "" FORCE)
+FetchContent_Declare(
+    nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.11.3
+)
+
 # Enable updating dependencies
 set(FETCHCONTENT_QUIET OFF)
 
 # Fetch and make dependencies available
-FetchContent_MakeAvailable(VulkanMemoryAllocator vk-bootstrap tinygltf glfw glm)
+FetchContent_MakeAvailable(VulkanMemoryAllocator vk-bootstrap tinygltf glfw glm nlohmann_json)
 
 # -----------------------------------------------------------------------------
 # Build Configuration
@@ -154,20 +162,30 @@ elseif(UNIX)
     endif()
 endif()
 
+# don't show warnings for dependencies
+target_compile_options(VulkanMemoryAllocator INTERFACE -w)
+target_compile_options(vk-bootstrap PRIVATE -w)
+target_compile_options(tinygltf INTERFACE -w)
+target_compile_options(glfw PRIVATE -w)
+target_compile_options(glm PRIVATE -w)
+
 add_executable(Aero_Boar_Engine
     src/main.cpp
     src/AeroBoar.cpp
+    src/core/BufferUtils.cpp
     src/core/Engine.Destroy.cpp
     src/core/Engine.Initialize.cpp
     src/core/Engine.InitializeDevices.cpp
     src/core/Engine.InitializePasses.cpp
     src/core/Engine.InitializePipeline.cpp
+    src/core/Engine.InitializeScene.cpp
     src/core/Engine.Render.cpp
     src/core/GltfLoader.cpp
-    src/core/MaterialManager.cpp
-    src/core/MeshSSBO.cpp
     src/core/SceneManager.cpp
     src/core/ShaderLoader.cpp
+    src/gfx/MaterialManager.cpp
+    src/gfx/MeshManager.cpp
+    src/gfx/TextureManager.cpp
 )
 
 # Make shaders available during build
@@ -177,10 +195,13 @@ endif()
 
 # Include directories
 target_include_directories(Aero_Boar_Engine PRIVATE
+    src    
     ${tinygltf_SOURCE_DIR}
     ${GLFW_INCLUDE_DIRS}
     ${Vulkan_INCLUDE_DIRS}
     ${SHADER_OUTPUT_DIR}  # Add this to include compiled shaders
+    ${nlohmann_json_SOURCE_DIR}/include
+    
 )
 
 # Link libraries
@@ -190,6 +211,15 @@ target_link_libraries(Aero_Boar_Engine PRIVATE
     GPUOpen::VulkanMemoryAllocator    
     glfw
     glm::glm
+)
+
+# Copy configuration to build directory after compilation
+add_custom_command(
+    TARGET Aero_Boar_Engine POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy
+    ${CMAKE_SOURCE_DIR}//assets/scenes/configuration.json
+    ${CMAKE_BINARY_DIR}/assets/scenes/configuration.json
+    COMMENT "Copying configuration to build directory"
 )
 
 # Copy shaders to build directory after compilation (optional, for easier deployment)

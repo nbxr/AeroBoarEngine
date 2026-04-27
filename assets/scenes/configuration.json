@@ -1,0 +1,10 @@
+{
+  "defaultScene": "Sponza",
+  "scenes": [
+    {
+      "name": "Sponza",
+      "filename": "/home/nolin/repo/glTF-Sample-Assets/Models/Sponza/glTF/Sponza.gltf"
+    }
+  ]
+}
+

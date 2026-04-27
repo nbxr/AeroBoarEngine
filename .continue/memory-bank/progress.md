@@ -12,10 +12,17 @@
 - [x] GLTF Model Loading (CPU-side):
   - [x] `core::GltfLoader` implementation (parsing & extraction)
   - [x] `core::MeshData` structure for intermediate CPU storage
+- [x] Scene Loading Pipeline:
+  - [x] `Engine::load_default_scene()` reads from `configuration.json`
+  - [x] `Engine::load_scene()` orchestrates GLTF loading, mesh/material extraction
+  - [x] `Engine::cleanup_scene()` stub for cleanup
+- [x] TextureManager: Staged texture loading with `TextureID` handles
+- [x] MeshManager: Staged mesh upload pipeline with `MeshPrimitiveID` handles
 
 ## In Progress
+- [ ] MaterialManager: Full material system with GPU SSBO upload, double buffering
 - [ ] Bindless Rendering Data Structures
-  - [x] `core::MeshSSBO` (Geometry)
+  - [ ] `core::MeshSSBO` (Geometry)
   - [ ] `core::MaterialSSBO` (Materials)
   - [ ] `core::SceneManager` (Instance Management)
 - [ ] GPU Upload & Buffer Management (Next immediate step)

@@ -17,6 +17,9 @@ class Engine {
     static void render(core::Renderer &renderer);
     static void destroy(core::Renderer &renderer);
     static void recreate_swapchain(core::Renderer &renderer);
+    static bool load_default_scene(core::Renderer &renderer);
+    static bool load_scene(core::Renderer &renderer, const std::string &scene_name);
+    static void cleanup_scene(core::Renderer &renderer);
 
   private:
     // devices

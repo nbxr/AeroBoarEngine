@@ -8,8 +8,8 @@ struct AllocatedBuffer {
     VkBuffer buffer = VK_NULL_HANDLE;
     VmaAllocation allocation = VK_NULL_HANDLE;
     VmaAllocationInfo info{};   // optional: size, offset, memory handle, etc.
-    void *mappedData = nullptr; // if persistently mapped
-    VkDeviceAddress deviceAddress =
+    void *mapped_data = nullptr; // if persistently mapped
+    VkDeviceAddress device_address =
         0; // for shader device address / RTX / bindless
 };
 }; // namespace core
