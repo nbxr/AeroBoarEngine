@@ -168,7 +168,7 @@ void gfx::TextureManager::upload_textures() {
 
         vkCreateImageView(device, &view_info, nullptr,
                           &tex_info.gpu_image.view);
-        
+
         image_views_created++;
 
         // 4. Upload pixel data via Staging Buffer
@@ -187,7 +187,7 @@ void gfx::TextureManager::upload_textures() {
         VmaAllocation staging_allocation;
         vmaCreateBuffer(allocator, &buffer_info, &buffer_alloc_info,
                         &staging_buffer, &staging_allocation, nullptr);
-                        
+
         // 5. Map and copy
         void *data;
         vmaMapMemory(allocator, staging_allocation, &data);
@@ -289,7 +289,7 @@ void gfx::TextureManager::shutdown() {
     // Destroy all AllocatedImage resources in texture_cache
     for (auto &tex_info : texture_cache) {
 
-        if (tex_info.gpu_image.view != VK_NULL_HANDLE){
+        if (tex_info.gpu_image.view != VK_NULL_HANDLE) {
             vkDestroyImageView(device, tex_info.gpu_image.view, nullptr);
             image_views_destroyed++;
         }

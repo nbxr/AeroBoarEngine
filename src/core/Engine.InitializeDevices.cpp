@@ -42,10 +42,9 @@ void core::Engine::add_features(vkb::PhysicalDeviceSelector &selector) {
     selector.set_required_features_12(features12);
 }
 
-std::pair<bool, vkb::PhysicalDevice>
-core::Engine::init_physical_device() {
+std::pair<bool, vkb::PhysicalDevice> core::Engine::init_physical_device() {
     // Add
-    auto& inst = renderer.vk.instance;
+    auto &inst = renderer.vk.instance;
     vkb::PhysicalDeviceSelector selector{inst};
     add_features(selector);
     auto phys_ret = selector.set_surface(renderer.vk.surface).select();
@@ -151,10 +150,19 @@ bool core::Engine::init_swapchain(vkb::Device &dev) {
 }
 
 void core::Engine::recreate_swapchain() {
+    vkDeviceWaitIdle(renderer.vk.device);
+
+    for (auto &view : renderer.vk.swapchain.get_image_views().value()) {
+        vkDestroyImageView(renderer.vk.device, view, nullptr);
+    }
+
     // recreate swapchain and related resources here
     vkb::SwapchainBuilder swapchain_builder{renderer.vk.device};
     auto swap_ret =
-        swapchain_builder.set_old_swapchain(renderer.vk.swapchain).build();
+        swapchain_builder.set_old_swapchain(renderer.vk.swapchain)
+            .set_desired_min_image_count(renderer.MAX_FRAMES_IN_FLIGHT)
+            .set_desired_extent(renderer.window.width, renderer.window.height)
+            .build();
 
     if (!swap_ret) {
         // If it failed to create a swapchain, the old swapchain handle is

@@ -10,6 +10,7 @@ void core::Engine::destroy() {
     destroy_images();
     destroy_command_buffers();
     destroy_swapchain();
+    destroy_framebuffers();
     destroy_sync_primitives();
     destroy_descriptor_pool();
     destroy_pipelines();

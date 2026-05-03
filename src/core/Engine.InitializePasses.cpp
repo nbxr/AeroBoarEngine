@@ -58,9 +58,9 @@ bool core::Engine::init_render_pass() {
     // The three attachments must match the order used in
     // VkFramebuffers
     VkAttachmentDescription attachments[3] = {
-        color_attachment,       // 0: Transient MSAA Color
-        swapchain_attachment,   // 1: Resolved Color (swapchain image)
-        depth_attachment        // 2: Transient Depth
+        color_attachment,     // 0: Transient MSAA Color
+        swapchain_attachment, // 1: Resolved Color (swapchain image)
+        depth_attachment      // 2: Transient Depth
     };
 
     VkRenderPassCreateInfo render_pass_info = {};
@@ -81,6 +81,7 @@ bool core::Engine::init_render_pass() {
 }
 
 bool core::Engine::init_msaa_color_image() {
+
     // Create transient MSAA color image (on-chip only, no DRAM writes)
     VkImageCreateInfo color_image_info = {};
     color_image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -133,6 +134,7 @@ bool core::Engine::init_msaa_color_image() {
 }
 
 bool core::Engine::init_depth_image() {
+
     // Create transient depth image (no DRAM writes, DONT_CARE store)
     VkImageCreateInfo depth_image_info = {};
     depth_image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -142,7 +144,8 @@ bool core::Engine::init_depth_image() {
                                renderer.vk.swap_chain_extent.height, 1};
     depth_image_info.mipLevels = 1;
     depth_image_info.arrayLayers = 1;
-    depth_image_info.samples = renderer.vk.msaa_color; // Match MSAA sample count
+    depth_image_info.samples =
+        renderer.vk.msaa_color; // Match MSAA sample count
     depth_image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
     depth_image_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
                              VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;

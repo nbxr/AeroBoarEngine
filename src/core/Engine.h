@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <utility>
 #define LOG_ERROR(value) std::cerr << value << std::endl
-#define LOG_INFO(value) std::out << value << std::endl
+#define LOG_INFO(value) std::cout << value << std::endl
 
 namespace core {
 class Engine {
