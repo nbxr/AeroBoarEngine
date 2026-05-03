@@ -284,7 +284,7 @@ bool core::Engine::init_command_buffers() {
 
 bool core::Engine::init_framebuffers() {
     // We need one framebuffer per swapchain image
-    renderer.main_pass.framebuffers.resize(renderer.vk.swapchain.image_count);
+    renderer.main_pass.framebuffers.resize(renderer.vk.swap_chain_image_views.size());
 
     // Transient MSAA color and depth views are created once and shared across
     // all framebuffers
@@ -293,9 +293,9 @@ bool core::Engine::init_framebuffers() {
     VkImageView depth_view =
         renderer.main_pass.depth_image.view; // 2D array, 2 layers
 
-    for (size_t i = 0; i < renderer.vk.swapchain.image_count; ++i) {
+    for (size_t i = 0; i < renderer.vk.swap_chain_image_views.size(); ++i) {
         VkImageView swapchain_view =
-            renderer.vk.swapchain.get_image_views().value()[i];
+            renderer.vk.swap_chain_image_views[i];
 
         // The three attachments must match the order defined in your
         // VkRenderPass

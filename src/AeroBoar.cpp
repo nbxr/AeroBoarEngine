@@ -40,12 +40,12 @@ int AeroBoar::fly() {
     }
 
     // load the default scene defined in configuration.yaml
-    // if (!engine.load_default_scene()) {
-    //     std::cerr << "Failed to load default scene" << std::endl;
-    //     engine.destroy();
-    //     glfwTerminate();
-    //     return -1;
-    // }
+    if (!engine.load_default_scene()) {
+        std::cerr << "Failed to load default scene" << std::endl;
+        engine.destroy();
+        glfwTerminate();
+        return -1;
+    }
 
     // Main render loop
     while (!glfwWindowShouldClose(engine.renderer.window.glfw_handle)) {

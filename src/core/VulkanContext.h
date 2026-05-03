@@ -13,8 +13,8 @@ struct VulkanContext {
     vkb::Instance instance;
     VkPhysicalDevice physical_device;
     vkb::Device device{};
-    vkb::Swapchain swapchain{};
-
+    VkSwapchainKHR swapchain{VK_NULL_HANDLE};
+    
     VkQueue graphics_queue{VK_NULL_HANDLE};
     VkQueue present_queue{VK_NULL_HANDLE};
     VkQueue transfer_queue{VK_NULL_HANDLE};
@@ -38,6 +38,7 @@ struct VulkanContext {
     VkExtent2D swap_chain_extent{0, 0};
     VkSampleCountFlagBits msaa_color{VK_SAMPLE_COUNT_4_BIT};
     VkSampleCountFlagBits msaa_depth{VK_SAMPLE_COUNT_4_BIT};
+    std::vector<VkImageView> swap_chain_image_views{};
 
     VkPipeline pipeline{VK_NULL_HANDLE};
     VkPushConstantRange push_constant_range{

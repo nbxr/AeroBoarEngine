@@ -132,19 +132,28 @@ bool core::Engine::init_transfer_queue(vkb::Device &dev) {
 
 bool core::Engine::init_swapchain(vkb::Device &dev) {
     vkb::SwapchainBuilder swapchain_builder{dev, renderer.vk.surface};
-    auto swapchain_ret =
+    auto swap_ret =
         swapchain_builder
             .set_desired_min_image_count(renderer.MAX_FRAMES_IN_FLIGHT)
             .build();
 
-    if (!swapchain_ret) {
+    if (!swap_ret) {
         LOG_ERROR("Failed to create swapchain");
         return false;
     }
 
-    renderer.vk.swapchain = swapchain_ret.value();
-    renderer.vk.swap_chain_image_format = renderer.vk.swapchain.image_format;
-    renderer.vk.swap_chain_extent = renderer.vk.swapchain.extent;
+    renderer.vk.swapchain = swap_ret.value().swapchain;
+    renderer.vk.swap_chain_image_format = swap_ret.value().image_format;
+    renderer.vk.swap_chain_extent = swap_ret.value().extent;
+
+    // Store views once (vkb creates new each get_image_views call)
+    auto views_res = swap_ret.value().get_image_views();
+    if (!views_res) {
+        LOG_ERROR("Failed to get swapchain image views");
+        return false;
+    }
+
+    renderer.vk.swap_chain_image_views = views_res.value();
 
     return true;
 }
@@ -152,9 +161,11 @@ bool core::Engine::init_swapchain(vkb::Device &dev) {
 void core::Engine::recreate_swapchain() {
     vkDeviceWaitIdle(renderer.vk.device);
 
-    for (auto &view : renderer.vk.swapchain.get_image_views().value()) {
+    // destroy old image views
+    for (auto &view : renderer.vk.swap_chain_image_views) {
         vkDestroyImageView(renderer.vk.device, view, nullptr);
     }
+    renderer.vk.swap_chain_image_views.clear();
 
     // recreate swapchain and related resources here
     vkb::SwapchainBuilder swapchain_builder{renderer.vk.device};
@@ -167,12 +178,21 @@ void core::Engine::recreate_swapchain() {
     if (!swap_ret) {
         // If it failed to create a swapchain, the old swapchain handle is
         // invalid.
-        renderer.vk.swapchain.swapchain = VK_NULL_HANDLE;
+        renderer.vk.swapchain = VK_NULL_HANDLE;
     } else {
         // Even though we recycled the previous swapchain, we need to free its
         // resources.
-        vkb::destroy_swapchain(renderer.vk.swapchain);
+        vkDestroySwapchainKHR(renderer.vk.device, renderer.vk.swapchain,
+                              nullptr);
         // Get the new swapchain and place it in our variable
         renderer.vk.swapchain = swap_ret.value();
+        // Store views once (vkb creates new each get_image_views call)
+        auto views_res = swap_ret.value().get_image_views();
+        if (!views_res) {
+            LOG_ERROR("Failed to get swapchain image views");
+            return;
+        }
+
+        renderer.vk.swap_chain_image_views = views_res.value();
     }
 }

@@ -47,10 +47,10 @@ void core::Engine::destroy_command_buffers() {
 }
 
 void core::Engine::destroy_swapchain() {
-    for (auto image_view : renderer.vk.swapchain.get_image_views().value()) {
+    for (auto& image_view : renderer.vk.swap_chain_image_views) {
         vkDestroyImageView(renderer.vk.device, image_view, nullptr);
     }
-    vkDestroySwapchainKHR(renderer.vk.device, renderer.vk.swapchain.swapchain,
+    vkDestroySwapchainKHR(renderer.vk.device, renderer.vk.swapchain,
                           nullptr);
 }
 
