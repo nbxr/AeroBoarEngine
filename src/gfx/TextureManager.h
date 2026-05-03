@@ -17,7 +17,10 @@ class TextureManager {
     VkDescriptorSet descriptor_set{VK_NULL_HANDLE};
     VkSampler sampler_handle{VK_NULL_HANDLE};
     VkCommandPool upload_command_pool{VK_NULL_HANDLE};
+    VkCommandPool transition_command_pool{VK_NULL_HANDLE};
+    VkQueue graphics_queue{VK_NULL_HANDLE};
     VkQueue transfer_queue{VK_NULL_HANDLE};
+    VkCommandBuffer transition_command_buffer{VK_NULL_HANDLE};
     VkCommandBuffer upload_command_buffer{VK_NULL_HANDLE};
     uint32_t graphics_queue_index{VK_QUEUE_FAMILY_IGNORED};
     uint32_t transfer_queue_index{VK_QUEUE_FAMILY_IGNORED};
@@ -43,14 +46,14 @@ class TextureManager {
   public:
     bool is_initialized();
     bool initialize(VkDevice device, VmaAllocator allocator,
-                    VkQueue transfer_queue,
+                    VkQueue transfer_queue, VkQueue graphics_queue,
                     uint32_t graphics_queue_family_index,
                     uint32_t transfer_queue_family_index);
     TextureID get_texture_handle(const std::string &name,
                                  const std::string &filepath);
     void remove_texture(const TextureID texture_id);
     void upload_textures();
-    void finalize_layout(VkBuffer command_buffer);
+    void finalize_layout();
     void bind_descriptor(uint32_t index);
     void shutdown();
 

@@ -151,7 +151,8 @@ bool core::Engine::init_resource_managers() {
 
     if (!renderer.texture_manager.initialize(
             renderer.vk.device.device, renderer.allocator,
-            renderer.vk.transfer_queue, renderer.vk.graphics_family_index,
+            renderer.vk.transfer_queue, renderer.vk.graphics_queue,
+            renderer.vk.graphics_family_index,
             renderer.vk.transfer_family_index))
         return false;
 

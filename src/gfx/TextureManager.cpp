@@ -8,10 +8,12 @@ bool gfx::TextureManager::is_initialized() { return device != VK_NULL_HANDLE; }
 
 bool gfx::TextureManager::initialize(VkDevice device, VmaAllocator allocator,
                                      VkQueue transfer_queue,
+                                     VkQueue graphics_queue,
                                      uint32_t graphics_queue_family_index,
                                      uint32_t transfer_queue_family_index) {
     this->device = device;
     this->allocator = allocator;
+    this->graphics_queue = graphics_queue;
     this->transfer_queue = transfer_queue;
     this->graphics_queue_index = graphics_queue_family_index;
     this->transfer_queue_index = transfer_queue_family_index;
@@ -38,6 +40,14 @@ bool gfx::TextureManager::initialize(VkDevice device, VmaAllocator allocator,
     alloc_info.commandBufferCount = 1;
 
     vkAllocateCommandBuffers(device, &alloc_info, &upload_command_buffer);
+
+    // update and reuse info to allocate command buffer for transitioning
+    // ownership
+    pool_info.queueFamilyIndex = graphics_queue_family_index;
+    vkCreateCommandPool(device, &pool_info, nullptr, &transition_command_pool);
+
+    alloc_info.commandPool = transition_command_pool;
+    vkAllocateCommandBuffers(device, &alloc_info, &transition_command_buffer);
 
     return true;
 }
@@ -219,6 +229,8 @@ void gfx::TextureManager::upload_textures() {
         // and change queue ownership to graphics queue
         pending_queue_transition.push_back(tex_handle);
 
+        // start ownership release
+
         // Cleanup staging resources
         staging_resources.push_back(
             std::make_pair(staging_buffer, staging_allocation));
@@ -242,23 +254,46 @@ void gfx::TextureManager::upload_textures() {
 
     pending_upload.clear();
     uploaded_count = texture_cache.size();
+
+    finalize_layout();
 }
 
-void gfx::TextureManager::finalize_layout(VkBuffer command_buffer) {
+void gfx::TextureManager::finalize_layout() {
 
     if (pending_queue_transition.empty())
         return;
+
+    // reuse the transition_command_buffer
+    vkResetCommandBuffer(transition_command_buffer,
+                         VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
+
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+    vkBeginCommandBuffer(transition_command_buffer, &beginInfo);
 
     for (auto tex_handle : pending_queue_transition) {
         auto &tex_info = texture_cache[tex_handle.value];
 
         // Transition back to shader read layout
         core::BufferUtils::transition_image_layout(
-            upload_command_buffer, tex_info.gpu_image.handle,
+            transition_command_buffer, tex_info.gpu_image.handle,
             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, tex_info.width,
             tex_info.height, transfer_queue_index, graphics_queue_index);
     }
+
+    vkEndCommandBuffer(transition_command_buffer);
+
+    // Submit once
+    VkSubmitInfo submit_info{};
+    submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit_info.commandBufferCount = 1;
+    submit_info.pCommandBuffers = &transition_command_buffer;
+    vkQueueSubmit(graphics_queue, 1, &submit_info, VK_NULL_HANDLE);
+
+    vkQueueWaitIdle(graphics_queue);
 
     pending_queue_transition.clear();
 }
@@ -284,6 +319,13 @@ void gfx::TextureManager::shutdown() {
 
     if (upload_command_pool != VK_NULL_HANDLE)
         vkDestroyCommandPool(device, upload_command_pool, nullptr);
+
+    if (transition_command_buffer != VK_NULL_HANDLE)
+        vkFreeCommandBuffers(device, transition_command_pool, 1,
+                             &transition_command_buffer);
+
+    if (transition_command_pool != VK_NULL_HANDLE)
+        vkDestroyCommandPool(device, transition_command_pool, nullptr);
 
     uint32_t image_views_destroyed = 0;
     // Destroy all AllocatedImage resources in texture_cache
