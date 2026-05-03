@@ -13,7 +13,6 @@
 #include <vulkan/vulkan.h>
 
 namespace gfx {
-
 class MaterialManager {
   private:
     VkDevice device{VK_NULL_HANDLE};

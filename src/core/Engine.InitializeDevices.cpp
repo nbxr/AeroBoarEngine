@@ -2,7 +2,7 @@
 #include "Renderer.h"
 #include "VkBootstrap.h"
 
-vkb::Instance &core::Engine::init_vk_instance(vkb::InstanceBuilder &builder) {
+bool core::Engine::init_vk_instance(vkb::InstanceBuilder &builder) {
     // vulkan instance
     auto inst_ret =
         builder.set_app_name("AeroBoar")
@@ -15,8 +15,8 @@ vkb::Instance &core::Engine::init_vk_instance(vkb::InstanceBuilder &builder) {
         throw std::runtime_error("Failed to create Vulkan instance");
     }
 
-    renderer.vk.instance = inst_ret.value().instance;
-    return inst_ret.value();
+    renderer.vk.instance = inst_ret.value();
+    return true;
 }
 
 void core::Engine::add_features(vkb::PhysicalDeviceSelector &selector) {
@@ -38,26 +38,14 @@ void core::Engine::add_features(vkb::PhysicalDeviceSelector &selector) {
     features12.runtimeDescriptorArray = VK_TRUE;
     features12.descriptorBindingVariableDescriptorCount = VK_TRUE;
     features12.descriptorBindingUniformBufferUpdateAfterBind = VK_TRUE;
+    features12.bufferDeviceAddress = VK_TRUE;
     selector.set_required_features_12(features12);
-
-    // enable descriptor heap
-    // Enable VK_EXT_descriptor_indexing extension features
-    VkPhysicalDeviceDescriptorIndexingFeaturesEXT featuresIndexing = {};
-    featuresIndexing.sType =
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT;
-    featuresIndexing.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
-    featuresIndexing.shaderStorageImageArrayNonUniformIndexing = VK_TRUE;
-    featuresIndexing.shaderStorageBufferArrayNonUniformIndexing = VK_TRUE;
-    featuresIndexing.shaderUniformBufferArrayNonUniformIndexing = VK_TRUE;
-    featuresIndexing.runtimeDescriptorArray = VK_TRUE;
-    featuresIndexing.descriptorBindingVariableDescriptorCount = VK_TRUE;
-    featuresIndexing.descriptorBindingUniformBufferUpdateAfterBind = VK_TRUE;
-    selector.add_required_extension_features(featuresIndexing);
 }
 
 std::pair<bool, vkb::PhysicalDevice>
-core::Engine::init_physical_device(vkb::Instance &inst) {
+core::Engine::init_physical_device() {
     // Add
+    auto& inst = renderer.vk.instance;
     vkb::PhysicalDeviceSelector selector{inst};
     add_features(selector);
     auto phys_ret = selector.set_surface(renderer.vk.surface).select();
@@ -83,6 +71,24 @@ core::Engine::init_logical_device(vkb::PhysicalDevice &phys) {
     return {true, dev_ret.value()};
 }
 
+void core::Engine::select_depth_format(vkb::PhysicalDevice &phys) {
+    VkFormat formats[] = {VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D32_SFLOAT,
+                          VK_FORMAT_D24_UNORM_S8_UINT};
+
+    for (auto format : formats) {
+        VkFormatProperties props;
+        vkGetPhysicalDeviceFormatProperties(phys, format, &props);
+
+        if (props.optimalTilingFeatures &
+            VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
+            renderer.vk.depth_format = format;
+            return;
+        }
+    }
+
+    renderer.vk.depth_format = VK_FORMAT_D32_SFLOAT;
+}
+
 bool core::Engine::init_graphics_queue(vkb::Device &dev) {
     auto graphics_queue_ret = dev.get_queue(vkb::QueueType::graphics);
     if (!graphics_queue_ret) {
@@ -91,6 +97,7 @@ bool core::Engine::init_graphics_queue(vkb::Device &dev) {
     }
     VkQueue graphics_queue = graphics_queue_ret.value();
     renderer.vk.graphics_queue = graphics_queue;
+    renderer.vk.graphics_family_index = 0;
     return true;
 }
 
@@ -102,6 +109,7 @@ bool core::Engine::init_present_queue(vkb::Device &dev) {
     }
     VkQueue present_queue = present_queue_ret.value();
     renderer.vk.present_queue = present_queue;
+    renderer.vk.present_family_index = 0;
     return true;
 }
 
@@ -117,6 +125,8 @@ bool core::Engine::init_transfer_queue(vkb::Device &dev) {
     }
     VkQueue transfer_queue = transfer_queue_ret.value();
     renderer.vk.transfer_queue = transfer_queue;
+    renderer.vk.transfer_family_index =
+        dev.get_queue_index(vkb::QueueType::transfer).value();
 
     return true;
 }

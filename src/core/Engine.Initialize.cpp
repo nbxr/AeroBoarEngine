@@ -20,39 +20,46 @@ bool core::Engine::init_vulkan() {
     vkb::InstanceBuilder builder{};
 
     // vulkan instance
-    vkb::Instance inst = init_vk_instance(builder);
+    if (!init_vk_instance(builder)) // destroy_devices
+        return false;
 
     // surface
-    init_surface();
+    init_surface(); // destroy_devices
 
     // physical and logical devices
-    auto init_phys = init_physical_device(inst);
+    auto init_phys = init_physical_device(); // n/a
     if (!init_phys.first)
         return false;
     auto phys = init_phys.second;
 
-    auto init_dev = init_logical_device(phys);
+    select_depth_format(phys);
+
+    auto init_dev = init_logical_device(phys); // destroy_devices
+
     if (!init_dev.first)
         return false;
+
     auto dev = init_dev.second;
 
-    if (!init_vma())
+    if (!init_vma()) // destroy_vma
         return false;
 
     // queues
-    if (!init_graphics_queue(dev))
+    if (!init_graphics_queue(dev)) // n/a
         return false;
-    if (!init_present_queue(dev))
+
+    if (!init_present_queue(dev)) // n/a
         return false;
-    if (!init_transfer_queue(dev))
+
+    if (!init_transfer_queue(dev)) // n/a
         return false;
 
     // swapchain
-    if (!init_swapchain(dev))
+    if (!init_swapchain(dev)) // destroy_swapchain
         return false;
 
     // render pass
-    if (!init_render_pass())
+    if (!init_render_pass()) //
         return false;
 
     // intialize MSAA and depth images
@@ -104,7 +111,8 @@ bool core::Engine::init_vma() {
     alloc_info.device = renderer.vk.device.device;
     alloc_info.vulkanApiVersion = VK_API_VERSION_1_4;
     alloc_info.flags = VMA_ALLOCATOR_CREATE_EXTERNALLY_SYNCHRONIZED_BIT |
-                        VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
+                       VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT |
+                       VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
 
     if (vmaCreateAllocator(&alloc_info, &renderer.allocator) != VK_SUCCESS) {
         LOG_ERROR("Failed to create Vulkan Memory Allocator");
@@ -126,28 +134,26 @@ bool core::Engine::init_surface() {
 }
 
 bool core::Engine::init_resource_managers() {
+    if (!renderer.scene_manager.initialize(
+            renderer.vk.device.device, renderer.allocator,
+            renderer.vk.bindless_descriptor_set, 100))
+        return false;
 
-    // ensure scene manager is initialized
-    if (!renderer.scene_manager.is_initialized()) {
-        if (!renderer.scene_manager.initialize(
-                renderer.vk.device.device, renderer.allocator,
-                renderer.vk.bindless_descriptor_set, 100))
-            return false;
-    }
+    if (!renderer.material_manager.initialize(
+            renderer.vk.device.device, renderer.allocator,
+            renderer.vk.bindless_descriptor_set, 100))
+        return false;
 
-    if (!renderer.material_manager.is_initialized()) {
-        if (!renderer.material_manager.initialize(
-                renderer.vk.device.device, renderer.allocator,
-                renderer.vk.bindless_descriptor_set, 100))
-            return false;
-    }
+    if (!renderer.mesh_manager.initialize(
+            renderer.vk.device.device, renderer.allocator,
+            renderer.vk.bindless_descriptor_set, 100))
+        return false;
 
-    if (!renderer.mesh_manager.is_initialized()) {
-        if (!renderer.mesh_manager.initialize(
-                renderer.vk.device.device, renderer.allocator,
-                renderer.vk.bindless_descriptor_set, 100))
-            return false;
-    }
+    if (!renderer.texture_manager.initialize(
+            renderer.vk.device.device, renderer.allocator,
+            renderer.vk.transfer_queue, renderer.vk.graphics_family_index,
+            renderer.vk.transfer_family_index))
+        return false;
 
     return true;
 }

@@ -18,7 +18,8 @@ class GltfLoader {
   public:
     static bool load_model(const std::string &filename, tinygltf::Model &model);
     static std::vector<MaterialID>
-    extract_material_data(const tinygltf::Model &model,
+    extract_material_data(const std::string &filename,
+                          const tinygltf::Model &model,
                           core::Renderer &renderer);
     static std::vector<MeshPrimitiveID>
     extract_mesh_data(const tinygltf::Model &model, core::Renderer &renderer);

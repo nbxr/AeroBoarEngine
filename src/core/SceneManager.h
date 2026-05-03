@@ -12,10 +12,6 @@
 #include <vulkan/vulkan.h>
 
 namespace core {
-/**
- * @brief Manages the lifecycle and GPU buffers for scene instances.
- * Encapsulates VmaAllocation and VkBuffer via AllocatedBuffer.
- */
 class SceneManager {
   private:
     VkDevice device{VK_NULL_HANDLE};

@@ -81,7 +81,7 @@ bool core::Engine::load_scene(const std::string &scene_name) {
 
     // create materials in the material manager and get a lookup
     std::vector<MaterialID> material_lookup =
-        core::GltfLoader::extract_material_data(model, renderer);
+        core::GltfLoader::extract_material_data(filename, model, renderer);
 
     // get meshes using lookup to store material ID on MeshData
     std::vector<MeshPrimitiveID> mesh_lookup =
@@ -117,6 +117,8 @@ bool core::Engine::load_scene(const std::string &scene_name) {
     renderer.scene_manager.update_buffers();
     renderer.material_manager.update_buffers();
     renderer.mesh_manager.update_buffers();
+    renderer.texture_manager.upload_textures();
+
     // Implementation for loading scene
     return true; // Placeholder return value
 }

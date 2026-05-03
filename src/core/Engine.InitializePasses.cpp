@@ -7,7 +7,7 @@ bool core::Engine::init_render_pass() {
     // Multiview render pass for Quest 3
     VkAttachmentDescription color_attachment = {};
     color_attachment.format = renderer.vk.swap_chain_image_format;
-    color_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    color_attachment.samples = renderer.vk.msaa_color;
     color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     color_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
@@ -17,7 +17,7 @@ bool core::Engine::init_render_pass() {
 
     VkAttachmentDescription depth_attachment = {};
     depth_attachment.format = renderer.vk.depth_format;
-    depth_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    depth_attachment.samples = renderer.vk.msaa_depth;
     depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     depth_attachment.storeOp =
         VK_ATTACHMENT_STORE_OP_DONT_CARE; // Optimization: Don't write back to
@@ -32,6 +32,16 @@ bool core::Engine::init_render_pass() {
     color_attachment_ref.attachment = 0;
     color_attachment_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
+    VkAttachmentDescription swapchain_attachment = {};
+    swapchain_attachment.format = renderer.vk.swap_chain_image_format;
+    swapchain_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    swapchain_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    swapchain_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    swapchain_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    swapchain_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    swapchain_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    swapchain_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
     VkSubpassDescription subpass = {};
     subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
     subpass.colorAttachmentCount = 1;
@@ -45,10 +55,18 @@ bool core::Engine::init_render_pass() {
     dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 
+    // The three attachments must match the order used in
+    // VkFramebuffers
+    VkAttachmentDescription attachments[3] = {
+        color_attachment,       // 0: Transient MSAA Color
+        swapchain_attachment,   // 1: Resolved Color (swapchain image)
+        depth_attachment        // 2: Transient Depth
+    };
+
     VkRenderPassCreateInfo render_pass_info = {};
     render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    render_pass_info.attachmentCount = 1;
-    render_pass_info.pAttachments = &color_attachment;
+    render_pass_info.attachmentCount = 3;
+    render_pass_info.pAttachments = attachments;
     render_pass_info.subpassCount = 1;
     render_pass_info.pSubpasses = &subpass;
     render_pass_info.dependencyCount = 1;
@@ -72,7 +90,7 @@ bool core::Engine::init_msaa_color_image() {
                                renderer.vk.swap_chain_extent.height, 1};
     color_image_info.mipLevels = 1;
     color_image_info.arrayLayers = 1;
-    color_image_info.samples = VK_SAMPLE_COUNT_4_BIT; // 4x MSAA for Quest 3
+    color_image_info.samples = renderer.vk.msaa_color; // 4x MSAA for Quest 3
     color_image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
     color_image_info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
                              VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
@@ -124,7 +142,7 @@ bool core::Engine::init_depth_image() {
                                renderer.vk.swap_chain_extent.height, 1};
     depth_image_info.mipLevels = 1;
     depth_image_info.arrayLayers = 1;
-    depth_image_info.samples = VK_SAMPLE_COUNT_4_BIT; // Match MSAA sample count
+    depth_image_info.samples = renderer.vk.msaa_color; // Match MSAA sample count
     depth_image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
     depth_image_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
                              VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;

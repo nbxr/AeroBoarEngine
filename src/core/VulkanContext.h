@@ -10,7 +10,7 @@ namespace core {
 struct PassContext;
 struct VulkanContext {
     // Core Vulkan objects (created once)
-    VkInstance instance;
+    vkb::Instance instance;
     VkPhysicalDevice physical_device;
     vkb::Device device{};
     vkb::Swapchain swapchain{};
@@ -36,6 +36,8 @@ struct VulkanContext {
     VkFormat swap_chain_image_format{VK_FORMAT_UNDEFINED};
     VkFormat depth_format{VK_FORMAT_UNDEFINED};
     VkExtent2D swap_chain_extent{0, 0};
+    VkSampleCountFlagBits msaa_color{VK_SAMPLE_COUNT_4_BIT};
+    VkSampleCountFlagBits msaa_depth{VK_SAMPLE_COUNT_4_BIT};
 
     VkPipeline pipeline{VK_NULL_HANDLE};
     VkPushConstantRange push_constant_range{
@@ -44,28 +46,7 @@ struct VulkanContext {
         64 // size (or smaller — keep under 128 bytes for Quest 3)
     };
     
-    bool enable_validation_layers{false};
-    bool use_descriptor_heap{false}; // For runtime switch between descriptor indexing and heap
-
-    // // Integer types    
-    // VkSurfaceFormatKHR surface_format;
-    // VkPresentModeKHR present_mode;
-
-    // // Formats
-    // VkFormat depth_format;
-
-    // // Vectors (these have pointer overhead)
-    // std::vector<VkCommandBuffer> command_buffers;
-    // std::vector<VkImage> swap_chain_images;
-    // std::vector<VkImageView> swap_chain_image_views;
-
-    // // Synchronization
-    // std::vector<VkSemaphore> image_available_semaphores;
-    // std::vector<VkSemaphore> render_finished_semaphores;
-    // std::vector<VkFence> in_flight_fences;
- 
-    // // Validation layers and required extensions
-    // std::vector<const char *> validation_layers;
-    // std::vector<const char *> required_extensions;
+    bool enable_validation_layers{true};
+    bool use_descriptor_heap{false};
 };
 }; // namespace Core

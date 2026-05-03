@@ -1,5 +1,6 @@
 #pragma once
 #include "AllocatedBuffer.h"
+#include <vector>
 #include <vma/vk_mem_alloc.h>
 #include <vulkan/vulkan.h>
 
@@ -22,6 +23,12 @@ bool update_descriptor(VkDevice device,
                        const core::AllocatedBuffer &allocated_buffer,
                        VkDescriptorSet descriptor_set, VkDeviceSize buffer_size,
                        uint32_t binding_index);
+
+void transition_image_layout(
+    VkCommandBuffer command_buffer, VkImage image, VkImageLayout old_layout,
+    VkImageLayout new_layout, uint32_t width, uint32_t height,
+    uint32_t src_queue_index = VK_QUEUE_FAMILY_IGNORED,
+    uint32_t dst_queue_index = VK_QUEUE_FAMILY_IGNORED);
 
 }; // namespace BufferUtils
 }; // namespace core

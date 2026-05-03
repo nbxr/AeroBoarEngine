@@ -6,6 +6,7 @@
 #include "gfx/MeshData.h"
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <map>
@@ -26,12 +27,13 @@ bool core::GltfLoader::load_model(const std::string &filename,
 }
 
 std::vector<MaterialID>
-core::GltfLoader::extract_material_data(const tinygltf::Model &model,
+core::GltfLoader::extract_material_data(const std::string &filename,
+                                        const tinygltf::Model &model,
                                         core::Renderer &renderer) {
 
     std::vector<MaterialID> material_lookup{};
     material_lookup.reserve(model.materials.size());
-
+    auto texture_path = std::filesystem::path(filename).parent_path();
     // create materials in the material manager
     for (const auto &mat : model.materials) {
         gfx::Material material{};
@@ -61,8 +63,8 @@ core::GltfLoader::extract_material_data(const tinygltf::Model &model,
                 const auto &texture = model.textures[texture_index];
                 const auto &image = model.images[texture.source];
                 material.albedo_texture_index =
-                    renderer.texture_manager.get_texture_handle(image.name,
-                                                                image.uri);
+                    renderer.texture_manager.get_texture_handle(
+                        image.name, texture_path / image.uri);
             }
         }
 
@@ -73,8 +75,8 @@ core::GltfLoader::extract_material_data(const tinygltf::Model &model,
                 const auto &texture = model.textures[texture_index];
                 const auto &image = model.images[texture.source];
                 const auto &texture_handle =
-                    renderer.texture_manager.get_texture_handle(image.name,
-                                                                image.uri);
+                    renderer.texture_manager.get_texture_handle(
+                        image.name, texture_path / image.uri);
                 material.normal_texture_index = texture_handle;
             }
         }
@@ -86,8 +88,8 @@ core::GltfLoader::extract_material_data(const tinygltf::Model &model,
                 const auto &texture = model.textures[texture_index];
                 const auto &image = model.images[texture.source];
                 material.roughness_texture_index =
-                    renderer.texture_manager.get_texture_handle(image.name,
-                                                                image.uri);
+                    renderer.texture_manager.get_texture_handle(
+                        image.name, texture_path / image.uri);
             }
         }
 

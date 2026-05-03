@@ -13,7 +13,7 @@ class Engine {
     core::Renderer renderer{};
 
     bool initialize();
-    vkb::Instance &init_vk_instance(vkb::InstanceBuilder &builder);
+    bool init_vk_instance(vkb::InstanceBuilder &builder);
     bool init_surface();
     void render();
     void destroy();
@@ -26,9 +26,10 @@ class Engine {
     // devices
     void add_features(vkb::PhysicalDeviceSelector &selector);
     std::pair<bool, vkb::PhysicalDevice>
-    init_physical_device(vkb::Instance &inst);
+    init_physical_device();
     std::pair<bool, vkb::Device>
     init_logical_device(vkb::PhysicalDevice &phys);
+    void select_depth_format(vkb::PhysicalDevice &phys);
     bool init_graphics_queue(vkb::Device &dev);
     bool init_present_queue(vkb::Device &dev);
     bool init_transfer_queue(vkb::Device &dev);
@@ -56,6 +57,8 @@ class Engine {
     void destroy_images();
     void destroy_buffers();
     void destroy_command_buffers();
+    void destroy_swapchain();
+    void destroy_resource_managers();
     void destroy_vma();
     void destroy_devices();
 };

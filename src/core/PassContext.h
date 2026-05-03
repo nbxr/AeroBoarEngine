@@ -31,27 +31,5 @@ struct PassContext {
 
     // Optional: fixed foveated density map
     core::AllocatedImage fdm_image{};
-
-    // VkAttachmentReference color_attachment_refs[2]; // For two views in multiview
-    // uint32_t view_mask;           // For multiview support
-    // PassType type;
-
-    // // Additional pass-specific fields that might be needed
-    // VkCommandPool command_pool{VK_NULL_HANDLE};         // pool for this pass
-    // std::vector<VkCommandBuffer> command_buffers{};     // allocated from this pool
-    // VkDescriptorPool descriptor_pool{VK_NULL_HANDLE};   // pool that can allocate many descriptors
-    // std::vector<VkDescriptorSet> descriptor_sets{};     // per-frame descriptor sets
-
-    // core::AllocatedBuffer vertex_buffer{};
-    // core::AllocatedBuffer index_buffer{};
-    // core::AllocatedBuffer uniform_buffer{};
-    // core::AllocatedBuffer storage_buffer{};
-    // core::AllocatedImage depth_image{};
-    // core::AllocatedImage color_image{};
-    // VkSampler sampler{VK_NULL_HANDLE};
-    // 
-    // VkExtent2D swapchain_extent{};
-    // VkFormat swapchain_format{VK_FORMAT_UNDEFINED};
-    // VkPushConstantRange push_constant_range{};
 };
 } // namespace core
