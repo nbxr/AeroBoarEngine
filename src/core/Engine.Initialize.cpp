@@ -153,7 +153,8 @@ bool core::Engine::init_resource_managers() {
             renderer.vk.device.device, renderer.allocator,
             renderer.vk.transfer_queue, renderer.vk.graphics_queue,
             renderer.vk.graphics_family_index,
-            renderer.vk.transfer_family_index))
+            renderer.vk.transfer_family_index,
+            renderer.vk.bindless_descriptor_set))
         return false;
 
     return true;

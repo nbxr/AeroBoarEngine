@@ -24,6 +24,10 @@ bool update_descriptor(VkDevice device,
                        VkDescriptorSet descriptor_set, VkDeviceSize buffer_size,
                        uint32_t binding_index);
 
+bool update_descriptor(VkDevice device,
+                       std::vector<VkDescriptorImageInfo> &image_infos,
+                       VkDescriptorSet descriptor_set, uint32_t binding_index);
+
 void transition_image_layout(
     VkCommandBuffer command_buffer, VkImage image, VkImageLayout old_layout,
     VkImageLayout new_layout, uint32_t width, uint32_t height,

@@ -48,12 +48,13 @@ class TextureManager {
     bool initialize(VkDevice device, VmaAllocator allocator,
                     VkQueue transfer_queue, VkQueue graphics_queue,
                     uint32_t graphics_queue_family_index,
-                    uint32_t transfer_queue_family_index);
+                    uint32_t transfer_queue_family_index,
+                    VkDescriptorSet descriptor_set);
     TextureID get_texture_handle(const std::string &name,
                                  const std::string &filepath);
     void remove_texture(const TextureID texture_id);
     void upload_textures();
-    void finalize_layout();
+    void transfer_queue_ownership();
     void bind_descriptor(uint32_t index);
     void shutdown();
 

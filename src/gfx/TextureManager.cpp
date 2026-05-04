@@ -10,13 +10,15 @@ bool gfx::TextureManager::initialize(VkDevice device, VmaAllocator allocator,
                                      VkQueue transfer_queue,
                                      VkQueue graphics_queue,
                                      uint32_t graphics_queue_family_index,
-                                     uint32_t transfer_queue_family_index) {
+                                     uint32_t transfer_queue_family_index,
+                                     VkDescriptorSet descriptor_set) {
     this->device = device;
     this->allocator = allocator;
     this->graphics_queue = graphics_queue;
     this->transfer_queue = transfer_queue;
     this->graphics_queue_index = graphics_queue_family_index;
     this->transfer_queue_index = transfer_queue_family_index;
+    this->descriptor_set = descriptor_set;
 
     // ADD: Validate allocator
     if (allocator == VK_NULL_HANDLE) {
@@ -230,6 +232,12 @@ void gfx::TextureManager::upload_textures() {
         pending_queue_transition.push_back(tex_handle);
 
         // start ownership release
+        core::BufferUtils::transition_image_layout( // release barrier
+            upload_command_buffer, tex_info.gpu_image.handle,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, tex_info.width,
+            tex_info.height, transfer_queue_index,
+            graphics_queue_index); // src=transfer,
 
         // Cleanup staging resources
         staging_resources.push_back(
@@ -255,10 +263,10 @@ void gfx::TextureManager::upload_textures() {
     pending_upload.clear();
     uploaded_count = texture_cache.size();
 
-    finalize_layout();
+    transfer_queue_ownership();
 }
 
-void gfx::TextureManager::finalize_layout() {
+void gfx::TextureManager::transfer_queue_ownership() {
 
     if (pending_queue_transition.empty())
         return;
@@ -309,7 +317,8 @@ void gfx::TextureManager::bind_descriptor(uint32_t index) {
         image_infos[i].sampler = sampler_handle; // shared or per-texture
     }
 
-    // Update descriptor set with pTexelBuffers = image_infos.data()
+    core::BufferUtils::update_descriptor(device, image_infos, descriptor_set,
+                                         index);
 }
 
 void gfx::TextureManager::shutdown() {

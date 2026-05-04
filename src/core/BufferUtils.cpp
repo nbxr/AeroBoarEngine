@@ -142,6 +142,30 @@ bool core::BufferUtils::update_descriptor(
     return true;
 }
 
+bool core::BufferUtils::update_descriptor(
+    VkDevice device, std::vector<VkDescriptorImageInfo> &image_infos,
+    VkDescriptorSet descriptor_set, uint32_t binding_index) {
+    
+    VkDescriptorBufferInfo buffer_info;
+    
+    // If it's a vector of image infos, we need to write them to the descriptor set
+    // However, vkUpdateDescriptorSets typically requires specific descriptor type handling.
+    // For images, we use VkDescriptorImageInfo array.
+    
+    VkWriteDescriptorSet write_descriptor_set = {};
+    write_descriptor_set.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write_descriptor_set.dstSet = descriptor_set;
+    write_descriptor_set.dstBinding = binding_index;
+    write_descriptor_set.dstArrayElement = 0;
+    write_descriptor_set.descriptorCount = static_cast<uint32_t>(image_infos.size());
+    write_descriptor_set.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write_descriptor_set.pImageInfo = image_infos.data();
+    
+    vkUpdateDescriptorSets(device, 1, &write_descriptor_set, 0, nullptr);
+    
+    return true;
+}
+
 void core::BufferUtils::transition_image_layout(
     VkCommandBuffer command_buffer, VkImage image, VkImageLayout old_layout,
     VkImageLayout new_layout, uint32_t width, uint32_t height,
@@ -166,6 +190,8 @@ void core::BufferUtils::transition_image_layout(
     barrier.subresourceRange.baseArrayLayer = 0;
     barrier.subresourceRange.layerCount = 1;
 
+    VkPipelineStageFlags src_stage, dst_stage;
+
     // When to execute this barrier (VK_PIPELINE_STAGE_TOP_OF_PIPE_WAIT before
     // execution)
     if (old_layout == VK_IMAGE_LAYOUT_UNDEFINED &&
@@ -173,31 +199,47 @@ void core::BufferUtils::transition_image_layout(
         // Uploading to a texture for the first time
         barrier.srcAccessMask = 0;
         barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-
-        vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
-                             nullptr, 1, &barrier);
+        src_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        dst_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
 
     } else if (old_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
                new_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
         // After uploading, transition to read-only for shaders
         barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-        vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
-                                 VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
-                             0, 0, nullptr, 0, nullptr, 1, &barrier);
+        src_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        dst_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                    VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
 
     } else if (old_layout == VK_IMAGE_LAYOUT_UNDEFINED &&
                new_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
         // Direct transition (skipping transfer stage)
         barrier.srcAccessMask = 0;
         barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        src_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        dst_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                    VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
 
-        vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
-                                 VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
-                             0, 0, nullptr, 0, nullptr, 1, &barrier);
+    } else if (src_queue_index != dst_queue_index) { // Ownership transfer
+
+        if (old_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
+            new_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+            barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier.dstAccessMask = 0; // release
+
+            src_stage = VK_PIPELINE_STAGE_TRANSFER_BIT; // release
+            dst_stage = VK_PIPELINE_STAGE_TRANSFER_BIT; // acquire (dummy)
+        } else {                                       // acquire to shader
+            barrier.srcAccessMask = 0;
+            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+            src_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+            dst_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        }
+    } else {
+        return; // skip transition
     }
+
+    vkCmdPipelineBarrier(command_buffer, src_stage, dst_stage, 0, 0, nullptr, 0,
+                         nullptr, 1, &barrier);
 }
