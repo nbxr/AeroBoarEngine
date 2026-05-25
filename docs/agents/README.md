@@ -9,7 +9,7 @@ These files are intended to be read by any AI coding agent (Grok Build, Continue
 - `project_brief.md` — High-level vision and goals for the project.
 - `product_context.md` — Problem being solved and target outcomes.
 - `tech_context.md` — Core tech stack, libraries, and coding conventions.
-- `architecture.md` — Key architectural patterns and Quest 3 optimization principles.
+- `architecture_principles.md` — Key architectural patterns and Quest 3 optimization principles.
 - `current_state.md` — Lightweight view of where the project currently stands (what is done, what is in progress, major gaps).
 
 ## Usage

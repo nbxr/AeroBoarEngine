@@ -3,6 +3,10 @@
 ## Overview
 Lightweight, cache-friendly data structures designed for a C++ Vulkan engine using GPU-driven rendering on Meta Quest 3. Focuses on efficient GLTF loading, multi-mesh / multi-material support (e.g. characters), and direct feeding into compute-based culling and indirect draw pipelines.
 
+## Status
+**Target architecture** (not yet fully implemented).  
+The current scene system uses a simpler flat `SceneInstance` model with embedded `mat4` transforms. The higher-level `GameObject` / `RenderMesh` + `TransformManager` SOA design described below is the planned evolution for skinned, multi-part, and instanced objects.
+
 ## Core Principles
 - Flat SOA-style layouts for high cache efficiency and low CPU overhead.
 - One `RenderMesh` entry maps 1:1 to a draw / mesh-shader task.
@@ -26,7 +30,7 @@ Supports both rigid and skinned pieces.
 - **AABB**: Simple min/max bounds (mesh-local, expanded to world for culling).
 - **Transform SOA**: Dense array of position, rotation, scale (or matrices).
 - **Material**: Global SSBO with texture indices (albedo, normal, MR, etc.) and PBR factors.
-- **MeshStorage**: Global GPU buffers holding all vertex data / meshlets.
+- **MeshStorage**: Global GPU buffers holding all vertex data (future meshlets).
 
 ## Management Systems
 

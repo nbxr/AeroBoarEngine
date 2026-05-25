@@ -7,6 +7,16 @@ Rendering Style: Forward+ with GPU-driven culling, multiview stereo, heavy on-ch
 Bindless Model: Classic descriptor indexing today, migrating toward VK_EXT_descriptor_heap when supported on Adreno  
 Goal: 72–120 FPS at 2064×2208 per eye with minimal CPU overhead and maximum draw count
 
+## Status / Target vs Current
+**This is target / aspirational guidance for the 2026 Quest 3 pipeline.**
+
+As of the current early foundation phase:
+- The engine has a single-subpass render pass using transient MSAA attachments and `DONT_CARE` stores (good alignment on the basics).
+- Multi-subpass structure, full multiview enablement in the render pass, compute culling, indirect draws, and the advanced descriptor heap path are **not yet implemented**.
+- `render()` is still empty / placeholder.
+
+See `docs/agents/current_state.md` for the latest implementation status.
+
 ## 1. Core Principles for Quest 3
 
 Minimize full render passes. Every store operation that writes to system memory followed by a load in the next pass forces expensive round-trips from on-chip GMEM to DRAM on TBDR hardware.
@@ -41,7 +51,7 @@ Multiview uses a view mask for the two eyes.
 
 ## 3. Bindless Descriptor Strategy
 
-Current recommended path for Quest 3 in March 2026 uses descriptor indexing, which has been core since Vulkan 1.2.
+Current recommended path for Quest 3 (2026) uses descriptor indexing, which has been core since Vulkan 1.2.
 
 Create one or very few large descriptor sets with partially bound and update after bind flags plus large runtime descriptor arrays.
 
@@ -121,8 +131,8 @@ Khronos Vulkan Roadmap 2026 and the VK_EXT_descriptor_heap proposal.
 
 Advanced GPU Pipelines and Loads/Stores section in Meta Developer Docs.
 
-This document represents best-practice 2026 season architecture for high-performance GPU-driven VR on Quest 3: aggressive subpass usage for on-chip efficiency combined with modern bindless techniques that are evolving toward true descriptor heaps.
+This document represents target 2026 architecture for high-performance GPU-driven VR on Quest 3: aggressive subpass usage for on-chip efficiency combined with modern bindless techniques that are evolving toward true descriptor heaps.
 
-Maintained as of March 2026.
+Maintained as of April 2026.
 
 Update this file when VK_EXT_descriptor_heap becomes available on Quest 3 or when new Adreno tile-memory extensions ship.
