@@ -1,63 +1,34 @@
 # AeroBoarEngine — Project Rules for AI Agents
 
-This file is the **single source of truth** for coding conventions, architecture principles, and workflow instructions that all AI coding assistants must follow.
-
-It is designed to work with **Grok Build**, **Continue.dev**, and **Kilo Code** (and future agents) without duplication.
-
----
+This file is the primary contract for all AI coding agents (Grok Build, Continue.dev, Kilo Code, and future tools) working on this project.
 
 ## 1. Core Project Information
 
-- **Project**: AeroBoarEngine — high-performance Vulkan rendering engine optimized for Meta Quest 3 (with desktop development mode).
-- **Primary Language**: C++20 (data-oriented design).
-- **Graphics**: Vulkan 1.3+ (heavy use of bindless resources, descriptor indexing, GPU-driven culling, subpasses, multiview).
-- **Key Constraints**: Target TBDR mobile GPUs (Adreno 740). Minimize CPU overhead and DRAM traffic. Prefer on-chip (GMEM) work.
+**Project**: High-performance Vulkan rendering engine optimized for Meta Quest 3 (with Linux desktop development mode).
 
-**Canonical Documentation** (read these first for any architecture or planning task):
+**Key Constraints**: TBDR mobile GPU (Adreno 740). Minimize CPU overhead and DRAM traffic. Prefer on-chip (GMEM) work. Data-oriented C++ design.
 
-- `docs/project-plan.md` — Overall goals, roadmap, and tech choices.
-- `docs/architecture/pipeline-implementation.md` — Quest 3 Vulkan pipeline design (subpasses, bindless, GPU culling, multiview, etc.).
-- `docs/architecture/game-object-implementation.md` — Data-oriented GameObject/RenderMesh/SceneInstance model and GLTF flow.
+**Canonical Documentation** (read these for architecture and planning work):
 
-When making lasting decisions, **update the docs above** rather than tool-private memory banks.
+- `docs/agents/` — Current state, architecture principles, tech context, and project knowledge
+- `docs/project-plan.md` — Goals and roadmap
+- `docs/architecture/pipeline-implementation.md`
+- `docs/architecture/game-object-implementation.md`
 
----
+When making lasting decisions, update the documentation above rather than tool-private memory.
 
 ## 2. Coding Conventions
 
-Follow these strictly. They are derived from the architecture docs and existing code.
+- **Style**: Data-oriented. Prefer plain structs and composition over deep inheritance.
+- **Naming**: `PascalCase` for types/structs, `snake_case` for functions and variables.
+- **Namespaces**: `core` (engine fundamentals), `gfx` (resources and rendering data).
+- All GPU memory is allocated via **VMA**.
+- Prefer transient/lazily allocated images for MSAA targets.
+- Use `VK_ATTACHMENT_STORE_OP_DONT_CARE` aggressively.
+- Keep CPU-side data lightweight and cache-friendly.
 
-### Naming
-- **Types / Structs / Classes**: `PascalCase` (`RenderMesh`, `SceneInstance`, `AllocatedBuffer`).
-- **Functions & Methods**: `snake_case` (`init_vulkan`, `load_default_scene`, `add_instance`, `update_buffers`).
-- **Variables & Members**: `snake_case`.
-- **Namespaces**: `core` for engine fundamentals, `gfx` for resource managers and material/mesh data.
-- **Handles**: Use the `Handle<T>` template (see `src/core/Handle.h`).
+## 3. Build & Development
 
-### Architecture & Data Orientation
-- Prefer **plain structs** and **composition** over deep class hierarchies.
-- Keep CPU-side data lightweight and cache-friendly (SOA where possible).
-- Separate high-level ownership (`GameObject`) from low-level render data (`RenderMesh`, `SceneInstance`).
-- Most heavy work (culling, transform propagation, skinning, animation) should be designed to run on the GPU.
-- Global bindless resources for meshes, materials, and textures.
-
-### Memory & Resources
-- **All** GPU memory allocation goes through **VMA** (`VulkanMemoryAllocator`).
-- Use `AllocatedBuffer` and `AllocatedImage` wrappers.
-- Double-buffering pattern (upload vs render) + per-`MAX_FRAMES_IN_FLIGHT` resources is the established approach for streaming data.
-- Prefer transient / lazily-allocated images for MSAA color and depth when possible.
-- Use `VK_ATTACHMENT_STORE_OP_DONT_CARE` aggressively for Quest 3 efficiency.
-
-### General
-- Keep headers clean; put implementations in `.cpp` files (see the split `Engine.Initialize*.cpp` pattern).
-- Add `TODO` comments for deliberately deferred work instead of leaving half-finished code.
-- Do not introduce new third-party dependencies without updating `CMakeLists.txt` and the architecture docs.
-
----
-
-## 3. Build & Development Workflow
-
-### Building
 ```bash
 cmake -B build -S . -DCMAKE_BUILD_TYPE=Debug
 cmake --build build -j$(nproc)
@@ -76,59 +47,44 @@ The executable currently opens a desktop GLFW window. It loads the scene defined
 ### Important Notes
 - The render loop (`Engine::render()`) and full GPU upload paths are still under active development.
 - Many init functions exist but the end-to-end pipeline (especially PBR + compute culling + indirect draws) is incomplete.
-- Check `.continue/memory-bank/progress.md` or the architecture docs for the latest implementation status.
+- Check `docs/agents/current_state.md` for the latest implementation status and focus areas.
 
----
+## 4. Instructions for AI Agents
 
-## 4. Instructions for AI Coding Assistants
+**At the start of any non-trivial task**, read:
+- This `AGENTS.md`
+- Relevant files in `docs/agents/` (especially `current_state.md` and `architecture_principles.md`)
+- The architecture documents listed in section 1
 
-### All Agents (Grok, Continue, Kilo, etc.)
-1. **At the start of any non-trivial task**, read:
-   - This `AGENTS.md`
-   - The three files under `docs/` listed in section 1
-2. Prefer editing the **canonical documentation** (`docs/`) for architectural decisions rather than tool-private memory.
-3. When the task is complete, suggest updates to the relevant docs if the change has lasting impact.
-4. Use `TODO` comments in code for work intentionally left for later.
-5. Keep changes focused. Do not refactor unrelated areas "while you're here."
+**General Rules**:
+- Prefer editing canonical documentation (`docs/`) for architectural decisions rather than tool-private memory.
+- When the task is complete, suggest updates to the relevant docs if the change has lasting impact.
+- Use `TODO` comments in code for work intentionally left for later.
+- Keep changes focused. Do not refactor unrelated areas "while you're here."
 
-### Grok Build Specific
-- Grok automatically discovers this `AGENTS.md` (and any subdirectory `AGENTS.md` / `Claude.md` files).
-- Use the `/plan` or plan-mode capability for larger changes.
-- Project-specific skills or hooks can live in a `.grok/` directory at the root (optional).
+**Grok Build**: Use the `/plan` or plan-mode capability for larger changes.
 
-### Continue.dev Specific
-- The existing `.continue/rules/` and `.continue/memory-bank/` are tool-specific aids.
-- Those files should **point to** this `AGENTS.md` + `docs/` as the source of truth, not duplicate them.
-- Update the memory bank only for transient session notes. Durable decisions belong in `docs/`.
+**Continue.dev Specific**:
+- Tool-specific state (such as `.continue/` memory banks or rules) should be considered secondary.
+- These files should **point to** `AGENTS.md` + `docs/agents/` as the primary source of truth.
+- Use tool-private memory only for transient session notes. Durable project knowledge belongs in `docs/agents/`.
 
-### Kilo Code Specific
+**Kilo Code Specific**:
 - Worktrees created by Kilo should live **outside** the main repository tree when possible (e.g. `~/kilo-worktrees/...`).
 - Do not rely on files inside `.kilo/worktrees/` for long-term state.
 
----
-
 ## 5. Documentation & Memory Hygiene
 
-- **Single source of truth hierarchy** (in order of authority):
-  1. `AGENTS.md` (this file) + `docs/architecture/*.md` and `docs/project-plan.md`
-  2. Code (the implementation is the ultimate test)
-  3. Tool-private memory banks (Continue memory-bank, Kilo plans, Grok `~/.grok/memory/...`)
+**Single source of truth hierarchy** (in order of authority):
+1. `AGENTS.md` (this file) + `docs/agents/` + architecture documents
+2. Code (the implementation is the ultimate test)
+3. Tool-private memory (e.g. Continue memory banks, Kilo plans, or Grok’s `~/.grok/memory/`)
 
-- Never let tool-specific memory become the only place important context lives.
-- Periodically review and prune tool memory banks against the canonical docs.
+Never let tool-specific memory become the only place important context lives.
+Periodically review and prune tool memory banks against the canonical docs.
 
----
+## 6. Current State
 
-## 6. Current Known Gaps (as of May 2026)
+See `docs/agents/current_state.md` for the latest implementation status, focus areas, and known gaps.
 
-- Main render loop is empty / placeholder.
-- GPU mesh + material + instance upload to SSBOs is incomplete.
-- PBR shaders exist but are not wired up (screen_clear shaders are the current fallback).
-- No OpenXR / VR input yet (desktop GLFW only).
-- `assets/scenes/configuration.json` uses absolute paths.
-
-Update this section when major milestones are reached.
-
----
-
-**Maintain this file.** It allows any AI tool (current or future) to work effectively on the project without re-learning the same rules or causing documentation drift.
+This file is intentionally kept concise. Maintain it so any agent can quickly understand the project without relying on tool-specific memory.
