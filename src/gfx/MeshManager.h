@@ -69,6 +69,7 @@ class MeshManager {
 
   private:
     void toggle_buffers();
+    bool ensure_capacity();
     void resize_mesh_buffer(uint32_t new_capacity);
     void resize_vertex_buffer(uint64_t new_capacity);
     void resize_index_buffer(uint64_t new_capacity);
