@@ -7,3 +7,11 @@ build/
 *.exe
 *.apk
 *.env
+
+# AI coding assistant tool state (local only - do not commit)
+.continue/
+.kilo/
+
+# Grok Build project config can be committed if it contains shared skills/hooks,
+# but user-specific memory and most local config stays in ~/.grok/
+# .grok/   # uncomment if you want to keep all Grok project config personal
