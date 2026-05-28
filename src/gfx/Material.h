@@ -46,5 +46,7 @@ struct Material {
 
 } // namespace gfx
 
-// Material ID type for indexing into material arrays
-using MaterialID = Handle<gfx::Material>;
+// Material ID type for indexing into material arrays (in gfx namespace for consistency)
+namespace gfx {
+using MaterialID = core::Handle<Material>;
+} // namespace gfx

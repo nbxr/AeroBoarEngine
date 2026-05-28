@@ -2,7 +2,7 @@
 #include "Renderer.h"
 #include "VkBootstrap.h"
 
-bool core::Engine::init_vk_instance(vkb::InstanceBuilder &builder) {
+bool gfx::Engine::init_vk_instance(vkb::InstanceBuilder &builder) {
     // vulkan instance
     auto inst_ret =
         builder.set_app_name("AeroBoar")
@@ -19,7 +19,7 @@ bool core::Engine::init_vk_instance(vkb::InstanceBuilder &builder) {
     return true;
 }
 
-void core::Engine::add_features(vkb::PhysicalDeviceSelector &selector) {
+void gfx::Engine::add_features(vkb::PhysicalDeviceSelector &selector) {
     // standard settings
     selector.set_minimum_version(1, 4).require_dedicated_transfer_queue();
 
@@ -42,7 +42,7 @@ void core::Engine::add_features(vkb::PhysicalDeviceSelector &selector) {
     selector.set_required_features_12(features12);
 }
 
-std::pair<bool, vkb::PhysicalDevice> core::Engine::init_physical_device() {
+std::pair<bool, vkb::PhysicalDevice> gfx::Engine::init_physical_device() {
     // Add
     auto &inst = renderer.vk.instance;
     vkb::PhysicalDeviceSelector selector{inst};
@@ -59,7 +59,7 @@ std::pair<bool, vkb::PhysicalDevice> core::Engine::init_physical_device() {
 }
 
 std::pair<bool, vkb::Device>
-core::Engine::init_logical_device(vkb::PhysicalDevice &phys) {
+gfx::Engine::init_logical_device(vkb::PhysicalDevice &phys) {
     vkb::DeviceBuilder device_builder{phys};
     auto dev_ret = device_builder.build();
     if (!dev_ret) {
@@ -70,7 +70,7 @@ core::Engine::init_logical_device(vkb::PhysicalDevice &phys) {
     return {true, dev_ret.value()};
 }
 
-void core::Engine::select_depth_format(vkb::PhysicalDevice &phys) {
+void gfx::Engine::select_depth_format(vkb::PhysicalDevice &phys) {
     VkFormat formats[] = {VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D32_SFLOAT,
                           VK_FORMAT_D24_UNORM_S8_UINT};
 
@@ -88,7 +88,7 @@ void core::Engine::select_depth_format(vkb::PhysicalDevice &phys) {
     renderer.vk.depth_format = VK_FORMAT_D32_SFLOAT;
 }
 
-bool core::Engine::init_graphics_queue(vkb::Device &dev) {
+bool gfx::Engine::init_graphics_queue(vkb::Device &dev) {
     auto graphics_queue_ret = dev.get_queue(vkb::QueueType::graphics);
     if (!graphics_queue_ret) {
         LOG_ERROR("Failed to find graphics queue");
@@ -100,7 +100,7 @@ bool core::Engine::init_graphics_queue(vkb::Device &dev) {
     return true;
 }
 
-bool core::Engine::init_present_queue(vkb::Device &dev) {
+bool gfx::Engine::init_present_queue(vkb::Device &dev) {
     auto present_queue_ret = dev.get_queue(vkb::QueueType::present);
     if (!present_queue_ret) {
         LOG_ERROR("Failed to find present queue");
@@ -112,7 +112,7 @@ bool core::Engine::init_present_queue(vkb::Device &dev) {
     return true;
 }
 
-bool core::Engine::init_transfer_queue(vkb::Device &dev) {
+bool gfx::Engine::init_transfer_queue(vkb::Device &dev) {
     auto transfer_queue_ret = dev.get_queue(vkb::QueueType::transfer);
     if (!transfer_queue_ret) {
         // If no dedicated transfer queue, fall back to graphics queue
@@ -130,7 +130,7 @@ bool core::Engine::init_transfer_queue(vkb::Device &dev) {
     return true;
 }
 
-bool core::Engine::init_swapchain(vkb::Device &dev) {
+bool gfx::Engine::init_swapchain(vkb::Device &dev) {
     vkb::SwapchainBuilder swapchain_builder{dev, renderer.vk.surface};
     auto swap_ret =
         swapchain_builder
@@ -158,7 +158,7 @@ bool core::Engine::init_swapchain(vkb::Device &dev) {
     return true;
 }
 
-void core::Engine::recreate_swapchain() {
+void gfx::Engine::recreate_swapchain() {
     vkDeviceWaitIdle(renderer.vk.device);
 
     // destroy old image views

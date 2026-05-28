@@ -1,9 +1,9 @@
-#include "BufferUtils.h"
+#include "gfx/BufferUtils.h"
 #include <cstring>
 
-bool core::BufferUtils::initialize_buffer(
+bool gfx::BufferUtils::initialize_buffer(
     VkDevice device, VmaAllocator allocator, VkDeviceSize size,
-    core::AllocatedBuffer &allocated_buffer) {
+    gfx::AllocatedBuffer &allocated_buffer) {
 
     // Create the initial GPU buffer
     VkBufferCreateInfo buffer_info = {};
@@ -43,9 +43,9 @@ bool core::BufferUtils::initialize_buffer(
     return true;
 }
 
-bool core::BufferUtils::resize_buffer(VkDevice device, VmaAllocator allocator,
+bool gfx::BufferUtils::resize_buffer(VkDevice device, VmaAllocator allocator,
                                       VkDeviceSize new_size,
-                                      core::AllocatedBuffer &allocated_buffer,
+                                      gfx::AllocatedBuffer &allocated_buffer,
                                       void *pData, size_t data_size) {
     // Create new buffer
     VkBufferCreateInfo buffer_info = {};
@@ -97,9 +97,9 @@ bool core::BufferUtils::resize_buffer(VkDevice device, VmaAllocator allocator,
     return true;
 }
 
-bool core::BufferUtils::destroy_buffer(
+bool gfx::BufferUtils::destroy_buffer(
     VkDevice device, VmaAllocator allocator,
-    core::AllocatedBuffer &allocated_buffer) {
+    gfx::AllocatedBuffer &allocated_buffer) {
     if (allocated_buffer.allocation == VK_NULL_HANDLE)
         return false;
 
@@ -113,8 +113,8 @@ bool core::BufferUtils::destroy_buffer(
     return true;
 }
 
-bool core::BufferUtils::update_descriptor(
-    VkDevice device, const core::AllocatedBuffer &allocated_buffer,
+bool gfx::BufferUtils::update_descriptor(
+    VkDevice device, const gfx::AllocatedBuffer &allocated_buffer,
     VkDescriptorSet descriptor_set, VkDeviceSize buffer_size,
     uint32_t binding_index) {
 
@@ -142,7 +142,7 @@ bool core::BufferUtils::update_descriptor(
     return true;
 }
 
-bool core::BufferUtils::update_descriptor(
+bool gfx::BufferUtils::update_descriptor(
     VkDevice device, std::vector<VkDescriptorImageInfo> &image_infos,
     VkDescriptorSet descriptor_set, uint32_t binding_index) {
     
@@ -166,7 +166,7 @@ bool core::BufferUtils::update_descriptor(
     return true;
 }
 
-void core::BufferUtils::transition_image_layout(
+void gfx::BufferUtils::transition_image_layout(
     VkCommandBuffer command_buffer, VkImage image, VkImageLayout old_layout,
     VkImageLayout new_layout, uint32_t width, uint32_t height,
     uint32_t src_queue_index, uint32_t dst_queue_index) {

@@ -172,17 +172,17 @@ target_compile_options(glm PRIVATE -w)
 add_executable(Aero_Boar_Engine
     src/main.cpp
     src/AeroBoar.cpp
-    src/core/BufferUtils.cpp
-    src/core/Engine.Destroy.cpp
-    src/core/Engine.Initialize.cpp
-    src/core/Engine.InitializeDevices.cpp
-    src/core/Engine.InitializePasses.cpp
-    src/core/Engine.InitializePipeline.cpp
-    src/core/Engine.InitializeScene.cpp
-    src/core/Engine.Render.cpp
-    src/core/GltfLoader.cpp
-    src/core/SceneManager.cpp
-    src/core/ShaderLoader.cpp
+    src/gfx/BufferUtils.cpp
+    src/gfx/Engine.Destroy.cpp
+    src/gfx/Engine.Initialize.cpp
+    src/gfx/Engine.InitializeDevices.cpp
+    src/gfx/Engine.InitializePasses.cpp
+    src/gfx/Engine.InitializePipeline.cpp
+    src/gfx/Engine.InitializeScene.cpp
+    src/gfx/Engine.Render.cpp
+    src/scene/GltfLoader.cpp
+    src/scene/SceneManager.cpp
+    src/gfx/ShaderLoader.cpp
     src/gfx/MaterialManager.cpp
     src/gfx/MeshManager.cpp
     src/gfx/TextureManager.cpp

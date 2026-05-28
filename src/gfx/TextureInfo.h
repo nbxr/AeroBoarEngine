@@ -1,5 +1,5 @@
 #pragma once
-#include "core/AllocatedImage.h"
+#include "gfx/AllocatedImage.h"
 #include "core/Handle.h"
 #include <string>
 #include <vulkan/vulkan.h>
@@ -12,7 +12,7 @@ struct TextureInfo {
     std::string filepath;
 
     // GPU image data - allocated via VMA
-    core::AllocatedImage gpu_image{}; // <-- Add this
+    AllocatedImage gpu_image{}; // <-- Add this
 
     // Optional: metadata for bindless
     uint32_t width{0};
@@ -24,4 +24,7 @@ struct TextureInfo {
 
 }; // namespace gfx
 
-using TextureID = Handle<gfx::TextureInfo>;
+// Texture ID (in gfx namespace)
+namespace gfx {
+using TextureID = core::Handle<TextureInfo>;
+} // namespace gfx

@@ -1,8 +1,8 @@
 #pragma once
 #include <glm/glm.hpp>
-#include "AABB.h"
+#include "core/AABB.h"
 
-namespace core {
+namespace scene {
 /**
  * @brief Flat data descriptor for a single instance in the scene.
  * Matches the GPU-friendly SOA layout for efficient culling and rendering.

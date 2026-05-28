@@ -1,16 +1,16 @@
 #pragma once
 #include "VkBootstrap.h"
-#include "Renderer.h"
+#include "gfx/Renderer.h"
 #include <iostream>
 #include <stdio.h>
 #include <utility>
 #define LOG_ERROR(value) std::cerr << value << std::endl
 #define LOG_INFO(value) std::cout << value << std::endl
 
-namespace core {
+namespace gfx {
 class Engine {
   public:
-    core::Renderer renderer{};
+    Renderer renderer{};
 
     bool initialize();
     bool init_vk_instance(vkb::InstanceBuilder &builder);
@@ -62,4 +62,4 @@ class Engine {
     void destroy_vma();
     void destroy_devices();
 };
-}; // namespace core
+} // namespace gfx

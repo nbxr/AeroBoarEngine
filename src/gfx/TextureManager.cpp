@@ -1,5 +1,5 @@
 #include "TextureManager.h"
-#include "core/BufferUtils.h"
+#include "gfx/BufferUtils.h"
 #include <cstring>
 #include <mutex>
 #include <stb_image.h>
@@ -54,7 +54,7 @@ bool gfx::TextureManager::initialize(VkDevice device, VmaAllocator allocator,
     return true;
 }
 
-TextureID gfx::TextureManager::get_texture_handle(const std::string &name,
+gfx::TextureID gfx::TextureManager::get_texture_handle(const std::string &name,
                                                   const std::string &filepath) {
 
     std::scoped_lock lock(texture_mutex);
@@ -84,7 +84,7 @@ TextureID gfx::TextureManager::get_texture_handle(const std::string &name,
 
         // use a recycled value if available
         if (!recycle_cache.empty()) {
-            TextureID id = recycle_cache.top();
+            gfx::TextureID id = recycle_cache.top();
             recycle_cache.pop();
             if (id < texture_cache.size()) {
                 texture_cache[id] = texture_info;
@@ -96,14 +96,14 @@ TextureID gfx::TextureManager::get_texture_handle(const std::string &name,
         }
 
         texture_cache.push_back(texture_info);
-        TextureID id(texture_cache.size() - 1);
+        gfx::TextureID id(texture_cache.size() - 1);
         pending_upload.push_back(id);
         texture_lookup[name] = id;
         return id;
     }
 }
 
-void gfx::TextureManager::remove_texture(const TextureID texture_id) {
+void gfx::TextureManager::remove_texture(const gfx::TextureID texture_id) {
     std::scoped_lock lock(texture_mutex);
 
     recycle_cache.push(texture_id);
@@ -207,7 +207,7 @@ void gfx::TextureManager::upload_textures() {
         vmaUnmapMemory(allocator, staging_allocation);
 
         // 6. Transition image to transfer destination
-        core::BufferUtils::transition_image_layout(
+        gfx::BufferUtils::transition_image_layout(
             upload_command_buffer, tex_info.gpu_image.handle,
             VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
             tex_info.width, tex_info.height);
@@ -232,7 +232,7 @@ void gfx::TextureManager::upload_textures() {
         pending_queue_transition.push_back(tex_handle);
 
         // start ownership release
-        core::BufferUtils::transition_image_layout( // release barrier
+        gfx::BufferUtils::transition_image_layout( // release barrier
             upload_command_buffer, tex_info.gpu_image.handle,
             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, tex_info.width,
@@ -285,7 +285,7 @@ void gfx::TextureManager::transfer_queue_ownership() {
         auto &tex_info = texture_cache[tex_handle.value];
 
         // Transition back to shader read layout
-        core::BufferUtils::transition_image_layout(
+        gfx::BufferUtils::transition_image_layout(
             transition_command_buffer, tex_info.gpu_image.handle,
             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, tex_info.width,
@@ -317,7 +317,7 @@ void gfx::TextureManager::bind_descriptor(uint32_t index) {
         image_infos[i].sampler = sampler_handle; // shared or per-texture
     }
 
-    core::BufferUtils::update_descriptor(device, image_infos, descriptor_set,
+    gfx::BufferUtils::update_descriptor(device, image_infos, descriptor_set,
                                          index);
 }
 
@@ -355,7 +355,7 @@ void gfx::TextureManager::shutdown() {
     pending_upload.clear();
     pending_queue_transition.clear();
     texture_cleanup.clear();
-    recycle_cache = std::stack<TextureID>();
+    recycle_cache = std::stack<gfx::TextureID>();
     uploaded_count = 0;
 }
 

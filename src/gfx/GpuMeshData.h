@@ -1,6 +1,8 @@
 #pragma once
 
-#include "AABB.h"
+#include "core/AABB.h"
+
+namespace gfx {
 
 /**
  * @brief Describes the geometry data for a single mesh.
@@ -15,3 +17,5 @@ struct GpuMeshData {
     uint32_t vertex_stride;  // Stride between vertices in bytes        - 4 bytes
     uint32_t padding;        // Alignment padding                       - 4 bytes
 };
+
+} // namespace gfx

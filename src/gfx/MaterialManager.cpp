@@ -1,5 +1,5 @@
 #include "MaterialManager.h"
-#include "core/BufferUtils.h"
+#include "gfx/BufferUtils.h"
 #include <cstring>
 #include <mutex>
 
@@ -28,21 +28,21 @@ bool gfx::MaterialManager::initialize(VkDevice device, VmaAllocator allocator,
 
     VkDeviceSize size = initial_capacity * sizeof(gfx::Material);
 
-    bool render_initialized = core::BufferUtils::initialize_buffer(
+    bool render_initialized = gfx::BufferUtils::initialize_buffer(
         device, allocator, size, get_render_buffer());
 
-    bool upload_initialized = core::BufferUtils::initialize_buffer(
+    bool upload_initialized = gfx::BufferUtils::initialize_buffer(
         device, allocator, size, get_upload_buffer());
 
     return render_initialized && upload_initialized;
 }
 
-MaterialID
+gfx::MaterialID
 gfx::MaterialManager::create_material(const gfx::Material &material) {
     std::scoped_lock lock(material_mutex);
     // use a recycled value if available
     if (!recycle_cache.empty()) {
-        MaterialID id = recycle_cache.top();
+        gfx::MaterialID id = recycle_cache.top();
         recycle_cache.pop();
         if (id < cpu_materials.size()) {
             cpu_materials[id] = material;
@@ -55,10 +55,10 @@ gfx::MaterialManager::create_material(const gfx::Material &material) {
     // and return the index as the material ID
     cpu_materials.push_back(material);
     material_count = static_cast<uint32_t>(cpu_materials.size());
-    return MaterialID(material_count - 1);
+    return gfx::MaterialID(material_count - 1);
 }
 
-void gfx::MaterialManager::remove_material(const MaterialID material_id) {
+void gfx::MaterialManager::remove_material(const gfx::MaterialID material_id) {
     std::scoped_lock lock(material_mutex);
     // add this to recycle_cache. the material cannot be
     // removed because this would break the indexing of
@@ -66,7 +66,7 @@ void gfx::MaterialManager::remove_material(const MaterialID material_id) {
     recycle_cache.push(material_id);
 }
 
-void gfx::MaterialManager::update_material(MaterialID material_id,
+void gfx::MaterialManager::update_material(gfx::MaterialID material_id,
                                            const gfx::Material &material) {
     std::scoped_lock lock(material_mutex);
     if (material_id < cpu_materials.size())
@@ -95,7 +95,7 @@ void gfx::MaterialManager::update_buffers() {
 
 void gfx::MaterialManager::bind_descriptor(uint32_t binding_index) {
     std::shared_lock lock(material_mutex);
-    core::BufferUtils::update_descriptor(
+    gfx::BufferUtils::update_descriptor(
         device, get_render_buffer(), descriptor_set,
         material_count * sizeof(Material), binding_index);
 }
@@ -103,8 +103,8 @@ void gfx::MaterialManager::bind_descriptor(uint32_t binding_index) {
 void gfx::MaterialManager::shutdown() {
     std::scoped_lock lock(material_mutex);
 
-    core::BufferUtils::destroy_buffer(device, allocator, get_upload_buffer());
-    core::BufferUtils::destroy_buffer(device, allocator, get_render_buffer());
+    gfx::BufferUtils::destroy_buffer(device, allocator, get_upload_buffer());
+    gfx::BufferUtils::destroy_buffer(device, allocator, get_render_buffer());
     
     cpu_materials.clear();
     while (!recycle_cache.empty())
@@ -125,7 +125,7 @@ void gfx::MaterialManager::resize_buffer(uint32_t new_capacity) {
         static_cast<VkDeviceSize>(new_capacity * sizeof(Material));
     size_t data_size = material_count * sizeof(Material);
 
-    core::BufferUtils::resize_buffer(device, allocator, new_size,
+    gfx::BufferUtils::resize_buffer(device, allocator, new_size,
                                      get_upload_buffer(), cpu_materials.data(),
                                      data_size);
     max_materials[upload] = new_capacity;
@@ -136,10 +136,10 @@ void gfx::MaterialManager::toggle_buffers() {
     upload = render ^ 1;
 }
 
-core::AllocatedBuffer &gfx::MaterialManager::get_upload_buffer() {
+gfx::AllocatedBuffer &gfx::MaterialManager::get_upload_buffer() {
     return material_buffer[upload];
 }
 
-core::AllocatedBuffer &gfx::MaterialManager::get_render_buffer() {
+gfx::AllocatedBuffer &gfx::MaterialManager::get_render_buffer() {
     return material_buffer[render];
 }

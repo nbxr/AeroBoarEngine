@@ -3,7 +3,7 @@
 #include "VkBootstrap.h"
 #include "vk_mem_alloc.h"
 
-void core::Engine::destroy() {
+void gfx::Engine::destroy() {
     vkDeviceWaitIdle(renderer.vk.device);
 
     destroy_buffers();
@@ -20,9 +20,9 @@ void core::Engine::destroy() {
     destroy_devices();
 }
 
-void core::Engine::destroy_buffers() {}
+void gfx::Engine::destroy_buffers() {}
 
-void core::Engine::destroy_images() {
+void gfx::Engine::destroy_images() {
 
     vkDestroyImageView(renderer.vk.device,
                        renderer.main_pass.msaa_color_image.view, nullptr);
@@ -40,13 +40,13 @@ void core::Engine::destroy_images() {
 
 }
 
-void core::Engine::destroy_command_buffers() {
+void gfx::Engine::destroy_command_buffers() {
 
     vkDestroyCommandPool(renderer.vk.device, renderer.vk.generic_command_pool,
                          nullptr);
 }
 
-void core::Engine::destroy_swapchain() {
+void gfx::Engine::destroy_swapchain() {
     for (auto& image_view : renderer.vk.swap_chain_image_views) {
         vkDestroyImageView(renderer.vk.device, image_view, nullptr);
     }
@@ -54,14 +54,14 @@ void core::Engine::destroy_swapchain() {
                           nullptr);
 }
 
-void core::Engine::destroy_resource_managers() {
+void gfx::Engine::destroy_resource_managers() {
     renderer.material_manager.shutdown();
     renderer.mesh_manager.shutdown();
     renderer.texture_manager.shutdown();
     renderer.scene_manager.shutdown();
 }
 
-void core::Engine::destroy_sync_primitives() {
+void gfx::Engine::destroy_sync_primitives() {
     for (auto &frame : renderer.frames) {
         vkDestroySemaphore(renderer.vk.device, frame.image_available_semaphore,
                            nullptr);
@@ -71,34 +71,34 @@ void core::Engine::destroy_sync_primitives() {
     }
 }
 
-void core::Engine::destroy_descriptor_pool() {
+void gfx::Engine::destroy_descriptor_pool() {
     vkDestroyDescriptorSetLayout(renderer.vk.device,
                                  renderer.vk.descriptor_set_layout, nullptr);
     vkDestroyDescriptorPool(renderer.vk.device, renderer.vk.descriptor_pool,
                             nullptr);
 }
 
-void core::Engine::destroy_pipelines() {
+void gfx::Engine::destroy_pipelines() {
     vkDestroyPipeline(renderer.vk.device, renderer.vk.pipeline, nullptr);
     vkDestroyPipelineLayout(renderer.vk.device, renderer.vk.pipeline_layout,
                             nullptr);
 }
 
-void core::Engine::destroy_render_targets() {
+void gfx::Engine::destroy_render_targets() {
     vkDestroyRenderPass(renderer.vk.device, renderer.main_pass.render_pass,
                         nullptr);
 }
 
-void core::Engine::destroy_framebuffers() {
+void gfx::Engine::destroy_framebuffers() {
     for (auto &framebuffer : renderer.main_pass.framebuffers) {
         vkDestroyFramebuffer(renderer.vk.device, framebuffer, nullptr);
     }
     renderer.main_pass.framebuffers.clear();
 }
 
-void core::Engine::destroy_vma() { vmaDestroyAllocator(renderer.allocator); }
+void gfx::Engine::destroy_vma() { vmaDestroyAllocator(renderer.allocator); }
 
-void core::Engine::destroy_devices() {
+void gfx::Engine::destroy_devices() {
     vkb::destroy_debug_utils_messenger(renderer.vk.instance.instance,
                                        renderer.vk.instance.debug_messenger,
                                        nullptr);

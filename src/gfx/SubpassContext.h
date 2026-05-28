@@ -4,7 +4,7 @@
 #include <vector>
 #include <vulkan/vulkan.h>
 
-namespace core {
+namespace gfx {
 struct SubpassContext {
 
     // Attachment references for this sub‑pass (these are owned by the 
@@ -56,4 +56,4 @@ struct SubpassContext {
     //     VK_FORMAT_UNDEFINED}; // copy of the pass‑wide format for safety
     // VkSampleCountFlagBits sample_count{VK_SAMPLE_COUNT_1_BIT};
 };
-} // namespace core
+} // namespace gfx

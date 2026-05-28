@@ -1,5 +1,5 @@
 #pragma once
 
-namespace core {
+namespace gfx {
 enum class PassType { Forward, Transparent, Shadow };
-};
+} // namespace gfx

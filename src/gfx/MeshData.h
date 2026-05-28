@@ -16,6 +16,9 @@ struct MeshData {
     std::vector<Index> indices;
     core::AABB local_aabb;
 };
-}; // namespace core
+} // namespace gfx
 
-using MeshPrimitiveID = Handle<gfx::MeshData>;
+// Mesh primitive ID (in gfx namespace)
+namespace gfx {
+using MeshPrimitiveID = core::Handle<MeshData>;
+} // namespace gfx

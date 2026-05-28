@@ -2,7 +2,7 @@
 
 #include "Material.h"
 #include "TextureInfo.h"
-#include "core/AllocatedBuffer.h"
+#include "gfx/AllocatedBuffer.h"
 #include <array>
 #include <memory>
 #include <shared_mutex>
@@ -20,7 +20,7 @@ class MaterialManager {
     VkDescriptorSet descriptor_set{VK_NULL_HANDLE};
 
     // Internal storage using AllocatedBuffer
-    std::array<core::AllocatedBuffer, 2> material_buffer{};
+    std::array<AllocatedBuffer, 2> material_buffer{};
 
     // Indexes to control which buffers are used for uploading
     // and which are used for rendering
@@ -66,7 +66,7 @@ class MaterialManager {
   private:
     void resize_buffer(uint32_t new_capacity);
     void toggle_buffers();
-    [[nodiscard]] core::AllocatedBuffer &get_upload_buffer();
-    [[nodiscard]] core::AllocatedBuffer &get_render_buffer();
+    [[nodiscard]] AllocatedBuffer &get_upload_buffer();
+    [[nodiscard]] AllocatedBuffer &get_render_buffer();
 };
 }; // namespace gfx

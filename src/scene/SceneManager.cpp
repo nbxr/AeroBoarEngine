@@ -1,14 +1,14 @@
-#include "SceneManager.h"
-#include "BufferUtils.h"
+#include "scene/SceneManager.h"
+#include "gfx/BufferUtils.h"
 #include <cstring>
 
-core::SceneManager::~SceneManager() { shutdown(); }
+scene::SceneManager::~SceneManager() { shutdown(); }
 
-bool core::SceneManager::is_initialized() {
+bool scene::SceneManager::is_initialized() {
     return device != VK_NULL_HANDLE && allocator != VK_NULL_HANDLE;
 }
 
-bool core::SceneManager::initialize(VkDevice device, VmaAllocator allocator,
+bool scene::SceneManager::initialize(VkDevice device, VmaAllocator allocator,
                                     VkDescriptorSet descriptor_set,
                                     uint32_t initial_capacity) {
     std::scoped_lock lock(instance_mutex);
@@ -24,15 +24,15 @@ bool core::SceneManager::initialize(VkDevice device, VmaAllocator allocator,
     cpu_instances.reserve(initial_capacity);
 
     VkDeviceSize size = initial_capacity * sizeof(SceneInstance);
-    bool render_initialized = core::BufferUtils::initialize_buffer(
+    bool render_initialized = gfx::BufferUtils::initialize_buffer(
         device, allocator, size, get_render_buffer());
-    bool upload_initialized = core::BufferUtils::initialize_buffer(
+    bool upload_initialized = gfx::BufferUtils::initialize_buffer(
         device, allocator, size, get_upload_buffer());
 
     return render_initialized && upload_initialized;
 }
 
-bool core::SceneManager::add_instance(const core::SceneInstance &instance) {
+bool scene::SceneManager::add_instance(const SceneInstance &instance) {
     std::scoped_lock lock(instance_mutex);
 
     cpu_instances.push_back(instance);
@@ -41,7 +41,7 @@ bool core::SceneManager::add_instance(const core::SceneInstance &instance) {
     return true;
 }
 
-void core::SceneManager::remove_instance(uint32_t index) {
+void scene::SceneManager::remove_instance(uint32_t index) {
     if (index >= instance_count) {
         return;
     }
@@ -58,7 +58,7 @@ void core::SceneManager::remove_instance(uint32_t index) {
     instance_count--;
 }
 
-void core::SceneManager::update_buffers() {
+void scene::SceneManager::update_buffers() {
     // Resize if capacity exceeded
     if (instance_count > max_instances[upload]) {
         uint32_t overflow = (instance_count - max_instances[upload]);
@@ -71,17 +71,17 @@ void core::SceneManager::update_buffers() {
     // Upload CPU data to mapped GPU memory
     if (get_upload_buffer().mapped_data && !cpu_instances.empty()) {
         memcpy(get_upload_buffer().mapped_data, cpu_instances.data(),
-               instance_count * sizeof(core::SceneInstance));
+               instance_count * sizeof(SceneInstance));
     }
 }
 
-void core::SceneManager::bind_descriptor(uint32_t binding_index) {
-    VkDeviceSize size = instance_count * sizeof(core::SceneInstance);
-    core::BufferUtils::update_descriptor(device, get_render_buffer(),
+void scene::SceneManager::bind_descriptor(uint32_t binding_index) {
+    VkDeviceSize size = instance_count * sizeof(SceneInstance);
+    gfx::BufferUtils::update_descriptor(device, get_render_buffer(),
                                          descriptor_set, size, binding_index);
 }
 
-void core::SceneManager::shutdown() {
+void scene::SceneManager::shutdown() {
 
     if (get_upload_buffer().allocation != VK_NULL_HANDLE) {
         vmaDestroyBuffer(allocator, get_upload_buffer().buffer,
@@ -113,25 +113,25 @@ void core::SceneManager::shutdown() {
     max_instances = {0, 0};
 }
 
-void core::SceneManager::resize_buffer(uint32_t new_capacity) {
-    VkDeviceSize new_size = new_capacity * sizeof(core::SceneInstance);
+void scene::SceneManager::resize_buffer(uint32_t new_capacity) {
+    VkDeviceSize new_size = new_capacity * sizeof(SceneInstance);
 
-    size_t data_size = cpu_instances.size() * sizeof(core::SceneInstance);
-    core::BufferUtils::resize_buffer(device, allocator, new_size,
+    size_t data_size = cpu_instances.size() * sizeof(SceneInstance);
+    gfx::BufferUtils::resize_buffer(device, allocator, new_size,
                                      get_upload_buffer(), cpu_instances.data(),
                                      data_size);
     max_instances[upload] = new_capacity;
 }
 
-void core::SceneManager::toggle_buffers() {
+void scene::SceneManager::toggle_buffers() {
     render ^= 1;
     upload = render ^ 1;
 }
 
-core::AllocatedBuffer &core::SceneManager::get_upload_buffer() {
+gfx::AllocatedBuffer &scene::SceneManager::get_upload_buffer() {
     return instance_buffer[upload];
 }
 
-core::AllocatedBuffer &core::SceneManager::get_render_buffer() {
+gfx::AllocatedBuffer &scene::SceneManager::get_render_buffer() {
     return instance_buffer[render];
 }

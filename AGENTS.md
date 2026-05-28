@@ -21,7 +21,12 @@ When making lasting decisions, update the documentation above rather than tool-p
 
 - **Style**: Data-oriented. Prefer plain structs and composition over deep inheritance.
 - **Naming**: `PascalCase` for types/structs, `snake_case` for functions and variables.
-- **Namespaces**: `core` (engine fundamentals), `gfx` (resources and rendering data).
+- **Namespaces**:
+  - `core` — Small set of universal utilities (`core::Handle`, `core::AABB`, and future non-rendering primitives).
+  - `gfx` — Everything graphics/Vulkan: RHI wrappers, resource managers & bindless data, contexts, pipelines, and rendering ownership (`gfx::Renderer`, `Allocated*`, managers, GPU layouts, etc.).
+  - `scene` — High-level game object model, transforms, and loading that produces data for the gfx layer (`scene::SceneManager`, `scene::GltfLoader`, `scene::GameObject`/`RenderMesh`, current flat `SceneInstance`).
+
+  The split aligns with the two architecture documents in `docs/architecture/` (pipeline vs. game-object concerns).
 - All GPU memory is allocated via **VMA**.
 - Prefer transient/lazily allocated images for MSAA targets.
 - Use `VK_ATTACHMENT_STORE_OP_DONT_CARE` aggressively.

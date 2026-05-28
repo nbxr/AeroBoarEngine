@@ -3,7 +3,7 @@
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan.h>
 
-namespace core {
+namespace gfx {
 struct AllocatedBuffer {
     VkBuffer buffer = VK_NULL_HANDLE;
     VmaAllocation allocation = VK_NULL_HANDLE;
@@ -12,4 +12,4 @@ struct AllocatedBuffer {
     VkDeviceAddress device_address =
         0; // for shader device address / RTX / bindless
 };
-}; // namespace core
+}; // namespace gfx

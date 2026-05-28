@@ -2,20 +2,20 @@
 #include "Engine.h"
 #include "AllocatedBuffer.h"
 #include "AllocatedImage.h"
-#include "GameObject.h"
-#include "RenderMesh.h"
+#include "scene/GameObject.h"
+#include "scene/RenderMesh.h"
 #include "Renderer.h"
 #include "VkBootstrap.h"
 #include "vk_mem_alloc.h"
 
-bool core::Engine::initialize() {
+bool gfx::Engine::initialize() {
     if (init_vulkan()) {
         return true;
     } else
         return false;
 }
 
-bool core::Engine::init_vulkan() {
+bool gfx::Engine::init_vulkan() {
     // Initialize Vulkan using vk-bootstrap
     vkb::InstanceBuilder builder{};
 
@@ -104,7 +104,7 @@ bool core::Engine::init_vulkan() {
     return true;
 }
 
-bool core::Engine::init_vma() {
+bool gfx::Engine::init_vma() {
     VmaAllocatorCreateInfo alloc_info = {};
     alloc_info.instance = renderer.vk.instance;
     alloc_info.physicalDevice = renderer.vk.physical_device;
@@ -122,7 +122,7 @@ bool core::Engine::init_vma() {
     return true;
 }
 
-bool core::Engine::init_surface() {
+bool gfx::Engine::init_surface() {
     // surface
     if (glfwCreateWindowSurface(renderer.vk.instance,
                                 renderer.window.glfw_handle, nullptr,
@@ -133,7 +133,7 @@ bool core::Engine::init_surface() {
     return true;
 }
 
-bool core::Engine::init_resource_managers() {
+bool gfx::Engine::init_resource_managers() {
     if (!renderer.scene_manager.initialize(
             renderer.vk.device.device, renderer.allocator,
             renderer.vk.bindless_descriptor_set, 100))

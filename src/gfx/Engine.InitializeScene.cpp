@@ -1,14 +1,14 @@
 #include "Engine.h"
-#include "GltfLoader.h"
+#include "scene/GltfLoader.h"
 #include "Renderer.h"
-#include "SceneManager.h"
+#include "scene/SceneManager.h"
 #include "gfx/TextureManager.h"
 #include "nlohmann/json.hpp"
 #include "tiny_gltf.h"
 #include <fstream>
 #include <iostream>
 
-bool core::Engine::load_default_scene() {
+bool gfx::Engine::load_default_scene() {
     // get scene name from configuration.json
     nlohmann::json config;
     try {
@@ -31,7 +31,7 @@ bool core::Engine::load_default_scene() {
     return load_scene(config["defaultScene"].get<std::string>());
 }
 
-bool core::Engine::load_scene(const std::string &scene_name) {
+bool gfx::Engine::load_scene(const std::string &scene_name) {
     // get scene name from configuration.json
     nlohmann::json config;
     try {
@@ -75,17 +75,17 @@ bool core::Engine::load_scene(const std::string &scene_name) {
 
     // extract mesh data and create GPU buffers
     tinygltf::Model model{};
-    if (!core::GltfLoader::load_model(filename, model)) {
+    if (!scene::GltfLoader::load_model(filename, model)) {
         return false;
     }
 
     // create materials in the material manager and get a lookup
     std::vector<MaterialID> material_lookup =
-        core::GltfLoader::extract_material_data(filename, model, renderer);
+        scene::GltfLoader::extract_material_data(filename, model, renderer);
 
     // get meshes using lookup to store material ID on MeshData
     std::vector<MeshPrimitiveID> mesh_lookup =
-        core::GltfLoader::extract_mesh_data(model, renderer);
+        scene::GltfLoader::extract_mesh_data(model, renderer);
 
     // calculate offsets for material lookup based on primitives
     std::vector<size_t> prim_material_offsets{};
@@ -97,12 +97,12 @@ bool core::Engine::load_scene(const std::string &scene_name) {
     }
 
     for (auto &node : model.nodes) {
-        auto transform = core::GltfLoader::extract_node_transform(node);
+        auto transform = scene::GltfLoader::extract_node_transform(node);
         auto &mesh = model.meshes[node.mesh];
         size_t prim_i = 0;
         size_t offset = prim_material_offsets[node.mesh];
         for (auto &prim : model.meshes[node.mesh].primitives) {
-            core::SceneInstance instance{};
+            scene::SceneInstance instance{};
             instance.mesh_index = mesh_lookup[prim_i + offset];
             instance.material_index = material_lookup[prim.material];
             instance.transform = transform;
@@ -123,7 +123,7 @@ bool core::Engine::load_scene(const std::string &scene_name) {
     return true; // Placeholder return value
 }
 
-void core::Engine::cleanup_scene() {
+void gfx::Engine::cleanup_scene() {
 
     // finally, clean up the scene manager
 }

@@ -2,7 +2,7 @@
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 
-#include "GltfLoader.h"
+#include "scene/GltfLoader.h"
 #include "gfx/MeshData.h"
 #include <algorithm>
 #include <cmath>
@@ -12,7 +12,7 @@
 #include <map>
 #include <tiny_gltf.h>
 
-bool core::GltfLoader::load_model(const std::string &filename,
+bool scene::GltfLoader::load_model(const std::string &filename,
                                   tinygltf::Model &model) {
     tinygltf::TinyGLTF loader{};
     std::string err;
@@ -26,12 +26,12 @@ bool core::GltfLoader::load_model(const std::string &filename,
     return ret;
 }
 
-std::vector<MaterialID>
-core::GltfLoader::extract_material_data(const std::string &filename,
+std::vector<gfx::MaterialID>
+scene::GltfLoader::extract_material_data(const std::string &filename,
                                         const tinygltf::Model &model,
-                                        core::Renderer &renderer) {
+                                        gfx::Renderer &renderer) {
 
-    std::vector<MaterialID> material_lookup{};
+    std::vector<gfx::MaterialID> material_lookup{};
     material_lookup.reserve(model.materials.size());
     auto texture_path = std::filesystem::path(filename).parent_path();
     // create materials in the material manager
@@ -93,18 +93,18 @@ core::GltfLoader::extract_material_data(const std::string &filename,
             }
         }
 
-        MaterialID id = renderer.material_manager.create_material(material);
+        gfx::MaterialID id = renderer.material_manager.create_material(material);
         material_lookup.push_back(id);
     }
 
     return material_lookup;
 }
 
-std::vector<MeshPrimitiveID>
-core::GltfLoader::extract_mesh_data(const tinygltf::Model &model,
-                                    core::Renderer &renderer) {
+std::vector<gfx::MeshPrimitiveID>
+scene::GltfLoader::extract_mesh_data(const tinygltf::Model &model,
+                                    gfx::Renderer &renderer) {
 
-    std::vector<MeshPrimitiveID> meshes{};
+    std::vector<gfx::MeshPrimitiveID> meshes{};
     meshes.reserve(model.meshes.size() *
                    2); // most glTF meshes have multiple primitives
 
@@ -306,7 +306,7 @@ core::GltfLoader::extract_mesh_data(const tinygltf::Model &model,
 }
 
 std::vector<double>
-core::GltfLoader::value_or_ident(const std::vector<double> &value,
+scene::GltfLoader::value_or_ident(const std::vector<double> &value,
                                  const size_t len) {
     if (value.size() < len) {
         std::vector<double> result{};
@@ -319,7 +319,7 @@ core::GltfLoader::value_or_ident(const std::vector<double> &value,
     }
 }
 
-glm::mat4 core::GltfLoader::extract_node_transform(const tinygltf::Node &node) {
+glm::mat4 scene::GltfLoader::extract_node_transform(const tinygltf::Node &node) {
     std::vector<glm::mat4> transforms{};
 
     auto translation = value_or_ident(node.translation, 3U);

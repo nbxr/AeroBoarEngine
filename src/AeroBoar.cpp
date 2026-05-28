@@ -1,8 +1,8 @@
 #include "AeroBoar.h"
 #include <iostream>
 #define GLFW_INCLUDE_VULKAN
-#include "core/Engine.h"
-#include "core/Renderer.h"
+#include "gfx/Engine.h"
+#include "gfx/Renderer.h"
 #include <GLFW/glfw3.h>
 
 int AeroBoar::fly() {
@@ -14,7 +14,7 @@ int AeroBoar::fly() {
     }
 
     // create renderer
-    core::Engine engine{};
+    gfx::Engine engine{};
 
     // Create a windowed mode window and its vulkan context
     // Set GLFW window hints

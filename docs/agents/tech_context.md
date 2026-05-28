@@ -21,6 +21,7 @@
 - All GPU memory is allocated via **VMA**.
 - Prefer transient and lazily allocated memory for MSAA color and depth to keep data in GMEM when possible.
 - Keep CPU-side data (transforms, instances, etc.) lightweight and cache-friendly.
+- Namespaces: `core` (tiny universal utilities), `gfx` (all rendering/RHI/resources), `scene` (game object model + loading). See AGENTS.md for the current mapping.
 
 ## Resource Lifetime Rules
 

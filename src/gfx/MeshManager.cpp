@@ -1,5 +1,5 @@
 #include "MeshManager.h"
-#include "core/BufferUtils.h"
+#include "gfx/BufferUtils.h"
 #include <cstring>
 #include <mutex>
 
@@ -34,29 +34,29 @@ bool gfx::MeshManager::initialize(VkDevice device, VmaAllocator allocator,
 
     // ssbo buffer
     VkDeviceSize ssbo_size = initial_capacity * sizeof(MeshPrimitiveSSBO);
-    bool ssbo_render_initialized = core::BufferUtils::initialize_buffer(
+    bool ssbo_render_initialized = gfx::BufferUtils::initialize_buffer(
         device, allocator, ssbo_size, get_render_ssbo_buffer());
-    bool ssbo_upload_initialized = core::BufferUtils::initialize_buffer(
+    bool ssbo_upload_initialized = gfx::BufferUtils::initialize_buffer(
         device, allocator, ssbo_size, get_upload_ssbo_buffer());
 
     // vertex buffer
     VkDeviceSize vertex_size = initial_capacity * 100 * sizeof(Vertex);
-    bool vertex_render_initialized = core::BufferUtils::initialize_buffer(
+    bool vertex_render_initialized = gfx::BufferUtils::initialize_buffer(
         device, allocator, vertex_size, get_render_vertex_buffer());
-    bool vertex_upload_initialized = core::BufferUtils::initialize_buffer(
+    bool vertex_upload_initialized = gfx::BufferUtils::initialize_buffer(
         device, allocator, vertex_size, get_upload_vertex_buffer());
 
     // index buffer
     VkDeviceSize index_size = initial_capacity * 1000 * sizeof(Index);
-    bool index_render_initialized = core::BufferUtils::initialize_buffer(
+    bool index_render_initialized = gfx::BufferUtils::initialize_buffer(
         device, allocator, index_size, get_render_index_buffer());
-    bool index_upload_initialized = core::BufferUtils::initialize_buffer(
+    bool index_upload_initialized = gfx::BufferUtils::initialize_buffer(
         device, allocator, index_size, get_upload_index_buffer());
 
     return true;
 }
 
-MeshPrimitiveID gfx::MeshManager::add_mesh(gfx::MeshData &mesh_data) {
+gfx::MeshPrimitiveID gfx::MeshManager::add_mesh(gfx::MeshData &mesh_data) {
     std::scoped_lock lock(mesh_mutex);
     mesh_cache.push_back(std::move(mesh_data));
     mesh_count = static_cast<uint32_t>(mesh_cache.size());
@@ -103,32 +103,32 @@ void gfx::MeshManager::bind_descriptor(uint32_t ssbo, uint32_t vertex,
                                        uint32_t index) {
     std::shared_lock lock(mesh_mutex);
     // SSBO buffer
-    core::BufferUtils::update_descriptor(
+    gfx::BufferUtils::update_descriptor(
         device, get_render_ssbo_buffer(), descriptor_set,
         mesh_count * sizeof(MeshPrimitiveSSBO), ssbo);
     // Vertex buffer
-    core::BufferUtils::update_descriptor(device, get_render_vertex_buffer(),
+    gfx::BufferUtils::update_descriptor(device, get_render_vertex_buffer(),
                                          descriptor_set,
                                          vertex_count * sizeof(Vertex), vertex);
     // Index buffer
-    core::BufferUtils::update_descriptor(device, get_render_index_buffer(),
+    gfx::BufferUtils::update_descriptor(device, get_render_index_buffer(),
                                          descriptor_set,
                                          index_count * sizeof(Index), index);
 }
 
 void gfx::MeshManager::shutdown() {
     std::scoped_lock lock(mesh_mutex);
-    core::BufferUtils::destroy_buffer(device, allocator,
+    gfx::BufferUtils::destroy_buffer(device, allocator,
                                       get_upload_index_buffer());
-    core::BufferUtils::destroy_buffer(device, allocator,
+    gfx::BufferUtils::destroy_buffer(device, allocator,
                                       get_upload_vertex_buffer());
-    core::BufferUtils::destroy_buffer(device, allocator,
+    gfx::BufferUtils::destroy_buffer(device, allocator,
                                       get_upload_ssbo_buffer());
-    core::BufferUtils::destroy_buffer(device, allocator,
+    gfx::BufferUtils::destroy_buffer(device, allocator,
                                       get_render_index_buffer());
-    core::BufferUtils::destroy_buffer(device, allocator,
+    gfx::BufferUtils::destroy_buffer(device, allocator,
                                       get_render_vertex_buffer());
-    core::BufferUtils::destroy_buffer(device, allocator,
+    gfx::BufferUtils::destroy_buffer(device, allocator,
                                       get_render_ssbo_buffer());
     mesh_cache.clear();
     mesh_ssbo_cache.clear();
@@ -190,11 +190,11 @@ void gfx::MeshManager::resize_mesh_buffer(uint32_t new_capacity) {
     // Resize SSBO buffer
     uint64_t new_ssbo_size = static_cast<uint64_t>(new_capacity) * sizeof(MeshPrimitiveSSBO);
     if (mesh_ssbo_cache.empty()) {
-        core::BufferUtils::resize_buffer(
+        gfx::BufferUtils::resize_buffer(
             device, allocator, new_ssbo_size,
             get_upload_ssbo_buffer(), nullptr, 0);
     } else {
-        core::BufferUtils::resize_buffer(
+        gfx::BufferUtils::resize_buffer(
             device, allocator, new_ssbo_size,
             get_upload_ssbo_buffer(),
             mesh_ssbo_cache.data(),
@@ -214,7 +214,7 @@ void gfx::MeshManager::resize_vertex_buffer(uint64_t new_capacity) {
     }
 
     if (need_copy) {
-        core::BufferUtils::resize_buffer(
+        gfx::BufferUtils::resize_buffer(
             device, allocator, new_size,
             get_upload_vertex_buffer(),
             vertex_count > 0 ? get_upload_vertex_buffer().mapped_data : nullptr,
@@ -234,7 +234,7 @@ void gfx::MeshManager::resize_index_buffer(uint64_t new_capacity) {
     }
 
     if (need_copy) {
-        core::BufferUtils::resize_buffer(
+        gfx::BufferUtils::resize_buffer(
             device, allocator, new_size,
             get_upload_index_buffer(),
             index_count > 0 ? get_upload_index_buffer().mapped_data : nullptr,
@@ -243,26 +243,26 @@ void gfx::MeshManager::resize_index_buffer(uint64_t new_capacity) {
 }
 
 
-core::AllocatedBuffer &gfx::MeshManager::get_upload_vertex_buffer() {
+gfx::AllocatedBuffer &gfx::MeshManager::get_upload_vertex_buffer() {
     return vertex_buffer[upload];
 }
 
-core::AllocatedBuffer &gfx::MeshManager::get_render_vertex_buffer() {
+gfx::AllocatedBuffer &gfx::MeshManager::get_render_vertex_buffer() {
     return vertex_buffer[render];
 }
 
-core::AllocatedBuffer &gfx::MeshManager::get_upload_index_buffer() {
+gfx::AllocatedBuffer &gfx::MeshManager::get_upload_index_buffer() {
     return index_buffer[upload];
 }
 
-core::AllocatedBuffer &gfx::MeshManager::get_render_index_buffer() {
+gfx::AllocatedBuffer &gfx::MeshManager::get_render_index_buffer() {
     return index_buffer[render];
 }
 
-core::AllocatedBuffer &gfx::MeshManager::get_upload_ssbo_buffer() {
+gfx::AllocatedBuffer &gfx::MeshManager::get_upload_ssbo_buffer() {
     return ssbo_buffer[upload];
 }
 
-core::AllocatedBuffer &gfx::MeshManager::get_render_ssbo_buffer() {
+gfx::AllocatedBuffer &gfx::MeshManager::get_render_ssbo_buffer() {
     return ssbo_buffer[render];
 }

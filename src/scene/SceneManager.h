@@ -1,7 +1,7 @@
 #pragma once
 
-#include "AllocatedBuffer.h"
-#include "SceneInstance.h"
+#include "gfx/AllocatedBuffer.h"
+#include "scene/SceneInstance.h"
 #include <array>
 #include <cstdint>
 #include <glm/glm.hpp>
@@ -11,7 +11,7 @@
 #include <vma/vk_mem_alloc.h>
 #include <vulkan/vulkan.h>
 
-namespace core {
+namespace scene {
 class SceneManager {
   private:
     VkDevice device{VK_NULL_HANDLE};
@@ -19,7 +19,7 @@ class SceneManager {
     VkDescriptorSet descriptor_set{VK_NULL_HANDLE};
 
     // Internal storage using AllocatedBuffer
-    std::array<core::AllocatedBuffer, 2> instance_buffer{};
+    std::array<gfx::AllocatedBuffer, 2> instance_buffer{};
 
     // Indexes to control which buffers are used for uploading
     // and which are used for rendering
@@ -48,12 +48,12 @@ class SceneManager {
     bool initialize(VkDevice device, VmaAllocator allocator,
                     VkDescriptorSet descriptor_set, uint32_t initial_capacity);
 
-    bool add_instance(const core::SceneInstance &instance);
+    bool add_instance(const SceneInstance &instance);
     void remove_instance(uint32_t index);
     void update_buffers();
     void bind_descriptor(uint32_t binding_index);
     
-    [[nodiscard]] core::AllocatedBuffer &get_buffer() {
+    [[nodiscard]] gfx::AllocatedBuffer &get_buffer() {
         return get_render_buffer();
     }
     
@@ -66,7 +66,7 @@ class SceneManager {
   private:
     void resize_buffer(uint32_t new_capacity);
     void toggle_buffers();
-    [[nodiscard]] core::AllocatedBuffer &get_upload_buffer();
-    [[nodiscard]] core::AllocatedBuffer &get_render_buffer();
+    [[nodiscard]] gfx::AllocatedBuffer &get_upload_buffer();
+    [[nodiscard]] gfx::AllocatedBuffer &get_render_buffer();
 };
-}; // namespace core
+} // namespace scene

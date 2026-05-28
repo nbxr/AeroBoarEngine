@@ -4,7 +4,7 @@
 #include "VulkanContext.h"
 #include "AllocatedBuffer.h"
 
-namespace core {
+namespace gfx {
 
 /**
  * @brief Holds the resources required for the GPU-driven compute culling pass.
@@ -26,9 +26,9 @@ struct ComputePassContext {
     VkDescriptorSet descriptor_set{VK_NULL_HANDLE};
 
     // Per-frame resources    
-    core::AllocatedBuffer indirect_draw_buffer{};
-    core::AllocatedBuffer draw_count_buffer{};
-    core::AllocatedBuffer animation_storage_buffer{};
+    AllocatedBuffer indirect_draw_buffer{};
+    AllocatedBuffer draw_count_buffer{};
+    AllocatedBuffer animation_storage_buffer{};
 
     // timestamp queries or debug markers (optional, but useful for
     // profiling the compute pass) 
@@ -38,4 +38,4 @@ struct ComputePassContext {
     VkSemaphore computeFinishedSemaphore = VK_NULL_HANDLE;
 };
 
-} // namespace core
+} // namespace gfx

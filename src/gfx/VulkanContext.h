@@ -6,7 +6,7 @@
 #include <vulkan/vulkan.h>
 #include "VkBootstrap.h"
 
-namespace core {
+namespace gfx {
 struct PassContext;
 struct VulkanContext {
     // Core Vulkan objects (created once)
@@ -50,4 +50,4 @@ struct VulkanContext {
     bool enable_validation_layers{true};
     bool use_descriptor_heap{false};
 };
-}; // namespace Core
+}; // namespace gfx

@@ -2,6 +2,6 @@
 #include <vector>
 #include <string>
 
-namespace core {
+namespace gfx {
 bool load_shader_source(const std::string& filename, std::vector<unsigned int>& out_code);
 }
