@@ -1,6 +1,6 @@
-#include "Engine.h"
+#include "gfx/Engine.h"
 #include "scene/GltfLoader.h"
-#include "Renderer.h"
+#include "gfx/Renderer.h"
 #include "scene/SceneManager.h"
 #include "gfx/TextureManager.h"
 #include "nlohmann/json.hpp"

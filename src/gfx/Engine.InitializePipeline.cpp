@@ -1,8 +1,8 @@
-#include "Engine.h"
-#include "AllocatedBuffer.h"
-#include "AllocatedImage.h"
-#include "Renderer.h"
-#include "ShaderLoader.h"
+#include "gfx/Engine.h"
+#include "gfx/AllocatedBuffer.h"
+#include "gfx/AllocatedImage.h"
+#include "gfx/Renderer.h"
+#include "gfx/ShaderLoader.h"
 
 bool gfx::Engine::init_pipeline_layout() {
     // Pipeline layout

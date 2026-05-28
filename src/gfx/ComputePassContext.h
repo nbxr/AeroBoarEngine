@@ -1,8 +1,8 @@
 #pragma once
 
 #include <vulkan/vulkan.h>
-#include "VulkanContext.h"
-#include "AllocatedBuffer.h"
+#include "gfx/VulkanContext.h"
+#include "gfx/AllocatedBuffer.h"
 
 namespace gfx {
 

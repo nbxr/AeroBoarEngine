@@ -1,7 +1,7 @@
-#include "Engine.h"
-#include "AllocatedBuffer.h"
-#include "AllocatedImage.h"
-#include "Renderer.h"
+#include "gfx/Engine.h"
+#include "gfx/AllocatedBuffer.h"
+#include "gfx/AllocatedImage.h"
+#include "gfx/Renderer.h"
 
 bool gfx::Engine::init_render_pass() {
     // Multiview render pass for Quest 3

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "Material.h"
-#include "TextureInfo.h"
+#include "gfx/Material.h"
+#include "gfx/TextureInfo.h"
 #include "gfx/AllocatedBuffer.h"
 #include <array>
 #include <memory>

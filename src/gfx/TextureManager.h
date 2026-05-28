@@ -1,6 +1,6 @@
 #pragma once
 
-#include "TextureInfo.h"
+#include "gfx/TextureInfo.h"
 #include <shared_mutex>
 #include <stack>
 #include <string>
@@ -31,7 +31,7 @@ class TextureManager {
     std::vector<TextureID> pending_queue_transition{};
     std::vector<gfx::TextureInfo> texture_cleanup{};
 
-    // Handles that can be reused from within cpu_materials
+    // Handles that can be reused from within texture_cache
     std::stack<TextureID> recycle_cache{};
 
     // Indexes to control which buffers are used for uploading

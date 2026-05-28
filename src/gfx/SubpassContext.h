@@ -1,6 +1,6 @@
 #pragma once
 
-#include "PassType.h"
+#include "gfx/PassType.h"
 #include <vector>
 #include <vulkan/vulkan.h>
 

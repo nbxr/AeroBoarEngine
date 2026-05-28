@@ -1,5 +1,5 @@
-#include "Engine.h"
-#include "Renderer.h"
+#include "gfx/Engine.h"
+#include "gfx/Renderer.h"
 #include "VkBootstrap.h"
 
 bool gfx::Engine::init_vk_instance(vkb::InstanceBuilder &builder) {

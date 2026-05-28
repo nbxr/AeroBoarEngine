@@ -4,7 +4,7 @@
 #include <cstdint>
 #include "core/AABB.h"
 #include "core/Handle.h"
-#include "Vertex.h"
+#include "gfx/Vertex.h"
 
 namespace gfx {
 /**

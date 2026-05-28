@@ -1,9 +1,9 @@
-#include "Engine.h"
-#include "Renderer.h"
+#include "gfx/Engine.h"
+#include "gfx/Renderer.h"
 #include <vulkan/vulkan.h>
-#include "VulkanContext.h"
-#include "PassContext.h"
-#include "SubpassContext.h"
+#include "gfx/VulkanContext.h"
+#include "gfx/PassContext.h"
+#include "gfx/SubpassContext.h"
 
 void gfx::Engine::render() {
     

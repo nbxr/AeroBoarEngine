@@ -1,8 +1,8 @@
 #pragma once
 
 
-#include "MeshData.h"
-#include "MeshPrimitiveSSBO.h"
+#include "gfx/MeshData.h"
+#include "gfx/MeshPrimitiveSSBO.h"
 #include "gfx/AllocatedBuffer.h"
 #include <array>
 #include <shared_mutex>
@@ -33,7 +33,7 @@ class MeshManager {
     std::vector<gfx::MeshData> mesh_cache{};
     std::vector<gfx::MeshPrimitiveSSBO> mesh_ssbo_cache{};
 
-    // Handles that can be reused from within cpu_materials
+    // Handles that can be reused from within mesh_cache
     std::stack<MeshPrimitiveID> recycle_cache{};
 
     uint32_t mesh_count = 0;

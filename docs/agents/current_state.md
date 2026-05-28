@@ -40,4 +40,15 @@ Early-to-mid foundation phase. The engine has a working Vulkan + GLFW desktop sk
 - Get basic geometry rendering working end-to-end
 - Stabilize the render loop with proper frame pacing
 
+## Code Hygiene Follow-ups
+
+These are non-functional cleanup items identified after the namespace reorganization:
+
+- Replace the global `LOG_ERROR` / `LOG_INFO` macros (currently in `gfx/Engine.h`) with a proper namespaced logging utility.
+- Reduce duplication across `MaterialManager`, `MeshManager`, `TextureManager`, and `SceneManager` (double-buffering, recycling, and buffer growth logic is nearly identical).
+- Standardize cache / storage naming across the resource managers (currently a mix of `cpu_materials`, `mesh_cache`, `texture_cache`, etc.).
+- Replace the raw `#define INVALID_HANDLE` in `core/Handle.h` with a `constexpr` constant.
+- Reduce unnecessary `gfx::` qualification on types when already inside `namespace gfx`.
+- Consider whether the top-level `AeroBoar` stub class is still needed.
+
 Update this file when major phases complete or the focus shifts significantly.

@@ -1,9 +1,9 @@
 #pragma once
 
-#include "AllocatedBuffer.h"
-#include "AllocatedImage.h"
-#include "PassType.h"
-#include "SubpassContext.h"
+#include "gfx/AllocatedBuffer.h"
+#include "gfx/AllocatedImage.h"
+#include "gfx/PassType.h"
+#include "gfx/SubpassContext.h"
 #include <unordered_map>
 #include <vector>
 #include <vulkan/vulkan.h>
@@ -24,7 +24,7 @@ struct PassContext {
     VkRect2D scissor{};
     VkSampleCountFlagBits sample_count{VK_SAMPLE_COUNT_1_BIT}; // 1, 2, or 4
     
-    // Transient / on-chip firendly images
+    // Transient / on-chip friendly images
     AllocatedImage msaa_color_image{};
     AllocatedImage resolved_color_image{};    // final store target
     AllocatedImage depth_image{};             // for non-MSAA passes or depth resolve

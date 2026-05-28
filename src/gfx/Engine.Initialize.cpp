@@ -1,10 +1,10 @@
 #define VMA_IMPLEMENTATION
-#include "Engine.h"
-#include "AllocatedBuffer.h"
-#include "AllocatedImage.h"
+#include "gfx/Engine.h"
+#include "gfx/AllocatedBuffer.h"
+#include "gfx/AllocatedImage.h"
 #include "scene/GameObject.h"
 #include "scene/RenderMesh.h"
-#include "Renderer.h"
+#include "gfx/Renderer.h"
 #include "VkBootstrap.h"
 #include "vk_mem_alloc.h"
 
