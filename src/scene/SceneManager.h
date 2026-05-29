@@ -52,6 +52,7 @@ class SceneManager {
     void remove_instance(uint32_t index);
     void update_buffers();
     void bind_descriptor(uint32_t binding_index);
+    void toggle_buffers();  // exposed for Engine load-time commit (double-buffer swap)
     
     [[nodiscard]] gfx::AllocatedBuffer &get_buffer() {
         return get_render_buffer();
@@ -65,7 +66,6 @@ class SceneManager {
 
   private:
     void resize_buffer(uint32_t new_capacity);
-    void toggle_buffers();
     [[nodiscard]] gfx::AllocatedBuffer &get_upload_buffer();
     [[nodiscard]] gfx::AllocatedBuffer &get_render_buffer();
 };

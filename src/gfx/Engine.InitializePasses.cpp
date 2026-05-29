@@ -208,35 +208,95 @@ bool gfx::Engine::init_descriptor_pool() {
 }
 
 bool gfx::Engine::init_descriptor_set_layout() {
-    VkDescriptorSetLayoutBinding bindings[4] = {};
+    // Global bindless descriptor layout.
+    // The binding with VARIABLE_DESCRIPTOR_COUNT (the large texture array) **must**
+    // be the highest binding number per Vulkan spec.
+    // Binding 0: per-frame UBO (future)
+    // Bindings 1-5: global scene data tables as storage buffers (for GPU-driven
+    //               culling + vertex pulling). Updated at load time (and later
+    //               per-frame for dynamic objects) via UPDATE_AFTER_BIND.
+    // Binding 6: bindless texture array (combined image+sampler) - variable count, last
+    VkDescriptorSetLayoutBinding bindings[7] = {};
+
+    // 0: UBO
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     bindings[0].descriptorCount = 1;
     bindings[0].stageFlags =
         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
+    // 1: Scene instances (transforms + material/mesh indices) - SSBO
     bindings[1].binding = 1;
-    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    bindings[1].descriptorCount = 10000; // Large bindless array
-    bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags = VK_SHADER_STAGE_VERTEX_BIT |
+                             VK_SHADER_STAGE_FRAGMENT_BIT |
+                             VK_SHADER_STAGE_COMPUTE_BIT;
 
+    // 2: Materials (PBR params + texture indices) - SSBO
     bindings[2].binding = 2;
     bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     bindings[2].descriptorCount = 1;
-    bindings[2].stageFlags =
-        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
+    bindings[2].stageFlags = VK_SHADER_STAGE_VERTEX_BIT |
+                             VK_SHADER_STAGE_FRAGMENT_BIT |
+                             VK_SHADER_STAGE_COMPUTE_BIT;
 
+    // 3: Mesh primitive metadata (offsets into vertex/index buffers) - SSBO
     bindings[3].binding = 3;
-    bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     bindings[3].descriptorCount = 1;
-    bindings[3].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    bindings[3].stageFlags = VK_SHADER_STAGE_VERTEX_BIT |
+                             VK_SHADER_STAGE_FRAGMENT_BIT |
+                             VK_SHADER_STAGE_COMPUTE_BIT;
+
+    // 4: Vertex buffer (storage view for vertex pulling in shaders)
+    bindings[4].binding = 4;
+    bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[4].descriptorCount = 1;
+    bindings[4].stageFlags = VK_SHADER_STAGE_VERTEX_BIT |
+                             VK_SHADER_STAGE_FRAGMENT_BIT |
+                             VK_SHADER_STAGE_COMPUTE_BIT;
+
+    // 5: Index buffer (storage view for indexed draws / pulling)
+    bindings[5].binding = 5;
+    bindings[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[5].descriptorCount = 1;
+    bindings[5].stageFlags = VK_SHADER_STAGE_VERTEX_BIT |
+                             VK_SHADER_STAGE_FRAGMENT_BIT |
+                             VK_SHADER_STAGE_COMPUTE_BIT;
+
+    // 6: Textures (large variable array) - MUST be highest binding number
+    bindings[6].binding = 6;
+    bindings[6].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[6].descriptorCount = 10000;
+    bindings[6].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    // Per-binding flags for update-after-bind + variable count on textures
+    VkDescriptorSetLayoutBindingFlagsCreateInfo binding_flags_info{};
+    binding_flags_info.sType =
+        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
+
+    VkDescriptorBindingFlags binding_flags[7] = {};
+    binding_flags[0] = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
+    binding_flags[1] = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;  // instances
+    binding_flags[2] = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;  // materials
+    binding_flags[3] = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;  // mesh meta
+    binding_flags[4] = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;  // vertices
+    binding_flags[5] = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;  // indices
+    binding_flags[6] = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT |
+                       VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
+                       VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT;  // textures (last)
+
+    binding_flags_info.bindingCount = 7;
+    binding_flags_info.pBindingFlags = binding_flags;
 
     VkDescriptorSetLayoutCreateInfo layout_info = {};
     layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layout_info.bindingCount = 4;
+    layout_info.bindingCount = 7;
     layout_info.pBindings = bindings;
     layout_info.flags =
         VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
+    layout_info.pNext = &binding_flags_info;
 
     if (vkCreateDescriptorSetLayout(renderer.vk.device, &layout_info, nullptr,
                                     &renderer.vk.descriptor_set_layout) !=
@@ -244,6 +304,38 @@ bool gfx::Engine::init_descriptor_set_layout() {
         LOG_ERROR("Failed to create descriptor set layout");
         return false;
     }
+    return true;
+}
+
+bool gfx::Engine::init_bindless_descriptor_set() {
+    if (renderer.vk.descriptor_pool == VK_NULL_HANDLE ||
+        renderer.vk.descriptor_set_layout == VK_NULL_HANDLE) {
+        LOG_ERROR("Descriptor pool or layout not ready for bindless set");
+        return false;
+    }
+
+    VkDescriptorSetAllocateInfo alloc_info{};
+    alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    alloc_info.descriptorPool = renderer.vk.descriptor_pool;
+    alloc_info.descriptorSetCount = 1;
+    alloc_info.pSetLayouts = &renderer.vk.descriptor_set_layout;
+
+    // Chain variable descriptor count for the large bindless texture array (binding 1)
+    VkDescriptorSetVariableDescriptorCountAllocateInfo var_info{};
+    var_info.sType =
+        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO;
+    var_info.descriptorSetCount = 1;
+    uint32_t counts[] = {10000}; // matches layout binding 1 descriptorCount
+    var_info.pDescriptorCounts = counts;
+    alloc_info.pNext = &var_info;
+
+    if (vkAllocateDescriptorSets(renderer.vk.device, &alloc_info,
+                                 &renderer.vk.bindless_descriptor_set) !=
+        VK_SUCCESS) {
+        LOG_ERROR("Failed to allocate bindless descriptor set");
+        return false;
+    }
+
     return true;
 }
 

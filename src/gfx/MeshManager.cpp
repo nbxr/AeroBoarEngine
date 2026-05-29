@@ -69,6 +69,8 @@ void gfx::MeshManager::update_buffers() {
 
     ensure_capacity();
 
+    mesh_ssbo_cache.clear(); // prevent accumulation on re-uploads / dynamic adds
+
     uint32_t vertex_offset = 0;
     uint32_t index_offset = 0;
 

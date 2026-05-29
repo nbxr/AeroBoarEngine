@@ -75,6 +75,9 @@ bool gfx::Engine::init_vulkan() {
     if (!init_descriptor_set_layout())
         return false;
 
+    if (!init_bindless_descriptor_set())
+        return false;
+
     // Initialize pipeline layout
     if (!init_pipeline_layout())
         return false;

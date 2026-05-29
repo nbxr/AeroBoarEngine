@@ -112,15 +112,34 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
         }
     }
 
-    // At this point, the scene manager has CPU-side data for instances and
-    // materials. We can call update_buffers() to upload this data to the GPU.
+    // Upload CPU data (populated by GltfLoader) into the persistently-mapped
+    // GPU buffers on the "upload" side of each double-buffered manager.
     renderer.scene_manager.update_buffers();
     renderer.material_manager.update_buffers();
     renderer.mesh_manager.update_buffers();
     renderer.texture_manager.upload_textures();
 
-    // Implementation for loading scene
-    return true; // Placeholder return value
+    // Commit: flip the buffers so the side we just wrote becomes the render side,
+    // then write the actual VkBuffer handles + ranges into the bindless
+    // descriptor set (which is now allocated). This makes scene data visible
+    // to shaders for the upcoming render pass work.
+    // Binding indices: 1=instances, 2=materials, 3=meshmeta, 4=verts, 5=indices, 6=textures
+    // (textures must be the highest binding number because of VARIABLE count).
+    renderer.scene_manager.toggle_buffers();
+    renderer.material_manager.toggle_buffers();
+    renderer.mesh_manager.toggle_buffers();
+
+    renderer.scene_manager.bind_descriptor(1);      // SceneInstance (transforms)
+    renderer.material_manager.bind_descriptor(2);   // Materials
+    renderer.mesh_manager.bind_descriptor(3, 4, 5); // Mesh meta + vertex + index SSBOs
+    renderer.texture_manager.bind_descriptor(6);    // Bindless textures (must be last binding)
+
+    // TODO: add proper memory barriers / vkFlushMappedMemoryRanges for the
+    // buffer uploads if running on non-coherent memory (Quest 3). For desktop
+    // dev with persistently mapped + sequential write the data is usually
+    // visible after the next submit that uses the descriptors.
+
+    return true;
 }
 
 void gfx::Engine::cleanup_scene() {

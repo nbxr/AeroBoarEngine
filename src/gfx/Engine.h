@@ -39,6 +39,7 @@ class Engine {
     bool init_depth_image();
     bool init_descriptor_pool();
     bool init_descriptor_set_layout();
+    bool init_bindless_descriptor_set();
     bool init_command_pool();
     bool init_command_buffers();
     bool init_framebuffers();

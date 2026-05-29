@@ -65,10 +65,10 @@ class MeshManager {
 
     void update_buffers();
     void bind_descriptor(uint32_t ssbo, uint32_t vertex, uint32_t index);
+    void toggle_buffers();  // exposed for Engine load-time commit (double-buffer swap)
     void shutdown();
 
   private:
-    void toggle_buffers();
     bool ensure_capacity();
     void resize_mesh_buffer(uint32_t new_capacity);
     void resize_vertex_buffer(uint64_t new_capacity);

@@ -19,10 +19,9 @@ Early-to-mid foundation phase. The engine has a working Vulkan + GLFW desktop sk
 
 ## Current Focus Areas
 
-- Completing GPU data upload paths (meshes, materials, instances into SSBOs)
-- Implementing the main render loop
-- Wiring PBR shaders and bindless resources
-- Getting the first real draws on screen
+- Implementing the main render loop (now that scene uploads are wired)
+- Wiring PBR shaders and using the bindless resources in draws
+- Getting the first real draws on screen (basic geometry + materials)
 
 ## Known Gaps / Not Yet Implemented
 
@@ -36,9 +35,19 @@ Early-to-mid foundation phase. The engine has a working Vulkan + GLFW desktop sk
 
 ## Next Immediate Priorities
 
-- Implement GPU buffer uploads for meshes and materials
-- Get basic geometry rendering working end-to-end
-- Stabilize the render loop with proper frame pacing
+- Get basic geometry rendering working end-to-end (use the now-wired bindless SSBOs + textures from load)
+- Stabilize the render loop with proper frame pacing and per-frame data
+- Implement a minimal forward pass that actually issues draws using the uploaded scene data
+
+## GPU Upload Path (Completed)
+The one-time scene upload at load is now fully wired:
+- Bindless descriptor set is allocated with correct variable-count + update-after-bind flags.
+- Layout declares the global tables (see tech_context.md for the exact binding numbers).
+- Double-buffered managers (Scene, Material, Mesh) flip + bind their data after GltfLoader populates CPU side.
+- Textures create images + upload via transfer queue + bind into the array.
+- Minor bugs (ssbo accumulation, image_infos indexing, missing sampler, missing features) fixed as part of making the path executable.
+
+The data is now in descriptors and ready for the render pass / shader work. Future dynamic updates will need per-frame-in-flight fencing + dirty tracking.
 
 ## Code Hygiene Follow-ups
 

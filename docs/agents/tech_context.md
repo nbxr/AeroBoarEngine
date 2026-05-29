@@ -49,6 +49,21 @@
 
 **Rule of thumb**: Immutable or rarely-changing objects → global. Data written by the CPU and read by the GPU in the same frame → per-frame-in-flight.
 
+## Global Bindless Descriptor Bindings
+The single bindless descriptor set (allocated once, UPDATE_AFTER_BIND) uses these bindings. The texture array must be the highest binding number due to VARIABLE_DESCRIPTOR_COUNT requirements.
+
+| Binding | Type                          | Count  | Purpose / Consumers                  | Notes |
+|---------|-------------------------------|--------|--------------------------------------|-------|
+| 0       | UNIFORM_BUFFER                | 1      | Per-frame globals (future)           |       |
+| 1       | STORAGE_BUFFER                | 1      | SceneInstance (transform + mat/mesh indices) | `scene::SceneManager` |
+| 2       | STORAGE_BUFFER                | 1      | Materials (PBR + texture indices)    | `gfx::MaterialManager` |
+| 3       | STORAGE_BUFFER                | 1      | MeshPrimitiveSSBO metadata (v/i offsets) | `gfx::MeshManager` |
+| 4       | STORAGE_BUFFER                | 1      | Vertex buffer (for shader vertex pulling) | `gfx::MeshManager` |
+| 5       | STORAGE_BUFFER                | 1      | Index buffer                         | `gfx::MeshManager` |
+| 6       | COMBINED_IMAGE_SAMPLER        | 10000 (variable) | Bindless textures | `gfx::TextureManager`; must be last binding |
+
+These are written once at scene load (after `update_buffers` + `toggle` + `bind_descriptor`). Shaders will access via the indices stored in the instance/material data.
+
 ## Compute Passes & Synchronization
 - Compute work (culling, animation, etc.) runs before the graphics pass in the same command buffer when possible.
 - Use pipeline barriers instead of extra semaphores between compute and graphics stages when feasible.

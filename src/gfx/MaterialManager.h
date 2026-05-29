@@ -61,11 +61,11 @@ class MaterialManager {
 
     void update_buffers();
     void bind_descriptor(uint32_t binding_index);
+    void toggle_buffers();  // exposed for Engine load-time commit (double-buffer swap)
     void shutdown();
 
   private:
     void resize_buffer(uint32_t new_capacity);
-    void toggle_buffers();
     [[nodiscard]] AllocatedBuffer &get_upload_buffer();
     [[nodiscard]] AllocatedBuffer &get_render_buffer();
 };

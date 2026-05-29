@@ -51,6 +51,26 @@ bool gfx::TextureManager::initialize(VkDevice device, VmaAllocator allocator,
     alloc_info.commandPool = transition_command_pool;
     vkAllocateCommandBuffers(device, &alloc_info, &transition_command_buffer);
 
+    // Create a default sampler for the bindless combined image sampler array.
+    // (glTF assets typically use linear filtering; address mode repeat is a
+    // reasonable default until material-specific samplers are added.)
+    VkSamplerCreateInfo sampler_info{};
+    sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    sampler_info.magFilter = VK_FILTER_LINEAR;
+    sampler_info.minFilter = VK_FILTER_LINEAR;
+    sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sampler_info.minLod = 0.0f;
+    sampler_info.maxLod = VK_LOD_CLAMP_NONE;
+    sampler_info.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+    if (vkCreateSampler(device, &sampler_info, nullptr, &sampler_handle) !=
+        VK_SUCCESS) {
+        // Non-fatal for desktop dev; textures will still upload but binding may
+        // be incomplete until sampler is valid.
+    }
+
     return true;
 }
 
@@ -307,14 +327,15 @@ void gfx::TextureManager::transfer_queue_ownership() {
 }
 
 void gfx::TextureManager::bind_descriptor(uint32_t index) {
+    if (uploaded_count == 0 || descriptor_set == VK_NULL_HANDLE)
+        return;
 
-    // In your descriptor set update:
-    std::vector<VkDescriptorImageInfo> image_infos{};
-    image_infos.reserve(uploaded_count);
+    std::vector<VkDescriptorImageInfo> image_infos;
+    image_infos.resize(uploaded_count);
     for (size_t i = 0; i < uploaded_count; i++) {
         image_infos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         image_infos[i].imageView = texture_cache[i].gpu_image.view;
-        image_infos[i].sampler = sampler_handle; // shared or per-texture
+        image_infos[i].sampler = sampler_handle;
     }
 
     gfx::BufferUtils::update_descriptor(device, image_infos, descriptor_set,
@@ -335,6 +356,11 @@ void gfx::TextureManager::shutdown() {
 
     if (transition_command_pool != VK_NULL_HANDLE)
         vkDestroyCommandPool(device, transition_command_pool, nullptr);
+
+    if (sampler_handle != VK_NULL_HANDLE) {
+        vkDestroySampler(device, sampler_handle, nullptr);
+        sampler_handle = VK_NULL_HANDLE;
+    }
 
     uint32_t image_views_destroyed = 0;
     // Destroy all AllocatedImage resources in texture_cache
