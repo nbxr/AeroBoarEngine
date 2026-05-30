@@ -5,7 +5,8 @@ Lightweight, cache-friendly data structures designed for a C++ Vulkan engine usi
 
 ## Status
 **Target architecture** (not yet fully implemented).  
-The current scene system uses a simpler flat `SceneInstance` model with embedded `mat4` transforms. The higher-level `GameObject` / `RenderMesh` + `TransformManager` SOA design described below is the planned evolution for skinned, multi-part, and instanced objects.
+
+Basic rendering currently works using the simpler flat `SceneInstance` model. All loaded glTF geometry is drawn every frame with correct per-instance transforms. The higher-level `GameObject` / `RenderMesh` + `TransformManager` SOA design described below remains the planned evolution for skinned, multi-part, and instanced objects. See `docs/agents/current_state.md` for current rendering status.
 
 ## Core Principles
 - Flat SOA-style layouts for high cache efficiency and low CPU overhead.

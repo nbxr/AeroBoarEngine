@@ -50,8 +50,8 @@ The executable currently opens a desktop GLFW window. It loads the scene defined
 **Important**: The current `configuration.json` contains absolute paths from the original developer's machine. Update it for your environment before running scene loading.
 
 ### Important Notes
-- The render loop (`Engine::render()`) and full GPU upload paths are still under active development.
-- Many init functions exist but the end-to-end pipeline (especially PBR + compute culling + indirect draws) is incomplete.
+- A basic render loop (`Engine::render()`) now exists and can draw complete scenes. It is still using temporary debug shaders and will evolve significantly.
+- The end-to-end pipeline (real PBR shading + compute culling + indirect draws) is incomplete.
 - Check `docs/agents/current_state.md` for the latest implementation status and focus areas.
 
 ## 4. Instructions for AI Agents

@@ -10,10 +10,11 @@ Goal: 72–120 FPS at 2064×2208 per eye with minimal CPU overhead and maximum d
 ## Status / Target vs Current
 **This is target / aspirational guidance for the 2026 Quest 3 pipeline.**
 
-As of the current early foundation phase:
-- The engine has a single-subpass render pass using transient MSAA attachments and `DONT_CARE` stores (good alignment on the basics).
-- Multi-subpass structure, full multiview enablement in the render pass, compute culling, indirect draws, and the advanced descriptor heap path are **not yet implemented**.
-- `render()` is still empty / placeholder.
+As of late May 2026:
+- A basic but functional render loop exists and successfully draws complete glTF scenes (all primitives, correct per-instance transforms) using the bindless resources.
+- Single-subpass render pass with transient MSAA + `DONT_CARE` is in place.
+- Multi-subpass structure, multiview, compute culling, indirect draws, and real PBR shading are **not yet implemented**.
+- Current drawing uses a temporary debug shader (raw SSBO vertex pulling).
 
 See `docs/agents/current_state.md` for the latest implementation status.
 
