@@ -181,127 +181,218 @@ bool gfx::Engine::init_swapchain(vkb::Device &dev) {
 void gfx::Engine::recreate_swapchain() {
     vkDeviceWaitIdle(renderer.vk.device);
 
-    // Destroy old framebuffers (they reference old swapchain views)
-    for (auto fb : renderer.main_pass.framebuffers) {
-        if (fb != VK_NULL_HANDLE) {
-            vkDestroyFramebuffer(renderer.vk.device, fb, nullptr);
-        }
-    }
-    renderer.main_pass.framebuffers.clear();
+    // ============================================================
+    // TWO-PHASE RECREATION (Error Recovery Pattern)
+    // Phase 1: Create ALL new resources while old ones are still valid.
+    // Phase 2: On full success -> destroy old + adopt new.
+    //          On any failure  -> clean up what we created and keep old.
+    // ============================================================
 
-    // Destroy old swapchain image views
-    for (auto &view : renderer.vk.swap_chain_image_views) {
-        vkDestroyImageView(renderer.vk.device, view, nullptr);
-    }
-    renderer.vk.swap_chain_image_views.clear();
+    // --- Local variables for new resources ---
+    VkSwapchainKHR                 new_swapchain = VK_NULL_HANDLE;
+    std::vector<VkImageView>       new_swapchain_views;
+    AllocatedImage                 new_msaa;
+    AllocatedImage                 new_depth;
+    std::vector<VkSemaphore>       new_render_finished;
+    std::vector<VkFramebuffer>     new_framebuffers;
 
-    // === IMPORTANT: Destroy transient MSAA color and depth images ===
-    // These must be recreated at the new window size. Keeping the old small
-    // images was causing the validation error when the window was maximized.
-    if (renderer.main_pass.msaa_color_image.view != VK_NULL_HANDLE) {
-        vkDestroyImageView(renderer.vk.device, renderer.main_pass.msaa_color_image.view, nullptr);
-        renderer.main_pass.msaa_color_image.view = VK_NULL_HANDLE;
-    }
-    if (renderer.main_pass.msaa_color_image.handle != VK_NULL_HANDLE) {
-        vmaDestroyImage(renderer.allocator,
-                        renderer.main_pass.msaa_color_image.handle,
-                        renderer.main_pass.msaa_color_image.allocation);
-        renderer.main_pass.msaa_color_image.handle = VK_NULL_HANDLE;
-        renderer.main_pass.msaa_color_image.allocation = VK_NULL_HANDLE;
-    }
+    bool success = true;
 
-    if (renderer.main_pass.depth_image.view != VK_NULL_HANDLE) {
-        vkDestroyImageView(renderer.vk.device, renderer.main_pass.depth_image.view, nullptr);
-        renderer.main_pass.depth_image.view = VK_NULL_HANDLE;
-    }
-    if (renderer.main_pass.depth_image.handle != VK_NULL_HANDLE) {
-        vmaDestroyImage(renderer.allocator,
-                        renderer.main_pass.depth_image.handle,
-                        renderer.main_pass.depth_image.allocation);
-        renderer.main_pass.depth_image.handle = VK_NULL_HANDLE;
-        renderer.main_pass.depth_image.allocation = VK_NULL_HANDLE;
-    }
-
-    // Recreate swapchain
+    // --------------------------------------------------------
+    // 1. Create new swapchain (using old one as oldSwapchain for efficiency)
+    // --------------------------------------------------------
     vkb::SwapchainBuilder swapchain_builder{renderer.vk.device};
-    auto swap_ret =
-        swapchain_builder.set_old_swapchain(renderer.vk.swapchain)
-            .set_desired_min_image_count(renderer.MAX_FRAMES_IN_FLIGHT)
-            .set_desired_extent(renderer.window.width, renderer.window.height)
-            .build();
+    auto swap_ret = swapchain_builder
+        .set_old_swapchain(renderer.vk.swapchain)
+        .set_desired_min_image_count(renderer.MAX_FRAMES_IN_FLIGHT)
+        .set_desired_extent(renderer.window.width, renderer.window.height)
+        .build();
 
     if (!swap_ret) {
-        renderer.vk.swapchain = VK_NULL_HANDLE;
-        LOG_ERROR("Failed to recreate swapchain");
-        return;
-    }
+        LOG_ERROR("Failed to create new swapchain during recreation");
+        success = false;
+    } else {
+        new_swapchain = swap_ret.value().swapchain;
+        renderer.vk.swap_chain_image_format = swap_ret.value().image_format;
+        renderer.vk.swap_chain_extent = swap_ret.value().extent;
 
-    vkDestroySwapchainKHR(renderer.vk.device, renderer.vk.swapchain, nullptr);
-    renderer.vk.swapchain = swap_ret.value().swapchain;
-    renderer.vk.swap_chain_image_format = swap_ret.value().image_format;
-    renderer.vk.swap_chain_extent = swap_ret.value().extent;
-
-    auto views_res = swap_ret.value().get_image_views();
-    if (!views_res) {
-        LOG_ERROR("Failed to get swapchain image views after recreate");
-        return;
-    }
-    renderer.vk.swap_chain_image_views = views_res.value();
-
-    // Recreate semaphores for the (possibly new) number of swapchain images
-    for (auto sem : renderer.vk.render_finished_semaphores) {
-        if (sem != VK_NULL_HANDLE) vkDestroySemaphore(renderer.vk.device, sem, nullptr);
-    }
-    renderer.vk.render_finished_semaphores.clear();
-
-    const uint32_t new_image_count = static_cast<uint32_t>(renderer.vk.swap_chain_image_views.size());
-    VkSemaphoreCreateInfo semaphore_info = {};
-    semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-
-    renderer.vk.render_finished_semaphores.resize(new_image_count);
-    for (uint32_t i = 0; i < new_image_count; ++i) {
-        vkCreateSemaphore(renderer.vk.device, &semaphore_info, nullptr,
-                          &renderer.vk.render_finished_semaphores[i]);
-    }
-
-    // Recreate the transient MSAA color and depth images at the **new** size.
-    // These are the attachments that were causing the framebuffer size mismatch.
-    if (!init_msaa_color_image()) {
-        LOG_ERROR("Failed to recreate MSAA color image during swapchain recreation");
-        return;
-    }
-    if (!init_depth_image()) {
-        LOG_ERROR("Failed to recreate depth image during swapchain recreation");
-        return;
-    }
-
-    // Now create new framebuffers using the freshly created (correctly sized) images
-    renderer.main_pass.framebuffers.resize(renderer.vk.swap_chain_image_views.size());
-
-    VkImageView msaa_color_view = renderer.main_pass.msaa_color_image.view;
-    VkImageView depth_view = renderer.main_pass.depth_image.view;
-
-    for (size_t i = 0; i < renderer.vk.swap_chain_image_views.size(); ++i) {
-        VkImageView swapchain_view = renderer.vk.swap_chain_image_views[i];
-
-        VkImageView attachments[3] = {
-            msaa_color_view,
-            swapchain_view,
-            depth_view
-        };
-
-        VkFramebufferCreateInfo framebuffer_info = {};
-        framebuffer_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        framebuffer_info.renderPass = renderer.main_pass.render_pass;
-        framebuffer_info.attachmentCount = 3;
-        framebuffer_info.pAttachments = attachments;
-        framebuffer_info.width = renderer.vk.swap_chain_extent.width;
-        framebuffer_info.height = renderer.vk.swap_chain_extent.height;
-        framebuffer_info.layers = 1;
-
-        if (vkCreateFramebuffer(renderer.vk.device, &framebuffer_info, nullptr,
-                                &renderer.main_pass.framebuffers[i]) != VK_SUCCESS) {
-            LOG_ERROR("Failed to recreate framebuffer during swapchain recreation");
+        auto views_res = swap_ret.value().get_image_views();
+        if (!views_res) {
+            LOG_ERROR("Failed to get image views for new swapchain");
+            success = false;
+        } else {
+            new_swapchain_views = std::move(views_res.value());
         }
+    }
+
+    // --------------------------------------------------------
+    // 2. Create new transient MSAA color image at new size
+    // --------------------------------------------------------
+    if (success) {
+        if (!create_msaa_color_image(renderer.vk.swap_chain_extent, new_msaa)) {
+            LOG_ERROR("Failed to create new MSAA color image during recreation");
+            success = false;
+        }
+    }
+
+    // --------------------------------------------------------
+    // 3. Create new transient depth image at new size
+    // --------------------------------------------------------
+    if (success) {
+        if (!create_depth_image(renderer.vk.swap_chain_extent, new_depth)) {
+            LOG_ERROR("Failed to create new depth image during recreation");
+            success = false;
+        }
+    }
+
+    // --------------------------------------------------------
+    // 4. Create new render-finished semaphores (sized to new image count)
+    // --------------------------------------------------------
+    if (success) {
+        const uint32_t new_image_count = static_cast<uint32_t>(new_swapchain_views.size());
+        VkSemaphoreCreateInfo semaphore_info{};
+        semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+        new_render_finished.resize(new_image_count);
+        for (uint32_t i = 0; i < new_image_count; ++i) {
+            if (vkCreateSemaphore(renderer.vk.device, &semaphore_info, nullptr,
+                                  &new_render_finished[i]) != VK_SUCCESS) {
+                LOG_ERROR("Failed to create new render finished semaphore");
+                success = false;
+                break;
+            }
+        }
+    }
+
+    // --------------------------------------------------------
+    // 5. Create new framebuffers using the new images
+    // --------------------------------------------------------
+    if (success) {
+        const uint32_t new_image_count = static_cast<uint32_t>(new_swapchain_views.size());
+        new_framebuffers.resize(new_image_count);
+
+        for (uint32_t i = 0; i < new_image_count; ++i) {
+            VkImageView attachments[3] = {
+                new_msaa.view,
+                new_swapchain_views[i],
+                new_depth.view
+            };
+
+            VkFramebufferCreateInfo fb_info{};
+            fb_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            fb_info.renderPass = renderer.main_pass.render_pass;
+            fb_info.attachmentCount = 3;
+            fb_info.pAttachments = attachments;
+            fb_info.width = renderer.vk.swap_chain_extent.width;
+            fb_info.height = renderer.vk.swap_chain_extent.height;
+            fb_info.layers = 1;
+
+            if (vkCreateFramebuffer(renderer.vk.device, &fb_info, nullptr,
+                                  &new_framebuffers[i]) != VK_SUCCESS) {
+                LOG_ERROR("Failed to create new framebuffer during recreation");
+                success = false;
+                break;
+            }
+        }
+    }
+
+    // ============================================================
+    // PHASE 2: Commit or Rollback
+    // ============================================================
+    if (success) {
+        // --- COMMIT: Everything succeeded. Destroy old resources and adopt new ones ---
+
+        // Destroy old framebuffers
+        for (auto fb : renderer.main_pass.framebuffers) {
+            if (fb != VK_NULL_HANDLE) vkDestroyFramebuffer(renderer.vk.device, fb, nullptr);
+        }
+        renderer.main_pass.framebuffers.clear();
+
+        // Destroy old swapchain image views
+        for (auto view : renderer.vk.swap_chain_image_views) {
+            if (view != VK_NULL_HANDLE) vkDestroyImageView(renderer.vk.device, view, nullptr);
+        }
+        renderer.vk.swap_chain_image_views.clear();
+
+        // Destroy old swapchain
+        if (renderer.vk.swapchain != VK_NULL_HANDLE) {
+            vkDestroySwapchainKHR(renderer.vk.device, renderer.vk.swapchain, nullptr);
+        }
+
+        // Destroy old semaphores
+        for (auto sem : renderer.vk.render_finished_semaphores) {
+            if (sem != VK_NULL_HANDLE) vkDestroySemaphore(renderer.vk.device, sem, nullptr);
+        }
+
+        // Destroy old MSAA and depth images
+        if (renderer.main_pass.msaa_color_image.view != VK_NULL_HANDLE) {
+            vkDestroyImageView(renderer.vk.device, renderer.main_pass.msaa_color_image.view, nullptr);
+        }
+        if (renderer.main_pass.msaa_color_image.handle != VK_NULL_HANDLE) {
+            vmaDestroyImage(renderer.allocator, renderer.main_pass.msaa_color_image.handle,
+                            renderer.main_pass.msaa_color_image.allocation);
+        }
+
+        if (renderer.main_pass.depth_image.view != VK_NULL_HANDLE) {
+            vkDestroyImageView(renderer.vk.device, renderer.main_pass.depth_image.view, nullptr);
+        }
+        if (renderer.main_pass.depth_image.handle != VK_NULL_HANDLE) {
+            vmaDestroyImage(renderer.allocator, renderer.main_pass.depth_image.handle,
+                            renderer.main_pass.depth_image.allocation);
+        }
+
+        // Adopt new resources
+        renderer.vk.swapchain = new_swapchain;
+        renderer.vk.swap_chain_image_views = std::move(new_swapchain_views);
+        renderer.main_pass.msaa_color_image = new_msaa;
+        renderer.main_pass.depth_image = new_depth;
+        renderer.vk.render_finished_semaphores = std::move(new_render_finished);
+        renderer.main_pass.framebuffers = std::move(new_framebuffers);
+
+        // Update window size tracking
+        renderer.window.width = renderer.vk.swap_chain_extent.width;
+        renderer.window.height = renderer.vk.swap_chain_extent.height;
+
+    } else {
+        // --- ROLLBACK: Something failed. Clean up everything we created and keep old resources ---
+        LOG_ERROR("Swapchain recreation failed. Keeping previous resources.");
+
+        // Cleanup any new framebuffers we managed to create
+        for (auto fb : new_framebuffers) {
+            if (fb != VK_NULL_HANDLE) vkDestroyFramebuffer(renderer.vk.device, fb, nullptr);
+        }
+
+        // Cleanup new semaphores
+        for (auto sem : new_render_finished) {
+            if (sem != VK_NULL_HANDLE) vkDestroySemaphore(renderer.vk.device, sem, nullptr);
+        }
+
+        // Cleanup new depth image
+        if (new_depth.view != VK_NULL_HANDLE) {
+            vkDestroyImageView(renderer.vk.device, new_depth.view, nullptr);
+        }
+        if (new_depth.handle != VK_NULL_HANDLE) {
+            vmaDestroyImage(renderer.allocator, new_depth.handle, new_depth.allocation);
+        }
+
+        // Cleanup new MSAA image
+        if (new_msaa.view != VK_NULL_HANDLE) {
+            vkDestroyImageView(renderer.vk.device, new_msaa.view, nullptr);
+        }
+        if (new_msaa.handle != VK_NULL_HANDLE) {
+            vmaDestroyImage(renderer.allocator, new_msaa.handle, new_msaa.allocation);
+        }
+
+        // Cleanup new swapchain views
+        for (auto view : new_swapchain_views) {
+            if (view != VK_NULL_HANDLE) vkDestroyImageView(renderer.vk.device, view, nullptr);
+        }
+
+        // Cleanup new swapchain itself
+        if (new_swapchain != VK_NULL_HANDLE) {
+            vkDestroySwapchainKHR(renderer.vk.device, new_swapchain, nullptr);
+        }
+
+        // Old resources remain untouched and valid. The next frame or resize attempt can retry.
     }
 }

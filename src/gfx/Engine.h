@@ -1,5 +1,6 @@
 #pragma once
 #include "VkBootstrap.h"
+#include "gfx/AllocatedImage.h"
 #include "gfx/Renderer.h"
 #include "scene/Camera.h"
 #include <iostream>
@@ -41,6 +42,10 @@ class Engine {
     bool init_render_pass();
     bool init_msaa_color_image();
     bool init_depth_image();
+
+    // Reusable creation helpers (used by both initial init and resize recovery)
+    bool create_msaa_color_image(VkExtent2D extent, AllocatedImage& out_image);
+    bool create_depth_image(VkExtent2D extent, AllocatedImage& out_image);
     bool init_descriptor_pool();
     bool init_descriptor_set_layout();
     bool init_bindless_descriptor_set();

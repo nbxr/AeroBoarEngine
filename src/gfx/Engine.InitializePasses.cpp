@@ -91,18 +91,16 @@ bool gfx::Engine::init_render_pass() {
     return true;
 }
 
-bool gfx::Engine::init_msaa_color_image() {
-
+bool gfx::Engine::create_msaa_color_image(VkExtent2D extent, AllocatedImage& out_image) {
     // Create transient MSAA color image (on-chip only, no DRAM writes)
     VkImageCreateInfo color_image_info = {};
     color_image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     color_image_info.imageType = VK_IMAGE_TYPE_2D;
     color_image_info.format = renderer.vk.swap_chain_image_format;
-    color_image_info.extent = {renderer.vk.swap_chain_extent.width,
-                               renderer.vk.swap_chain_extent.height, 1};
+    color_image_info.extent = {extent.width, extent.height, 1};
     color_image_info.mipLevels = 1;
     color_image_info.arrayLayers = 1;
-    color_image_info.samples = renderer.vk.msaa_color; // 4x MSAA for Quest 3
+    color_image_info.samples = renderer.vk.msaa_color;
     color_image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
     color_image_info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
                              VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
@@ -114,10 +112,9 @@ bool gfx::Engine::init_msaa_color_image() {
     alloc_info.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
 
     if (vmaCreateImage(renderer.allocator, &color_image_info, &alloc_info,
-                       &renderer.main_pass.msaa_color_image.handle,
-                       &renderer.main_pass.msaa_color_image.allocation,
-                       &renderer.main_pass.msaa_color_image.info) !=
-        VK_SUCCESS) {
+                       &out_image.handle,
+                       &out_image.allocation,
+                       &out_image.info) != VK_SUCCESS) {
         LOG_ERROR("Failed to create MSAA color image");
         return false;
     }
@@ -125,7 +122,7 @@ bool gfx::Engine::init_msaa_color_image() {
     // Create image view
     VkImageViewCreateInfo view_info = {};
     view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    view_info.image = renderer.main_pass.msaa_color_image.handle;
+    view_info.image = out_image.handle;
     view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
     view_info.format = renderer.vk.swap_chain_image_format;
     view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -134,29 +131,30 @@ bool gfx::Engine::init_msaa_color_image() {
     view_info.subresourceRange.baseArrayLayer = 0;
     view_info.subresourceRange.layerCount = 1;
 
-    if (vkCreateImageView(renderer.vk.device, &view_info, nullptr,
-                          &renderer.main_pass.msaa_color_image.view) !=
-        VK_SUCCESS) {
+    if (vkCreateImageView(renderer.vk.device, &view_info, nullptr, &out_image.view) != VK_SUCCESS) {
         LOG_ERROR("Failed to create MSAA color image view");
+        vmaDestroyImage(renderer.allocator, out_image.handle, out_image.allocation);
+        out_image = {};
         return false;
     }
 
     return true;
 }
 
-bool gfx::Engine::init_depth_image() {
+bool gfx::Engine::init_msaa_color_image() {
+    return create_msaa_color_image(renderer.vk.swap_chain_extent, renderer.main_pass.msaa_color_image);
+}
 
+bool gfx::Engine::create_depth_image(VkExtent2D extent, AllocatedImage& out_image) {
     // Create transient depth image (no DRAM writes, DONT_CARE store)
     VkImageCreateInfo depth_image_info = {};
     depth_image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     depth_image_info.imageType = VK_IMAGE_TYPE_2D;
     depth_image_info.format = renderer.vk.depth_format;
-    depth_image_info.extent = {renderer.vk.swap_chain_extent.width,
-                               renderer.vk.swap_chain_extent.height, 1};
+    depth_image_info.extent = {extent.width, extent.height, 1};
     depth_image_info.mipLevels = 1;
     depth_image_info.arrayLayers = 1;
-    depth_image_info.samples =
-        renderer.vk.msaa_color; // Match MSAA sample count
+    depth_image_info.samples = renderer.vk.msaa_color;
     depth_image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
     depth_image_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
                              VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
@@ -168,16 +166,16 @@ bool gfx::Engine::init_depth_image() {
     alloc_info.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
 
     if (vmaCreateImage(renderer.allocator, &depth_image_info, &alloc_info,
-                       &renderer.main_pass.depth_image.handle,
-                       &renderer.main_pass.depth_image.allocation,
-                       &renderer.main_pass.depth_image.info) != VK_SUCCESS) {
+                       &out_image.handle,
+                       &out_image.allocation,
+                       &out_image.info) != VK_SUCCESS) {
         LOG_ERROR("Failed to create depth image");
         return false;
     }
 
     VkImageViewCreateInfo view_info = {};
     view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    view_info.image = renderer.main_pass.depth_image.handle;
+    view_info.image = out_image.handle;
     view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
     view_info.format = renderer.vk.depth_format;
     view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
@@ -186,13 +184,18 @@ bool gfx::Engine::init_depth_image() {
     view_info.subresourceRange.baseArrayLayer = 0;
     view_info.subresourceRange.layerCount = 1;
 
-    if (vkCreateImageView(renderer.vk.device, &view_info, nullptr,
-                          &renderer.main_pass.depth_image.view) != VK_SUCCESS) {
+    if (vkCreateImageView(renderer.vk.device, &view_info, nullptr, &out_image.view) != VK_SUCCESS) {
         LOG_ERROR("Failed to create depth image view");
+        vmaDestroyImage(renderer.allocator, out_image.handle, out_image.allocation);
+        out_image = {};
         return false;
     }
 
     return true;
+}
+
+bool gfx::Engine::init_depth_image() {
+    return create_depth_image(renderer.vk.swap_chain_extent, renderer.main_pass.depth_image);
 }
 
 bool gfx::Engine::init_descriptor_pool() {
