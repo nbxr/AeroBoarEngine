@@ -9,12 +9,14 @@ namespace BufferUtils {
 
 bool initialize_buffer(VkDevice device, VmaAllocator allocator,
                        VkDeviceSize size,
-                       AllocatedBuffer &allocated_buffer);
+                       AllocatedBuffer &allocated_buffer,
+                       VkBufferUsageFlags extraUsage = 0);
 
 bool resize_buffer(VkDevice device, VmaAllocator allocator,
                    VkDeviceSize new_size,
                    AllocatedBuffer &allocated_buffer, void *pData,
-                   size_t data_size);
+                   size_t data_size,
+                   VkBufferUsageFlags extraUsage = 0);
 
 bool destroy_buffer(VkDevice device, VmaAllocator allocator,
                     AllocatedBuffer &allocated_buffer);

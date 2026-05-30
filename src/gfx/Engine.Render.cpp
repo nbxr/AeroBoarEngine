@@ -11,6 +11,21 @@ void gfx::Engine::render() {
     auto& vk = renderer.vk;
     auto& frame = renderer.frames[renderer.current_frame];
 
+    // Temporary debug: print first instance transform once
+    static bool printed_first_transform = false;
+    if (!printed_first_transform) {
+        glm::mat4 t = renderer.scene_manager.get_debug_first_instance_transform();
+        glm::vec3 pos = glm::vec3(t[3]);
+        glm::vec3 scale(
+            glm::length(glm::vec3(t[0])),
+            glm::length(glm::vec3(t[1])),
+            glm::length(glm::vec3(t[2]))
+        );
+        printf("[DEBUG] First instance position: (%.3f, %.3f, %.3f)  scale: (%.3f, %.3f, %.3f)\n",
+               pos.x, pos.y, pos.z, scale.x, scale.y, scale.z);
+        printed_first_transform = true;
+    }
+
     // 1. Wait for the previous frame using this slot to finish
     vkWaitForFences(vk.device, 1, &frame.in_flight_fence, VK_TRUE, UINT64_MAX);
 
@@ -57,8 +72,9 @@ void gfx::Engine::render() {
     render_pass_info.renderArea.extent = vk.swap_chain_extent;
 
     std::array<VkClearValue, 3> clear_values{};
-    clear_values[0].color = {{0.1f, 0.1f, 0.15f, 1.0f}}; // MSAA color
-    clear_values[1].color = {{0.1f, 0.1f, 0.15f, 1.0f}}; // swapchain (not really used due to DONT_CARE)
+    // Bright magenta clear so it's obvious when we reach the render pass
+    clear_values[0].color = {{1.0f, 0.0f, 1.0f, 1.0f}}; 
+    clear_values[1].color = {{1.0f, 0.0f, 1.0f, 1.0f}};
     clear_values[2].depthStencil = {1.0f, 0};
 
     render_pass_info.clearValueCount = static_cast<uint32_t>(clear_values.size());
@@ -94,11 +110,25 @@ void gfx::Engine::render() {
     scissor.extent = vk.swap_chain_extent;
     vkCmdSetScissor(frame.command_buffer, 0, 1, &scissor);
 
-    // === Camera ===
+    // Use the real camera system (now that we've validated the vertex buffer)
     float aspect = (float)vk.swap_chain_extent.width / (float)vk.swap_chain_extent.height;
     glm::mat4 view = camera.get_view_matrix();
     glm::mat4 proj = camera.get_projection_matrix(aspect);
     proj[1][1] *= -1.0f; // Vulkan clip space flip
+
+    // === TEMP DEBUG (#1) ===
+    // Force the camera to look at the first SceneInstance so we can see
+    // the geometry with real per-instance transforms applied.
+    // Remove this block once the camera system is smarter.
+    {
+        static bool firstFrame = true;
+        if (firstFrame) {
+            glm::mat4 t = renderer.scene_manager.get_debug_first_instance_transform();
+            glm::vec3 target = glm::vec3(t[3]); // position from the matrix
+            view = glm::lookAt(target + glm::vec3(0.0f, 2.0f, 5.0f), target, glm::vec3(0.0f, 1.0f, 0.0f));
+            firstFrame = false;
+        }
+    }
 
     glm::mat4 viewProj = proj * view;
 
@@ -111,9 +141,17 @@ void gfx::Engine::render() {
         &viewProj
     );
 
-    // Draw the first uploaded mesh using real data from the MeshManager
-    const uint32_t first_vertex_count = renderer.mesh_manager.get_debug_first_vertex_count();
-    vkCmdDraw(frame.command_buffer, first_vertex_count, 1, 0, 0);
+    // === Proper indexed draw using uploaded mesh data ===
+    const uint32_t vertex_offset = renderer.mesh_manager.get_debug_first_vertex_offset();
+    const uint32_t index_offset  = renderer.mesh_manager.get_debug_first_index_offset();
+    const uint32_t index_count   = renderer.mesh_manager.get_debug_first_index_count();
+
+    // Bind the index buffer (contains all indices for the whole scene)
+    auto& index_buf = renderer.mesh_manager.get_debug_render_index_buffer();
+    vkCmdBindIndexBuffer(frame.command_buffer, index_buf.buffer, 0, VK_INDEX_TYPE_UINT32);
+
+    // Draw the first mesh primitive properly (indexed)
+    vkCmdDrawIndexed(frame.command_buffer, index_count, 1, index_offset, vertex_offset, 0);
 
     vkCmdEndRenderPass(frame.command_buffer);
 

@@ -62,6 +62,9 @@ class SceneManager {
         return descriptor_set;
     }
 
+    // Temporary debug helper
+    glm::mat4 get_debug_first_instance_transform() const;
+
     void shutdown();
 
   private:

@@ -3,14 +3,16 @@
 
 bool gfx::BufferUtils::initialize_buffer(
     VkDevice device, VmaAllocator allocator, VkDeviceSize size,
-    gfx::AllocatedBuffer &allocated_buffer) {
+    gfx::AllocatedBuffer &allocated_buffer,
+    VkBufferUsageFlags extraUsage) {
 
     // Create the initial GPU buffer
     VkBufferCreateInfo buffer_info = {};
     buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     buffer_info.size = size;
     buffer_info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-                        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+                        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+                        extraUsage;
     buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
     // VMA: mapped + sequential host access
@@ -46,13 +48,15 @@ bool gfx::BufferUtils::initialize_buffer(
 bool gfx::BufferUtils::resize_buffer(VkDevice device, VmaAllocator allocator,
                                       VkDeviceSize new_size,
                                       gfx::AllocatedBuffer &allocated_buffer,
-                                      void *pData, size_t data_size) {
+                                      void *pData, size_t data_size,
+                                      VkBufferUsageFlags extraUsage) {
     // Create new buffer
     VkBufferCreateInfo buffer_info = {};
     buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     buffer_info.size = new_size;
     buffer_info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-                        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+                        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+                        extraUsage;
     buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
     // VMA: mapped + sequential host access

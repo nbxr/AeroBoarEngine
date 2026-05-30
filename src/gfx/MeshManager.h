@@ -71,6 +71,11 @@ class MeshManager {
     // Temporary debug helpers — used while getting the first real draws working
     [[nodiscard]] uint32_t get_debug_first_vertex_offset() const;
     [[nodiscard]] uint32_t get_debug_first_vertex_count() const;
+    [[nodiscard]] uint32_t get_debug_first_index_offset() const;
+    [[nodiscard]] uint32_t get_debug_first_index_count() const;
+
+    // Temporary debug access to buffers
+    [[nodiscard]] AllocatedBuffer &get_debug_render_index_buffer();
 
   private:
     bool ensure_capacity();

@@ -48,10 +48,11 @@ bool gfx::MeshManager::initialize(VkDevice device, VmaAllocator allocator,
 
     // index buffer
     VkDeviceSize index_size = initial_capacity * 1000 * sizeof(Index);
+    VkBufferUsageFlags indexExtra = VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
     bool index_render_initialized = gfx::BufferUtils::initialize_buffer(
-        device, allocator, index_size, get_render_index_buffer());
+        device, allocator, index_size, get_render_index_buffer(), indexExtra);
     bool index_upload_initialized = gfx::BufferUtils::initialize_buffer(
-        device, allocator, index_size, get_upload_index_buffer());
+        device, allocator, index_size, get_upload_index_buffer(), indexExtra);
 
     return true;
 }
@@ -240,7 +241,8 @@ void gfx::MeshManager::resize_index_buffer(uint64_t new_capacity) {
             device, allocator, new_size,
             get_upload_index_buffer(),
             index_count > 0 ? get_upload_index_buffer().mapped_data : nullptr,
-            need_copy ? index_count * sizeof(Index) : 0);
+            need_copy ? index_count * sizeof(Index) : 0,
+            VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
     }
 }
 
@@ -269,6 +271,10 @@ gfx::AllocatedBuffer &gfx::MeshManager::get_render_ssbo_buffer() {
     return ssbo_buffer[render];
 }
 
+gfx::AllocatedBuffer &gfx::MeshManager::get_debug_render_index_buffer() {
+    return get_render_index_buffer();
+}
+
 uint32_t gfx::MeshManager::get_debug_first_vertex_offset() const {
     if (mesh_ssbo_cache.empty())
         return 0;
@@ -279,4 +285,16 @@ uint32_t gfx::MeshManager::get_debug_first_vertex_count() const {
     if (mesh_ssbo_cache.empty())
         return 0;
     return mesh_ssbo_cache[0].vertex_count;
+}
+
+uint32_t gfx::MeshManager::get_debug_first_index_offset() const {
+    if (mesh_ssbo_cache.empty())
+        return 0;
+    return mesh_ssbo_cache[0].index_offset;
+}
+
+uint32_t gfx::MeshManager::get_debug_first_index_count() const {
+    if (mesh_ssbo_cache.empty())
+        return 0;
+    return mesh_ssbo_cache[0].index_count;
 }
