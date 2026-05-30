@@ -2,9 +2,16 @@
   "defaultScene": "DamagedHelmet",
   "scenes": [
     {
+      "name": "Sponza",
+      "filename": "/home/nolin/repo/glTF-Sample-Assets/Models/Sponza/glTF/Sponza.gltf"
+    },
+    {
       "name": "DamagedHelmet",
       "filename": "/home/nolin/repo/glTF-Sample-Assets/Models/DamagedHelmet/glTF/DamagedHelmet.gltf"
+    },
+    {
+      "name": "Dev",
+      "filename": "/home/nolin/repo/glTF-Sample-Assets/Models/Suzanne/glTF/Suzanne.gltf"
     }
   ]
 }
-
