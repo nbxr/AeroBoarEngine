@@ -11,6 +11,11 @@ Camera::Camera(GLFWwindow* glfwWindow)
     if (window) {
         glfwGetCursorPos(window, &last_mouse_x, &last_mouse_y);
     }
+
+    // Better default position for typical loaded scenes (e.g. DamagedHelmet at ~origin)
+    position = {0.0f, 3.0f, 10.0f};
+    yaw = -90.0f;
+    pitch = -10.0f;
 }
 
 void Camera::set_mode(CameraMode new_mode) {
@@ -108,6 +113,18 @@ void Camera::set_vr_view_matrix(const glm::mat4& view_matrix) {
 
 void Camera::set_position(const glm::vec3& pos) {
     position = pos;
+}
+
+void Camera::frame(const glm::vec3& center, float radius) {
+    // Nice offset angle (slightly from above and to the side)
+    float distance = radius * 2.8f + 1.5f;   // some padding
+    glm::vec3 offset = glm::normalize(glm::vec3(0.7f, 0.9f, 1.3f)) * distance;
+
+    position = center + offset;
+
+    glm::vec3 dir = glm::normalize(center - position);
+    yaw = glm::degrees(std::atan2(dir.z, dir.x));
+    pitch = glm::degrees(std::asin(dir.y));
 }
 
 } // namespace scene

@@ -62,8 +62,8 @@ class SceneManager {
         return descriptor_set;
     }
 
-    // Temporary debug helper
-    glm::mat4 get_debug_first_instance_transform() const;
+    // Returns the world transform of the first loaded SceneInstance (identity if none)
+    [[nodiscard]] glm::mat4 get_first_instance_transform() const;
 
     void shutdown();
 

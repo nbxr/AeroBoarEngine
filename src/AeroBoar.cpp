@@ -97,6 +97,18 @@ int AeroBoar::fly() {
         }
         escape_was_pressed = escape_pressed;
 
+        // R key: re-frame camera on the first object in the scene (debug)
+        static bool r_was_pressed = false;
+        bool r_pressed = glfwGetKey(engine.renderer.window.glfw_handle, GLFW_KEY_R) == GLFW_PRESS;
+        if (r_pressed && !r_was_pressed) {
+            glm::mat4 t = engine.renderer.scene_manager.get_first_instance_transform();
+            glm::vec3 center = glm::vec3(t[3]);
+            // Use a much larger radius for debugging so the object is definitely in view
+            engine.camera.frame(center, 8.0f);
+            printf("[Camera] Reframed to center (%.2f, %.2f, %.2f)\n", center.x, center.y, center.z);
+        }
+        r_was_pressed = r_pressed;
+
         engine.render();
     }
 

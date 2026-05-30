@@ -271,29 +271,19 @@ gfx::AllocatedBuffer &gfx::MeshManager::get_render_ssbo_buffer() {
     return ssbo_buffer[render];
 }
 
-gfx::AllocatedBuffer &gfx::MeshManager::get_debug_render_index_buffer() {
-    return get_render_index_buffer();
-}
-
-uint32_t gfx::MeshManager::get_debug_first_vertex_offset() const {
+uint32_t gfx::MeshManager::get_first_primitive_vertex_offset() const {
     if (mesh_ssbo_cache.empty())
         return 0;
     return mesh_ssbo_cache[0].vertex_offset;
 }
 
-uint32_t gfx::MeshManager::get_debug_first_vertex_count() const {
-    if (mesh_ssbo_cache.empty())
-        return 0;
-    return mesh_ssbo_cache[0].vertex_count;
-}
-
-uint32_t gfx::MeshManager::get_debug_first_index_offset() const {
+uint32_t gfx::MeshManager::get_first_primitive_index_offset() const {
     if (mesh_ssbo_cache.empty())
         return 0;
     return mesh_ssbo_cache[0].index_offset;
 }
 
-uint32_t gfx::MeshManager::get_debug_first_index_count() const {
+uint32_t gfx::MeshManager::get_first_primitive_index_count() const {
     if (mesh_ssbo_cache.empty())
         return 0;
     return mesh_ssbo_cache[0].index_count;

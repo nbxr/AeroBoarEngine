@@ -1,5 +1,9 @@
 #pragma once
 
+// GLM configuration for Vulkan (0..1 depth range instead of OpenGL's -1..1)
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#define GLM_FORCE_RADIANS
+
 #include <glm/glm.hpp>
 #include <GLFW/glfw3.h>
 
@@ -30,9 +34,12 @@ public:
     void set_position(const glm::vec3& position);
     [[nodiscard]] glm::vec3 get_position() const { return position; }
 
+    // Frames the camera to nicely view a sphere (center + radius)
+    void frame(const glm::vec3& center, float radius);
+
     // Tunables
     float movement_speed = 5.0f;
-    float mouse_sensitivity = 0.1f;
+    float mouse_sensitivity = 0.35f;
     float fov_degrees = 60.0f;
     float near_plane = 0.1f;
     float far_plane = 100.0f;

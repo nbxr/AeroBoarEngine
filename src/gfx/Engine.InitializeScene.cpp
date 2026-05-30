@@ -134,6 +134,16 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     renderer.mesh_manager.bind_descriptor(3, 4, 5); // Mesh meta + vertex + index SSBOs
     renderer.texture_manager.bind_descriptor(6);    // Bindless textures (must be last binding)
 
+    // Auto-frame the camera on the first object for a good initial view
+    {
+        glm::mat4 t = renderer.scene_manager.get_first_instance_transform();
+        glm::vec3 center = glm::vec3(t[3]);
+
+        // Use a generous radius for initial view so the object is definitely visible
+        // (we can improve this later with real AABB data)
+        camera.frame(center, 8.0f);
+    }
+
     // TODO: add proper memory barriers / vkFlushMappedMemoryRanges for the
     // buffer uploads if running on non-coherent memory (Quest 3). For desktop
     // dev with persistently mapped + sequential write the data is usually

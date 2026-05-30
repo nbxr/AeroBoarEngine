@@ -68,14 +68,12 @@ class MeshManager {
     void toggle_buffers();  // exposed for Engine load-time commit (double-buffer swap)
     void shutdown();
 
-    // Temporary debug helpers — used while getting the first real draws working
-    [[nodiscard]] uint32_t get_debug_first_vertex_offset() const;
-    [[nodiscard]] uint32_t get_debug_first_vertex_count() const;
-    [[nodiscard]] uint32_t get_debug_first_index_offset() const;
-    [[nodiscard]] uint32_t get_debug_first_index_count() const;
+    // Accessors for the first loaded primitive (used by the renderer)
+    [[nodiscard]] uint32_t get_first_primitive_vertex_offset() const;
+    [[nodiscard]] uint32_t get_first_primitive_index_offset() const;
+    [[nodiscard]] uint32_t get_first_primitive_index_count() const;
 
-    // Temporary debug access to buffers
-    [[nodiscard]] AllocatedBuffer &get_debug_render_index_buffer();
+    [[nodiscard]] AllocatedBuffer &get_render_index_buffer();
 
   private:
     bool ensure_capacity();
@@ -86,7 +84,6 @@ class MeshManager {
     [[nodiscard]] AllocatedBuffer &get_upload_vertex_buffer();
     [[nodiscard]] AllocatedBuffer &get_render_vertex_buffer();
     [[nodiscard]] AllocatedBuffer &get_upload_index_buffer();
-    [[nodiscard]] AllocatedBuffer &get_render_index_buffer();
     [[nodiscard]] AllocatedBuffer &get_upload_ssbo_buffer();
     [[nodiscard]] AllocatedBuffer &get_render_ssbo_buffer();
 };

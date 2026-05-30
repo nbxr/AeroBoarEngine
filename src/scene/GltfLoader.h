@@ -3,6 +3,11 @@
 #include "gfx/Renderer.h"
 #include "gfx/MaterialManager.h"
 #include "gfx/MeshData.h"
+
+// GLM configuration for Vulkan
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#define GLM_FORCE_RADIANS
+
 #include <glm/glm.hpp>
 #include <string>
 

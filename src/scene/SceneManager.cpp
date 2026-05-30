@@ -136,7 +136,7 @@ gfx::AllocatedBuffer &scene::SceneManager::get_render_buffer() {
     return instance_buffer[render];
 }
 
-glm::mat4 scene::SceneManager::get_debug_first_instance_transform() const {
+glm::mat4 scene::SceneManager::get_first_instance_transform() const {
     std::shared_lock lock(instance_mutex);
     if (cpu_instances.empty()) {
         return glm::mat4(1.0f);

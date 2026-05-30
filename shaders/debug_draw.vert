@@ -30,7 +30,6 @@ layout(set = 0, binding = 4) readonly buffer VertexBuffer {
 layout(location = 0) out vec3 outColor;
 
 void main() {
-    // Debug drawing of the first mesh primitive
     uint vtx = meshes.vertex_offset + gl_VertexIndex;
 
     // Vertex stride is 56 bytes = 14 floats
@@ -41,11 +40,8 @@ void main() {
         vertices.data[vtx * 14 + 2]
     );
 
-    // TEMP: Force identity transform so we can see the raw mesh while debugging camera + transforms
-    // mat4 model = scene_instances[0].transform;
-    mat4 model = mat4(1.0);
+    mat4 model = scene_instances[0].transform;
     gl_Position = pc.viewProj * model * vec4(pos, 1.0);
 
-    // Bright green for debug visibility
     outColor = vec3(0.2, 0.9, 0.3);
 }
