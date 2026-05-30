@@ -6,7 +6,7 @@ Lightweight, cache-friendly data structures designed for a C++ Vulkan engine usi
 ## Status
 **Target architecture** (not yet fully implemented).  
 
-Basic rendering currently works using the simpler flat `SceneInstance` model. All loaded glTF geometry is drawn every frame with correct per-instance transforms. The higher-level `GameObject` / `RenderMesh` + `TransformManager` SOA design described below remains the planned evolution for skinned, multi-part, and instanced objects. See `docs/agents/current_state.md` for current rendering status.
+Basic PBR rendering currently works using the simpler flat `SceneInstance` model. A working PBR shader samples albedo, normal, metal/roughness, emissive, and AO textures. The current configured asset only has a single material. The higher-level `GameObject` / `RenderMesh` + `TransformManager` SOA design described below remains the planned evolution. See `docs/agents/current_state.md` for current rendering status.
 
 ## Core Principles
 - Flat SOA-style layouts for high cache efficiency and low CPU overhead.

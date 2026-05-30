@@ -93,6 +93,32 @@ scene::GltfLoader::extract_material_data(const std::string &filename,
             }
         }
 
+        // Emissive
+        if (mat.values.find("emissiveTexture") != mat.values.end()) {
+            int32_t texture_index =
+                mat.values.at("emissiveTexture").TextureIndex();
+            if (texture_index >= 0 && texture_index < texture_count) {
+                const auto &texture = model.textures[texture_index];
+                const auto &image = model.images[texture.source];
+                material.emissive_texture_index =
+                    renderer.texture_manager.get_texture_handle(
+                        image.name, texture_path / image.uri);
+            }
+        }
+
+        // Occlusion (AO) - separate texture in this model
+        if (mat.values.find("occlusionTexture") != mat.values.end()) {
+            int32_t texture_index =
+                mat.values.at("occlusionTexture").TextureIndex();
+            if (texture_index >= 0 && texture_index < texture_count) {
+                const auto &texture = model.textures[texture_index];
+                const auto &image = model.images[texture.source];
+                material.ao_texture_index =
+                    renderer.texture_manager.get_texture_handle(
+                        image.name, texture_path / image.uri);
+            }
+        }
+
         gfx::MaterialID id = renderer.material_manager.create_material(material);
         material_lookup.push_back(id);
     }

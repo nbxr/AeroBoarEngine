@@ -11,10 +11,12 @@ Goal: 72–120 FPS at 2064×2208 per eye with minimal CPU overhead and maximum d
 **This is target / aspirational guidance for the 2026 Quest 3 pipeline.**
 
 As of late May 2026:
-- A basic but functional render loop exists and successfully draws complete glTF scenes (all primitives, correct per-instance transforms) using the bindless resources.
+- A basic PBR forward shader (`pbr.vert` / `pbr.frag`) is implemented and active. It supports albedo, normal, metal/roughness, emissive, and separate AO textures.
+- A working render loop exists and draws scenes using the bindless resources + per-draw push constants.
 - Single-subpass render pass with transient MSAA + `DONT_CARE` is in place.
-- Multi-subpass structure, multiview, compute culling, indirect draws, and real PBR shading are **not yet implemented**.
-- Current drawing uses a temporary debug shader (raw SSBO vertex pulling).
+- The current active asset only contains a single material.
+- Multi-subpass structure, multiview, compute culling, indirect draws, proper vertex attributes, and advanced lighting (IBL) are **not yet implemented**.
+- Drawing is still CPU-driven (one `vkCmdDrawIndexed` per primitive) with raw SSBO vertex pulling.
 
 See `docs/agents/current_state.md` for the latest implementation status.
 

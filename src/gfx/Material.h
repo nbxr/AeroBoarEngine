@@ -26,7 +26,8 @@ struct Material {
     uint32_t normal_texture_index {NO_TEXTURE}; // Index into bindless texture array
     uint32_t roughness_texture_index {NO_TEXTURE}; // Index into bindless texture array (Occlusion,
                                  // Roughness, Metallic)
-    uint32_t emissive_texture_index {NO_TEXTURE} ; // Index into bindless texture array
+    uint32_t emissive_texture_index {NO_TEXTURE};  // Index into bindless texture array
+    uint32_t ao_texture_index {NO_TEXTURE};        // Ambient Occlusion (separate in this model)
 
     // Sampler indices (if needed for non-bindless approach)
     uint32_t sampler_index {NO_TEXTURE}; // Index into bindless sampler array

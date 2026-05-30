@@ -4,7 +4,7 @@ Lightweight snapshot of the AeroBoarEngine project status. Intended to be read q
 
 ## Overall Status
 
-Early foundation phase with the first major rendering milestone achieved. The engine can load glTF scenes, upload all geometry/materials/textures into bindless GPU resources, and render the complete model using a working Vulkan render loop on desktop. Full scene geometry (all meshes/primitives with correct per-instance transforms) is now visible and interactive via a movable camera.
+Early foundation phase. A basic PBR forward renderer is now implemented and active. The engine can load glTF scenes (including emissive and separate AO textures), upload everything into bindless resources, and render using a simple PBR shader with per-primitive draw calls. The current active asset (DamagedHelmet) only contains a single material, which limits visual variety.
 
 ## Major Completed Areas
 
@@ -16,21 +16,30 @@ Early foundation phase with the first major rendering milestone achieved. The en
 - Double-buffered buffer patterns for upload vs render
 - Complete bindless GPU upload path at load time (all data visible in shaders)
 - Basic but functional render loop (`Engine::render()`): acquire, record, bind bindless set, multiple indexed draws, submit, present
-- Multi-primitive / multi-mesh drawing: iterates all `SceneInstance`s and draws every mesh primitive with correct per-instance transforms via push constants
+- Basic PBR forward shader (`pbr.vert` / `pbr.frag`) that samples:
+  - Albedo (baseColor)
+  - Normal map
+  - Metallic + Roughness (from metalRoughness texture or factors)
+  - Emissive
+  - Ambient Occlusion (separate texture)
 - Desktop `scene::Camera` system (WASD + mouse look, R to frame loaded scene)
 - `AGENTS.md` and shared documentation in `docs/agents/`
 
 ## Current Focus Areas
 
-- Cleaning up the temporary debug rendering path (raw SSBO vertex pulling, forced depth, magenta clear color)
-- Integrating real PBR shading using the already-uploaded bindless materials and textures
-- Removing debug-only instrumentation and hacks now that geometry is visible
-- Stabilizing the render loop and camera on desktop before moving toward production shaders and culling
+- Improving PBR quality (currently using very simple overhead directional lighting + constant ambient)
+- Fixing remaining visual issues with the current asset (the loaded DamagedHelmet only contains a single material/primitive)
+- Cleaning up the temporary debug rendering path (raw SSBO vertex pulling, forced depth hack in debug shader)
+- Removing or properly guarding the diagnostic material coloring code
+- Adding proper vertex input attributes (currently still using raw SSBO pulling)
 
 ## Known Gaps / Not Yet Implemented
 
-- Only a temporary debug shader is used (`debug_draw.vert`): raw float SSBO vertex pulling, hardcoded green, forced `gl_Position.z = 0.5`, no real lighting or materials
-- No production PBR forward pass yet (shaders exist but are not wired)
+- PBR lighting is extremely basic (single overhead directional light + constant ambient). No IBL, no multiple lights.
+- The currently configured DamagedHelmet asset only contains a single material/primitive, so all geometry uses the same textures.
+- Still using raw SSBO vertex pulling in shaders (no proper vertex input attributes).
+- No instancing or indirect draws yet (CPU loop of `vkCmdDrawIndexed` per primitive).
+- The old debug shader (`debug_draw.*`) still exists but is not the active pipeline.
 - No compute culling pass
 - No indirect drawing
 - No OpenXR / VR input layer (desktop GLFW only)
@@ -39,9 +48,11 @@ Early foundation phase with the first major rendering milestone achieved. The en
 
 ## Next Immediate Priorities
 
-- Replace the debug draw path with real PBR shaders while keeping the same bindless data layout and multi-draw structure
-- Remove temporary hacks (forced depth, magenta clear, raw vertex pulling, excessive debug prints)
-- Add proper vertex input attributes and a clean material shading pass
+- Improve PBR lighting model (add IBL or at least better multi-light support)
+- Switch from raw SSBO vertex pulling to proper vertex attribute input
+- Investigate why the configured DamagedHelmet only has a single material (asset vs loading issue)
+- Add basic instancing or move toward indirect draws
+- Remove or clean up remaining debug/diagnostic code in the PBR path
 - Begin planning the transition from flat `SceneInstance` toward the full game-object model + GPU-driven culling
 
 ## GPU Upload Path (Completed)
@@ -56,14 +67,16 @@ The data is now in descriptors and ready for the render pass / shader work. Futu
 
 ## Rendering Milestone (Achieved)
 
-Basic end-to-end scene rendering is now functional on the debug path:
+A basic PBR forward renderer is now active:
 
-- Full glTF geometry (all meshes and primitives) is drawn every frame.
-- Correct per-`SceneInstance` transforms are applied via per-draw push constants.
-- Camera movement and scene framing work.
-- All previously uploaded bindless resources (vertices, indices, mesh metadata, instances) are being used in real draw calls.
+- The pipeline uses `pbr.vert` + `pbr.frag`.
+- Supports albedo, normal, metal/roughness, emissive, and separate AO textures via bindless sampling.
+- Per-primitive material selection works via push constants.
+- The render loop successfully draws the loaded scene with correct transforms.
 
-This proves the complete load → upload → bindless → multi-draw pipeline. The current implementation still uses a temporary debug shader and will be replaced by production PBR shading.
+**Important limitation**: The specific DamagedHelmet asset currently configured only contains a single material. This is the main reason multiple distinct textures are not visible on different parts of the model.
+
+The implementation is still on a CPU-driven path (one draw call per primitive, raw SSBO vertex pulling). Moving to proper vertex attributes, instancing, and GPU-driven culling remains future work.
 
 ## Code Hygiene Follow-ups
 
