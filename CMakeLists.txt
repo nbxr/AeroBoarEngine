@@ -43,9 +43,8 @@ file(MAKE_DIRECTORY ${SHADER_OUTPUT_DIR})
 set(SHADER_FILES
     screen_clear.vert
     screen_clear.frag
-    # Add your other shader files here, e.g.:
-    # cube.vert
-    # cube.frag
+    debug_draw.vert
+    debug_draw.frag
 )
 
 # Create shader compilation rules

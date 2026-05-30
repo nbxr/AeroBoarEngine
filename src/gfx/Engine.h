@@ -30,6 +30,7 @@ class Engine {
     std::pair<bool, vkb::Device>
     init_logical_device(vkb::PhysicalDevice &phys);
     void select_depth_format(vkb::PhysicalDevice &phys);
+    void select_sample_counts(vkb::PhysicalDevice &phys);
     bool init_graphics_queue(vkb::Device &dev);
     bool init_present_queue(vkb::Device &dev);
     bool init_transfer_queue(vkb::Device &dev);

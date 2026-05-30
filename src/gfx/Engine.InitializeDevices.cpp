@@ -91,6 +91,23 @@ void gfx::Engine::select_depth_format(vkb::PhysicalDevice &phys) {
     renderer.vk.depth_format = VK_FORMAT_D32_SFLOAT;
 }
 
+void gfx::Engine::select_sample_counts(vkb::PhysicalDevice &phys) {
+    // Prefer 4x MSAA if supported, fall back to 2x, then 1x (no MSAA)
+    VkSampleCountFlags counts = phys.properties.limits.framebufferColorSampleCounts &
+                                phys.properties.limits.framebufferDepthSampleCounts;
+
+    if (counts & VK_SAMPLE_COUNT_4_BIT) {
+        renderer.vk.msaa_color = VK_SAMPLE_COUNT_4_BIT;
+        renderer.vk.msaa_depth = VK_SAMPLE_COUNT_4_BIT;
+    } else if (counts & VK_SAMPLE_COUNT_2_BIT) {
+        renderer.vk.msaa_color = VK_SAMPLE_COUNT_2_BIT;
+        renderer.vk.msaa_depth = VK_SAMPLE_COUNT_2_BIT;
+    } else {
+        renderer.vk.msaa_color = VK_SAMPLE_COUNT_1_BIT;
+        renderer.vk.msaa_depth = VK_SAMPLE_COUNT_1_BIT;
+    }
+}
+
 bool gfx::Engine::init_graphics_queue(vkb::Device &dev) {
     auto graphics_queue_ret = dev.get_queue(vkb::QueueType::graphics);
     if (!graphics_queue_ret) {
@@ -164,13 +181,21 @@ bool gfx::Engine::init_swapchain(vkb::Device &dev) {
 void gfx::Engine::recreate_swapchain() {
     vkDeviceWaitIdle(renderer.vk.device);
 
-    // destroy old image views
+    // Destroy old framebuffers (they reference old swapchain views)
+    for (auto fb : renderer.main_pass.framebuffers) {
+        if (fb != VK_NULL_HANDLE) {
+            vkDestroyFramebuffer(renderer.vk.device, fb, nullptr);
+        }
+    }
+    renderer.main_pass.framebuffers.clear();
+
+    // Destroy old swapchain image views
     for (auto &view : renderer.vk.swap_chain_image_views) {
         vkDestroyImageView(renderer.vk.device, view, nullptr);
     }
     renderer.vk.swap_chain_image_views.clear();
 
-    // recreate swapchain and related resources here
+    // Recreate swapchain
     vkb::SwapchainBuilder swapchain_builder{renderer.vk.device};
     auto swap_ret =
         swapchain_builder.set_old_swapchain(renderer.vk.swapchain)
@@ -179,23 +204,69 @@ void gfx::Engine::recreate_swapchain() {
             .build();
 
     if (!swap_ret) {
-        // If it failed to create a swapchain, the old swapchain handle is
-        // invalid.
         renderer.vk.swapchain = VK_NULL_HANDLE;
-    } else {
-        // Even though we recycled the previous swapchain, we need to free its
-        // resources.
-        vkDestroySwapchainKHR(renderer.vk.device, renderer.vk.swapchain,
-                              nullptr);
-        // Get the new swapchain and place it in our variable
-        renderer.vk.swapchain = swap_ret.value();
-        // Store views once (vkb creates new each get_image_views call)
-        auto views_res = swap_ret.value().get_image_views();
-        if (!views_res) {
-            LOG_ERROR("Failed to get swapchain image views");
-            return;
-        }
+        LOG_ERROR("Failed to recreate swapchain");
+        return;
+    }
 
-        renderer.vk.swap_chain_image_views = views_res.value();
+    vkDestroySwapchainKHR(renderer.vk.device, renderer.vk.swapchain, nullptr);
+    renderer.vk.swapchain = swap_ret.value().swapchain;
+    renderer.vk.swap_chain_image_format = swap_ret.value().image_format;
+    renderer.vk.swap_chain_extent = swap_ret.value().extent;
+
+    auto views_res = swap_ret.value().get_image_views();
+    if (!views_res) {
+        LOG_ERROR("Failed to get swapchain image views after recreate");
+        return;
+    }
+    renderer.vk.swap_chain_image_views = views_res.value();
+
+    // Recreate semaphores:
+    // - image_available: sized to MAX_FRAMES_IN_FLIGHT (unchanged count)
+    // - render_finished: sized to new number of swapchain images
+    for (auto sem : renderer.vk.render_finished_semaphores) {
+        if (sem != VK_NULL_HANDLE) vkDestroySemaphore(renderer.vk.device, sem, nullptr);
+    }
+    renderer.vk.render_finished_semaphores.clear();
+
+    const uint32_t new_image_count = static_cast<uint32_t>(renderer.vk.swap_chain_image_views.size());
+    VkSemaphoreCreateInfo semaphore_info = {};
+    semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+    renderer.vk.render_finished_semaphores.resize(new_image_count);
+    for (uint32_t i = 0; i < new_image_count; ++i) {
+        vkCreateSemaphore(renderer.vk.device, &semaphore_info, nullptr,
+                          &renderer.vk.render_finished_semaphores[i]);
+    }
+
+    // Recreate framebuffers for the new swapchain images
+    // (MSAA and depth images are kept; only swapchain views changed)
+    renderer.main_pass.framebuffers.resize(renderer.vk.swap_chain_image_views.size());
+
+    VkImageView msaa_color_view = renderer.main_pass.msaa_color_image.view;
+    VkImageView depth_view = renderer.main_pass.depth_image.view;
+
+    for (size_t i = 0; i < renderer.vk.swap_chain_image_views.size(); ++i) {
+        VkImageView swapchain_view = renderer.vk.swap_chain_image_views[i];
+
+        VkImageView attachments[3] = {
+            msaa_color_view,
+            swapchain_view,
+            depth_view
+        };
+
+        VkFramebufferCreateInfo framebuffer_info = {};
+        framebuffer_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        framebuffer_info.renderPass = renderer.main_pass.render_pass;
+        framebuffer_info.attachmentCount = 3;
+        framebuffer_info.pAttachments = attachments;
+        framebuffer_info.width = renderer.vk.swap_chain_extent.width;
+        framebuffer_info.height = renderer.vk.swap_chain_extent.height;
+        framebuffer_info.layers = 1;
+
+        if (vkCreateFramebuffer(renderer.vk.device, &framebuffer_info, nullptr,
+                                &renderer.main_pass.framebuffers[i]) != VK_SUCCESS) {
+            LOG_ERROR("Failed to recreate framebuffer during swapchain recreation");
+        }
     }
 }

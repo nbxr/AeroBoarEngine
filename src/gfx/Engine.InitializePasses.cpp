@@ -9,11 +9,11 @@ bool gfx::Engine::init_render_pass() {
     color_attachment.format = renderer.vk.swap_chain_image_format;
     color_attachment.samples = renderer.vk.msaa_color;
     color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE; // Transient MSAA
     color_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     color_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     color_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    color_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    color_attachment.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
     VkAttachmentDescription depth_attachment = {};
     depth_attachment.format = renderer.vk.depth_format;
@@ -32,6 +32,15 @@ bool gfx::Engine::init_render_pass() {
     color_attachment_ref.attachment = 0;
     color_attachment_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
+    // Resolve target (swapchain)
+    VkAttachmentReference resolve_attachment_ref = {};
+    resolve_attachment_ref.attachment = 1;
+    resolve_attachment_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+    VkAttachmentReference depth_attachment_ref = {};
+    depth_attachment_ref.attachment = 2;
+    depth_attachment_ref.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
     VkAttachmentDescription swapchain_attachment = {};
     swapchain_attachment.format = renderer.vk.swap_chain_image_format;
     swapchain_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -46,6 +55,8 @@ bool gfx::Engine::init_render_pass() {
     subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
     subpass.colorAttachmentCount = 1;
     subpass.pColorAttachments = &color_attachment_ref;
+    subpass.pResolveAttachments = &resolve_attachment_ref;  // MSAA resolve to swapchain
+    subpass.pDepthStencilAttachment = &depth_attachment_ref;
 
     VkSubpassDependency dependency = {};
     dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
@@ -344,7 +355,10 @@ bool gfx::Engine::init_command_pool() {
     VkCommandPoolCreateInfo cmd_pool_info = {};
     cmd_pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     cmd_pool_info.queueFamilyIndex = renderer.vk.graphics_family_index;
-    cmd_pool_info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+    // We reset command buffers every frame, so we need RESET_COMMAND_BUFFER_BIT.
+    // TRANSIENT_BIT is still useful for short-lived buffers.
+    cmd_pool_info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT |
+                          VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
 
     if (vkCreateCommandPool(renderer.vk.device.device, &cmd_pool_info, nullptr,
                             &renderer.vk.generic_command_pool) != VK_SUCCESS) {
@@ -418,29 +432,46 @@ bool gfx::Engine::init_framebuffers() {
 }
 
 bool gfx::Engine::init_sync_primitives() {
-    // Synchronization primitives
-    VkSemaphoreCreateInfo semaphore_info = {};
-    semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-
+    // Fences are per frame-in-flight
     VkFenceCreateInfo fence_info = {};
     fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
     for (auto &frame : renderer.frames) {
-
-        if (vkCreateSemaphore(renderer.vk.device, &semaphore_info, nullptr,
-                              &frame.image_available_semaphore) != VK_SUCCESS) {
-            LOG_ERROR("Failed to create image available semaphore");
-            return false;
-        }
-        if (vkCreateSemaphore(renderer.vk.device, &semaphore_info, nullptr,
-                              &frame.render_finished_semaphore) != VK_SUCCESS) {
-            LOG_ERROR("Failed to create render finished semaphore");
-            return false;
-        }
         if (vkCreateFence(renderer.vk.device, &fence_info, nullptr,
                           &frame.in_flight_fence) != VK_SUCCESS) {
             LOG_ERROR("Failed to create in-flight fence");
+            return false;
+        }
+    }
+
+    VkSemaphoreCreateInfo semaphore_info = {};
+    semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+    // image_available_semaphores: one per frame in flight (protected by fences)
+    const uint32_t frame_count = Renderer::MAX_FRAMES_IN_FLIGHT;
+    renderer.vk.image_available_semaphores.resize(frame_count);
+    for (uint32_t i = 0; i < frame_count; ++i) {
+        if (vkCreateSemaphore(renderer.vk.device, &semaphore_info, nullptr,
+                              &renderer.vk.image_available_semaphores[i]) != VK_SUCCESS) {
+            LOG_ERROR("Failed to create image available semaphore");
+            return false;
+        }
+    }
+
+    // render_finished_semaphores: one per actual swapchain image
+    // This solves the "semaphore still in use by present" problem when drivers return > MAX_FRAMES images
+    const uint32_t image_count = static_cast<uint32_t>(renderer.vk.swap_chain_image_views.size());
+    if (image_count == 0) {
+        LOG_ERROR("No swapchain images available when creating semaphores");
+        return false;
+    }
+
+    renderer.vk.render_finished_semaphores.resize(image_count);
+    for (uint32_t i = 0; i < image_count; ++i) {
+        if (vkCreateSemaphore(renderer.vk.device, &semaphore_info, nullptr,
+                              &renderer.vk.render_finished_semaphores[i]) != VK_SUCCESS) {
+            LOG_ERROR("Failed to create render finished semaphore");
             return false;
         }
     }

@@ -62,12 +62,23 @@ void gfx::Engine::destroy_resource_managers() {
 }
 
 void gfx::Engine::destroy_sync_primitives() {
+    // image_available_semaphores (per frame in flight)
+    for (auto sem : renderer.vk.image_available_semaphores) {
+        if (sem != VK_NULL_HANDLE) vkDestroySemaphore(renderer.vk.device, sem, nullptr);
+    }
+    renderer.vk.image_available_semaphores.clear();
+
+    // render_finished_semaphores (per swapchain image)
+    for (auto sem : renderer.vk.render_finished_semaphores) {
+        if (sem != VK_NULL_HANDLE) vkDestroySemaphore(renderer.vk.device, sem, nullptr);
+    }
+    renderer.vk.render_finished_semaphores.clear();
+
+    // per-frame fences
     for (auto &frame : renderer.frames) {
-        vkDestroySemaphore(renderer.vk.device, frame.image_available_semaphore,
-                           nullptr);
-        vkDestroySemaphore(renderer.vk.device, frame.render_finished_semaphore,
-                           nullptr);
-        vkDestroyFence(renderer.vk.device, frame.in_flight_fence, nullptr);
+        if (frame.in_flight_fence != VK_NULL_HANDLE) {
+            vkDestroyFence(renderer.vk.device, frame.in_flight_fence, nullptr);
+        }
     }
 }
 

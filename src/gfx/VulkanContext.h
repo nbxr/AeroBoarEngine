@@ -46,6 +46,11 @@ struct VulkanContext {
         0, // offset
         64 // size (or smaller — keep under 128 bytes for Quest 3)
     };
+
+    // Semaphores are sized to the number of swapchain images (not MAX_FRAMES_IN_FLIGHT)
+    // This is the robust way to handle drivers that return more images than requested.
+    std::vector<VkSemaphore> image_available_semaphores;
+    std::vector<VkSemaphore> render_finished_semaphores;
     
     bool enable_validation_layers{true};
     bool use_descriptor_heap{false};

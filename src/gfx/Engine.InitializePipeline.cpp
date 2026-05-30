@@ -26,6 +26,8 @@ bool gfx::Engine::init_graphics_pipeline() {
     std::vector<unsigned int> vertex_code;
     std::vector<unsigned int> fragment_code;
 
+    // Using screen_clear for initial stable render loop validation.
+    // TODO: Switch to real scene shaders once debug_draw is stable.
     if (!load_shader_source("shaders/screen_clear.vert.spv", vertex_code)) {
         LOG_ERROR("Failed to load vertex shader");
         return false;
@@ -186,7 +188,17 @@ bool gfx::Engine::init_graphics_pipeline() {
     pipeline_info.pViewportState = &viewport_state;
     pipeline_info.pRasterizationState = &rasterizer;
     pipeline_info.pMultisampleState = &multisampling;
-    pipeline_info.pDepthStencilState = nullptr;
+
+    // Basic depth state to match the render pass
+    VkPipelineDepthStencilStateCreateInfo depth_stencil{};
+    depth_stencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depth_stencil.depthTestEnable = VK_TRUE;
+    depth_stencil.depthWriteEnable = VK_TRUE;
+    depth_stencil.depthCompareOp = VK_COMPARE_OP_LESS;
+    depth_stencil.depthBoundsTestEnable = VK_FALSE;
+    depth_stencil.stencilTestEnable = VK_FALSE;
+
+    pipeline_info.pDepthStencilState = &depth_stencil;
     pipeline_info.pColorBlendState = &color_blending;
     pipeline_info.pDynamicState = &dynamic_state;
     pipeline_info.layout = renderer.vk.pipeline_layout;

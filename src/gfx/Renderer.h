@@ -26,6 +26,8 @@ struct Renderer {
     TextureManager texture_manager{};
     scene::SceneManager scene_manager{};
 
+    uint32_t current_frame = 0;
+
     struct Window {
         GLFWwindow *glfw_handle{nullptr};
         int32_t width{0};

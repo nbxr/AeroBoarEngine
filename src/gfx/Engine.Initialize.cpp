@@ -33,6 +33,7 @@ bool gfx::Engine::init_vulkan() {
     auto phys = init_phys.second;
 
     select_depth_format(phys);
+    select_sample_counts(phys);
 
     auto init_dev = init_logical_device(phys); // destroy_devices
 
