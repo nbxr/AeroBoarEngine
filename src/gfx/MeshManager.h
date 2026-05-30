@@ -68,6 +68,10 @@ class MeshManager {
     void toggle_buffers();  // exposed for Engine load-time commit (double-buffer swap)
     void shutdown();
 
+    // Temporary debug helpers — used while getting the first real draws working
+    [[nodiscard]] uint32_t get_debug_first_vertex_offset() const;
+    [[nodiscard]] uint32_t get_debug_first_vertex_count() const;
+
   private:
     bool ensure_capacity();
     void resize_mesh_buffer(uint32_t new_capacity);

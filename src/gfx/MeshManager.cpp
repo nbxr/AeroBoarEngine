@@ -268,3 +268,15 @@ gfx::AllocatedBuffer &gfx::MeshManager::get_upload_ssbo_buffer() {
 gfx::AllocatedBuffer &gfx::MeshManager::get_render_ssbo_buffer() {
     return ssbo_buffer[render];
 }
+
+uint32_t gfx::MeshManager::get_debug_first_vertex_offset() const {
+    if (mesh_ssbo_cache.empty())
+        return 0;
+    return mesh_ssbo_cache[0].vertex_offset;
+}
+
+uint32_t gfx::MeshManager::get_debug_first_vertex_count() const {
+    if (mesh_ssbo_cache.empty())
+        return 0;
+    return mesh_ssbo_cache[0].vertex_count;
+}

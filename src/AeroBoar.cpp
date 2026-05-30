@@ -3,6 +3,7 @@
 #define GLFW_INCLUDE_VULKAN
 #include "gfx/Engine.h"
 #include "gfx/Renderer.h"
+#include "scene/Camera.h"
 #include <GLFW/glfw3.h>
 
 int AeroBoar::fly() {
@@ -29,6 +30,10 @@ int AeroBoar::fly() {
         return -1;
     }
 
+    // Initialize camera (desktop mode by default)
+    engine.camera = scene::Camera(engine.renderer.window.glfw_handle);
+    engine.camera.set_mode(scene::CameraMode::Desktop);
+
     // Make the window's context current
     glfwMakeContextCurrent(engine.renderer.window.glfw_handle);
     glfwSwapInterval(1);
@@ -48,7 +53,13 @@ int AeroBoar::fly() {
     }
 
     // Main render loop
+    double last_frame_time = glfwGetTime();
+
     while (!glfwWindowShouldClose(engine.renderer.window.glfw_handle)) {
+        double current_time = glfwGetTime();
+        float delta_time = static_cast<float>(current_time - last_frame_time);
+        last_frame_time = current_time;
+
         // poll for window events
         glfwPollEvents();
 
@@ -69,7 +80,23 @@ int AeroBoar::fly() {
         } else {
             // window is minimized: pause rendering
         }
-         
+
+        // Update camera (desktop WASD + mouse for now)
+        engine.camera.update(delta_time);
+
+        // Simple Escape handling to toggle cursor capture (desktop only)
+        static bool escape_was_pressed = false;
+        bool escape_pressed = glfwGetKey(engine.renderer.window.glfw_handle, GLFW_KEY_ESCAPE) == GLFW_PRESS;
+        if (escape_pressed && !escape_was_pressed) {
+            if (engine.camera.get_mode() == scene::CameraMode::Desktop) {
+                static bool cursor_captured = true;
+                cursor_captured = !cursor_captured;
+                glfwSetInputMode(engine.renderer.window.glfw_handle, GLFW_CURSOR,
+                                 cursor_captured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+            }
+        }
+        escape_was_pressed = escape_pressed;
+
         engine.render();
     }
 

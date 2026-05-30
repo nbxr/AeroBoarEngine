@@ -4,6 +4,9 @@
 #include "gfx/VulkanContext.h"
 #include "gfx/PassContext.h"
 
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+
 void gfx::Engine::render() {
     auto& vk = renderer.vk;
     auto& frame = renderer.frames[renderer.current_frame];
@@ -91,10 +94,26 @@ void gfx::Engine::render() {
     scissor.extent = vk.swap_chain_extent;
     vkCmdSetScissor(frame.command_buffer, 0, 1, &scissor);
 
-    // === TEMPORARY: Draw the test triangle from screen_clear shaders ===
-    // This proves the entire render loop + present path works.
-    // Next step: replace with real scene data + proper shaders.
-    vkCmdDraw(frame.command_buffer, 3, 1, 0, 0);
+    // === Camera ===
+    float aspect = (float)vk.swap_chain_extent.width / (float)vk.swap_chain_extent.height;
+    glm::mat4 view = camera.get_view_matrix();
+    glm::mat4 proj = camera.get_projection_matrix(aspect);
+    proj[1][1] *= -1.0f; // Vulkan clip space flip
+
+    glm::mat4 viewProj = proj * view;
+
+    vkCmdPushConstants(
+        frame.command_buffer,
+        vk.pipeline_layout,
+        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+        0,
+        sizeof(glm::mat4),
+        &viewProj
+    );
+
+    // Draw the first uploaded mesh using real data from the MeshManager
+    const uint32_t first_vertex_count = renderer.mesh_manager.get_debug_first_vertex_count();
+    vkCmdDraw(frame.command_buffer, first_vertex_count, 1, 0, 0);
 
     vkCmdEndRenderPass(frame.command_buffer);
 

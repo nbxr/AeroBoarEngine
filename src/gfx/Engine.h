@@ -1,6 +1,7 @@
 #pragma once
 #include "VkBootstrap.h"
 #include "gfx/Renderer.h"
+#include "scene/Camera.h"
 #include <iostream>
 #include <stdio.h>
 #include <utility>
@@ -11,6 +12,8 @@ namespace gfx {
 class Engine {
   public:
     Renderer renderer{};
+    scene::Camera camera;   // Desktop + future VR camera system
+
 
     bool initialize();
     bool init_vk_instance(vkb::InstanceBuilder &builder);

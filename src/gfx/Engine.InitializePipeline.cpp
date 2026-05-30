@@ -26,14 +26,13 @@ bool gfx::Engine::init_graphics_pipeline() {
     std::vector<unsigned int> vertex_code;
     std::vector<unsigned int> fragment_code;
 
-    // Using screen_clear for initial stable render loop validation.
-    // TODO: Switch to real scene shaders once debug_draw is stable.
-    if (!load_shader_source("shaders/screen_clear.vert.spv", vertex_code)) {
+    // Now using debug_draw shaders to draw actual uploaded scene data.
+    if (!load_shader_source("shaders/debug_draw.vert.spv", vertex_code)) {
         LOG_ERROR("Failed to load vertex shader");
         return false;
     }
 
-    if (!load_shader_source("shaders/screen_clear.frag.spv", fragment_code)) {
+    if (!load_shader_source("shaders/debug_draw.frag.spv", fragment_code)) {
         LOG_ERROR("Failed to load fragment shader");
         return false;
     }
