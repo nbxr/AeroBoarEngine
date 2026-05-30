@@ -108,31 +108,6 @@ void gfx::Engine::render() {
 
     glm::mat4 viewProj = proj * view;
 
-    // === DEBUG: Print viewProj matrix (first few frames + after R) ===
-    static int debugPrintFrames = 5;
-    static bool forcePrintThisFrame = false;
-
-    // Allow external request to force a print (e.g. from R key)
-    if (renderer.debug_force_viewproj_print) {
-        forcePrintThisFrame = true;
-        renderer.debug_force_viewproj_print = false;
-    }
-
-    if (debugPrintFrames > 0 || forcePrintThisFrame) {
-        printf("[DEBUG] viewProj matrix:\n");
-        for (int row = 0; row < 4; ++row) {
-            printf("  [ %8.4f  %8.4f  %8.4f  %8.4f ]\n",
-                   viewProj[0][row], viewProj[1][row],
-                   viewProj[2][row], viewProj[3][row]);
-        }
-        printf("  (camera pos: %.3f, %.3f, %.3f)\n\n",
-               camera.get_position().x,
-               camera.get_position().y,
-               camera.get_position().z);
-        debugPrintFrames--;
-        forcePrintThisFrame = false;
-    }
-
     // Push constant struct matching the shader (exactly 128 bytes to match layout range)
     struct DebugPush {
         glm::mat4 viewProj;
