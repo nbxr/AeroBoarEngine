@@ -288,3 +288,53 @@ uint32_t gfx::MeshManager::get_first_primitive_index_count() const {
         return 0;
     return mesh_ssbo_cache[0].index_count;
 }
+
+// Debug: full range for the very first mesh (sum of all its primitives)
+uint32_t gfx::MeshManager::get_first_mesh_vertex_offset() const {
+    if (mesh_cache.empty() || mesh_ssbo_cache.empty())
+        return 0;
+    // First mesh starts at the first primitive
+    return mesh_ssbo_cache[0].vertex_offset;
+}
+
+uint32_t gfx::MeshManager::get_first_mesh_vertex_count() const {
+    // In the current data model, each MeshData entry is already one complete mesh.
+    // So "first mesh" == first entry in the cache.
+    if (mesh_ssbo_cache.empty())
+        return 0;
+    return mesh_ssbo_cache[0].vertex_count;
+}
+
+uint32_t gfx::MeshManager::get_first_mesh_index_offset() const {
+    if (mesh_cache.empty() || mesh_ssbo_cache.empty())
+        return 0;
+    return mesh_ssbo_cache[0].index_offset;
+}
+
+uint32_t gfx::MeshManager::get_first_mesh_index_count() const {
+    if (mesh_ssbo_cache.empty())
+        return 0;
+    return mesh_ssbo_cache[0].index_count;
+}
+
+uint32_t gfx::MeshManager::get_primitive_count() const {
+    return static_cast<uint32_t>(mesh_ssbo_cache.size());
+}
+
+uint32_t gfx::MeshManager::get_primitive_vertex_offset(uint32_t index) const {
+    if (index >= mesh_ssbo_cache.size())
+        return 0;
+    return mesh_ssbo_cache[index].vertex_offset;
+}
+
+uint32_t gfx::MeshManager::get_primitive_index_offset(uint32_t index) const {
+    if (index >= mesh_ssbo_cache.size())
+        return 0;
+    return mesh_ssbo_cache[index].index_offset;
+}
+
+uint32_t gfx::MeshManager::get_primitive_index_count(uint32_t index) const {
+    if (index >= mesh_ssbo_cache.size())
+        return 0;
+    return mesh_ssbo_cache[index].index_count;
+}

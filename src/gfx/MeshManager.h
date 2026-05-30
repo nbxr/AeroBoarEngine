@@ -73,6 +73,18 @@ class MeshManager {
     [[nodiscard]] uint32_t get_first_primitive_index_offset() const;
     [[nodiscard]] uint32_t get_first_primitive_index_count() const;
 
+    // Full range for the very first mesh (all its primitives) — for debug drawing
+    [[nodiscard]] uint32_t get_first_mesh_vertex_offset() const;
+    [[nodiscard]] uint32_t get_first_mesh_vertex_count() const;
+    [[nodiscard]] uint32_t get_first_mesh_index_offset() const;
+    [[nodiscard]] uint32_t get_first_mesh_index_count() const;
+
+    // Per-primitive accessors for drawing all meshes in the scene (debug path)
+    [[nodiscard]] uint32_t get_primitive_count() const;
+    [[nodiscard]] uint32_t get_primitive_vertex_offset(uint32_t index) const;
+    [[nodiscard]] uint32_t get_primitive_index_offset(uint32_t index) const;
+    [[nodiscard]] uint32_t get_primitive_index_count(uint32_t index) const;
+
     [[nodiscard]] AllocatedBuffer &get_render_index_buffer();
 
   private:

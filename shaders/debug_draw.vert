@@ -1,8 +1,9 @@
 #version 450
 
-// === Push constants (used for camera for now) ===
+// === Push constants ===
 layout(push_constant) uniform PushConstants {
-    mat4 viewProj;
+    mat4  viewProj;
+    mat4  model;   // per-draw model transform for this mesh primitive
 } pc;
 
 // Scene instances (binding 1) - array of all instances in the scene
@@ -30,9 +31,11 @@ layout(set = 0, binding = 4) readonly buffer VertexBuffer {
 layout(location = 0) out vec3 outColor;
 
 void main() {
-    uint vtx = meshes.vertex_offset + gl_VertexIndex;
+    // gl_VertexIndex is already biased by the vertexOffset passed to vkCmdDrawIndexed,
+    // so it directly indexes the global vertex in the big buffer for this primitive.
+    uint vtx = gl_VertexIndex;
 
-    // Vertex stride is 56 bytes = 14 floats
+    // Vertex stride is 56 bytes = 14 floats (matches gfx::Vertex)
     // Position is the first 3 floats of each vertex
     vec3 pos = vec3(
         vertices.data[vtx * 14 + 0],
@@ -40,8 +43,13 @@ void main() {
         vertices.data[vtx * 14 + 2]
     );
 
-    mat4 model = scene_instances[0].transform;
-    gl_Position = pc.viewProj * model * vec4(pos, 1.0);
+    gl_Position = pc.viewProj * pc.model * vec4(pos, 1.0);
+
+    // === TEMPORARY DEBUG HACK ===
+    // Force depth to middle of range so depth test can't reject us while we
+    // validate geometry. Remove once real vertex data produces correct depth.
+    // TODO: remove forced z and magenta clear after geometry is reliably visible.
+    gl_Position.z = 0.5;
 
     outColor = vec3(0.2, 0.9, 0.3);
 }

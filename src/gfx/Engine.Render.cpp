@@ -3,6 +3,7 @@
 #include <vulkan/vulkan.h>
 #include "gfx/VulkanContext.h"
 #include "gfx/PassContext.h"
+#include "scene/SceneInstance.h"
 
 // GLM configuration for Vulkan
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -61,7 +62,7 @@ void gfx::Engine::render() {
     render_pass_info.renderArea.extent = vk.swap_chain_extent;
 
     std::array<VkClearValue, 3> clear_values{};
-    // Bright magenta for easier debugging (easy to tell if render pass is working)
+    // Bright magenta so it's obvious if we're hitting the render pass
     clear_values[0].color = {{1.0f, 0.0f, 1.0f, 1.0f}};
     clear_values[1].color = {{1.0f, 0.0f, 1.0f, 1.0f}};
     clear_values[2].depthStencil = {1.0f, 0};
@@ -107,26 +108,67 @@ void gfx::Engine::render() {
 
     glm::mat4 viewProj = proj * view;
 
-    vkCmdPushConstants(
-        frame.command_buffer,
-        vk.pipeline_layout,
-        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-        0,
-        sizeof(glm::mat4),
-        &viewProj
-    );
+    // === DEBUG: Print viewProj matrix (first few frames + after R) ===
+    static int debugPrintFrames = 5;
+    static bool forcePrintThisFrame = false;
 
-    // === Proper indexed draw using uploaded mesh data ===
-    const uint32_t vertex_offset = renderer.mesh_manager.get_first_primitive_vertex_offset();
-    const uint32_t index_offset  = renderer.mesh_manager.get_first_primitive_index_offset();
-    const uint32_t index_count   = renderer.mesh_manager.get_first_primitive_index_count();
+    // Allow external request to force a print (e.g. from R key)
+    if (renderer.debug_force_viewproj_print) {
+        forcePrintThisFrame = true;
+        renderer.debug_force_viewproj_print = false;
+    }
 
-    // Bind the index buffer (contains all indices for the whole scene)
+    if (debugPrintFrames > 0 || forcePrintThisFrame) {
+        printf("[DEBUG] viewProj matrix:\n");
+        for (int row = 0; row < 4; ++row) {
+            printf("  [ %8.4f  %8.4f  %8.4f  %8.4f ]\n",
+                   viewProj[0][row], viewProj[1][row],
+                   viewProj[2][row], viewProj[3][row]);
+        }
+        printf("  (camera pos: %.3f, %.3f, %.3f)\n\n",
+               camera.get_position().x,
+               camera.get_position().y,
+               camera.get_position().z);
+        debugPrintFrames--;
+        forcePrintThisFrame = false;
+    }
+
+    // Push constant struct matching the shader (exactly 128 bytes to match layout range)
+    struct DebugPush {
+        glm::mat4 viewProj;
+        glm::mat4 model;
+    } pushData{};
+
     auto& index_buf = renderer.mesh_manager.get_render_index_buffer();
     vkCmdBindIndexBuffer(frame.command_buffer, index_buf.buffer, 0, VK_INDEX_TYPE_UINT32);
 
-    // Draw the first mesh primitive properly (indexed)
-    vkCmdDrawIndexed(frame.command_buffer, index_count, 1, index_offset, vertex_offset, 0);
+    // Draw ALL meshes/primitives in the scene (one draw call per SceneInstance primitive)
+    const uint32_t inst_count = renderer.scene_manager.get_instance_count();
+    for (uint32_t i = 0; i < inst_count; ++i) {
+        const scene::SceneInstance &inst = renderer.scene_manager.get_instance(i);
+        const uint32_t prim = inst.mesh_index;
+
+        const uint32_t vtx_off = renderer.mesh_manager.get_primitive_vertex_offset(prim);
+        const uint32_t idx_off = renderer.mesh_manager.get_primitive_index_offset(prim);
+        const uint32_t idx_cnt = renderer.mesh_manager.get_primitive_index_count(prim);
+
+        if (idx_cnt == 0)
+            continue;
+
+        pushData.viewProj = viewProj;
+        pushData.model = inst.transform;
+
+        vkCmdPushConstants(
+            frame.command_buffer,
+            vk.pipeline_layout,
+            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+            0,
+            sizeof(DebugPush),
+            &pushData
+        );
+
+        vkCmdDrawIndexed(frame.command_buffer, idx_cnt, 1, idx_off, vtx_off, 0);
+    }
 
     vkCmdEndRenderPass(frame.command_buffer);
 

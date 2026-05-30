@@ -65,6 +65,11 @@ class SceneManager {
     // Returns the world transform of the first loaded SceneInstance (identity if none)
     [[nodiscard]] glm::mat4 get_first_instance_transform() const;
 
+    // Debug / render accessors for drawing all scene geometry.
+    // NOTE: lock-free; safe for read-only use after load_scene() completes (no mutation during render).
+    [[nodiscard]] uint32_t get_instance_count() const { return instance_count; }
+    [[nodiscard]] const SceneInstance &get_instance(uint32_t index) const { return cpu_instances[index]; }
+
     void shutdown();
 
   private:
