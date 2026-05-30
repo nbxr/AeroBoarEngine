@@ -101,11 +101,10 @@ int AeroBoar::fly() {
         static bool r_was_pressed = false;
         bool r_pressed = glfwGetKey(engine.renderer.window.glfw_handle, GLFW_KEY_R) == GLFW_PRESS;
         if (r_pressed && !r_was_pressed) {
-            glm::mat4 t = engine.renderer.scene_manager.get_first_instance_transform();
-            glm::vec3 center = glm::vec3(t[3]);
-            // Use a much larger radius for debugging so the object is definitely in view
-            engine.camera.frame(center, 8.0f);
-            printf("[Camera] Reframed to center (%.2f, %.2f, %.2f)\n", center.x, center.y, center.z);
+            auto [center, radius] = engine.renderer.scene_manager.get_first_instance_framing_sphere();
+            engine.camera.frame(center, radius);
+            printf("[Camera] Reframed using AABB: center=(%.2f, %.2f, %.2f) radius=%.2f\n",
+                   center.x, center.y, center.z, radius);
         }
         r_was_pressed = r_pressed;
 

@@ -127,4 +127,29 @@ void Camera::frame(const glm::vec3& center, float radius) {
     pitch = glm::degrees(std::asin(dir.y));
 }
 
+void Camera::set_from_camera_node(const glm::mat4& world_transform,
+                                  float yfov_radians,
+                                  float znear,
+                                  float zfar)
+{
+    // Position comes from the translation column of the node transform
+    position = glm::vec3(world_transform[3]);
+
+    // In glTF, the camera looks along -Z in its local space after the transform.
+    // Column 2 of the matrix is the local Z axis in world space.
+    glm::vec3 forward = -glm::normalize(glm::vec3(world_transform[2]));
+
+    // Convert to our yaw/pitch convention (same math as frame())
+    yaw = glm::degrees(std::atan2(forward.z, forward.x));
+    pitch = glm::degrees(std::asin(forward.y));
+
+    // Apply projection parameters from the glTF camera
+    if (yfov_radians > 0.0f)
+        fov_degrees = glm::degrees(yfov_radians);
+    if (znear > 0.0f)
+        near_plane = znear;
+    if (zfar > 0.0f)
+        far_plane = zfar;
+}
+
 } // namespace scene

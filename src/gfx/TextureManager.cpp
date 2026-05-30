@@ -1,6 +1,7 @@
 #include "gfx/TextureManager.h"
 #include "gfx/BufferUtils.h"
 #include <cstring>
+#include <iostream>
 #include <mutex>
 #include <stb_image.h>
 
@@ -94,10 +95,6 @@ gfx::TextureID gfx::TextureManager::get_texture_handle(const std::string &name,
         // not added previously, so load texture and
         // add to upload list
 
-        // TODO: load pixels
-        std::vector<uint8_t> pixels{};
-        int width, height, channels;
-
         gfx::TextureInfo texture_info;
         texture_info.name = name.empty() ? filepath : name;
         texture_info.filepath = filepath;
@@ -109,7 +106,7 @@ gfx::TextureID gfx::TextureManager::get_texture_handle(const std::string &name,
             if (id < texture_cache.size()) {
                 texture_cache[id] = texture_info;
                 pending_upload.push_back(id);
-                texture_lookup[name] = id;
+                texture_lookup[*key] = id;
                 return id;
             }
             // If recycled ID is invalid, treat as new
@@ -118,7 +115,7 @@ gfx::TextureID gfx::TextureManager::get_texture_handle(const std::string &name,
         texture_cache.push_back(texture_info);
         gfx::TextureID id(texture_cache.size() - 1);
         pending_upload.push_back(id);
-        texture_lookup[name] = id;
+        texture_lookup[*key] = id;
         return id;
     }
 }
@@ -164,6 +161,11 @@ void gfx::TextureManager::upload_textures() {
         // 1. Get pixel data and update size info
         std::vector<uint8_t> pixels{};
         load_pixel_data(pixels, tex_info);
+
+        if (tex_info.width == 0 || tex_info.height == 0 || pixels.empty()) {
+            std::cerr << "[TextureManager] Skipping texture with invalid dimensions after load.\n";
+            continue;
+        }
 
         // 2. Create VkImage via VMA
         VkImageCreateInfo image_info{};
@@ -389,28 +391,31 @@ void gfx::TextureManager::load_pixel_data(std::vector<uint8_t> &pixels,
                                           gfx::TextureInfo &info) {
 
     // Load image using stb_image
-    int width, height, channels;
+    int width = 0, height = 0, channels = 0;
     uint8_t *file_pixels =
         stbi_load(info.filepath.c_str(), &width, &height, &channels,
                   4 // Force load as RGBA (4 channels)
         );
 
-    if (!file_pixels) {
-        // Handle error: log or throw
+    if (file_pixels && width > 0 && height > 0) {
+        pixels.resize(static_cast<size_t>(width * height * 4));
+        std::memcpy(pixels.data(), file_pixels, pixels.size());
+        info.width = static_cast<uint32_t>(width);
+        info.height = static_cast<uint32_t>(height);
+        info.channels = static_cast<uint32_t>(channels);
+        stbi_image_free(file_pixels);
         return;
     }
 
-    // Resize output vector to match loaded image size
-    pixels.resize(static_cast<size_t>(width * height * 4));
+    // Fallback: 1x1 magenta placeholder (very visible during development)
+    if (file_pixels) {
+        stbi_image_free(file_pixels);
+    }
+    std::cerr << "[TextureManager] Failed to load texture '" << info.filepath
+              << "' (or invalid size). Using 1x1 placeholder.\n";
 
-    // Copy data to output vector
-    std::memcpy(pixels.data(), file_pixels, pixels.size());
-
-    // Update texture info metadata
-    info.width = width;
-    info.height = height;
-    info.channels = channels;
-
-    // Free stb_image buffer
-    stbi_image_free(file_pixels);
+    pixels = {255, 0, 255, 255}; // RGBA magenta
+    info.width = 1;
+    info.height = 1;
+    info.channels = 4;
 }

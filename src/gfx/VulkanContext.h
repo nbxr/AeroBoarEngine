@@ -44,7 +44,7 @@ struct VulkanContext {
     VkPushConstantRange push_constant_range{
         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, // stageFlags
         0, // offset
-        128 // size (or smaller — keep under 128 bytes for Quest 3)
+        144 // 2x mat4 (128) + uvec4 material/extra (16) to match pbr.vert/pbr.frag
     };
 
     // Semaphores are sized to the number of swapchain images (not MAX_FRAMES_IN_FLIGHT)

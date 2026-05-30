@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <iostream>
 #include <map>
 #include <tiny_gltf.h>
 
@@ -23,6 +24,13 @@ bool scene::GltfLoader::load_model(const std::string &filename,
         ret = loader.LoadBinaryFromFile(&model, &err, &warn, filename);
     }
 
+    if (!warn.empty()) {
+        std::cerr << "[GLTF] Warning while loading '" << filename << "': " << warn << std::endl;
+    }
+    if (!err.empty()) {
+        std::cerr << "[GLTF] Error while loading '" << filename << "': " << err << std::endl;
+    }
+
     return ret;
 }
 
@@ -34,89 +42,99 @@ scene::GltfLoader::extract_material_data(const std::string &filename,
     std::vector<gfx::MaterialID> material_lookup{};
     material_lookup.reserve(model.materials.size());
     auto texture_path = std::filesystem::path(filename).parent_path();
-    // create materials in the material manager
+
+    auto get_safe_image_path = [&](int texture_index) -> std::pair<std::string, std::filesystem::path> {
+        if (texture_index < 0 || texture_index >= (int)model.textures.size())
+            return {"", {}};
+        const auto& tex = model.textures[texture_index];
+        if (tex.source < 0 || tex.source >= (int)model.images.size())
+            return {"", {}};
+        const auto& img = model.images[tex.source];
+        std::filesystem::path uri_path;
+        if (!img.uri.empty()) {
+            uri_path = texture_path / img.uri;
+        } else if (img.bufferView >= 0) {
+            // Embedded image via bufferView (common in .glb). Not supported in current path.
+            // Future: decode via tinygltf or custom loader and pass raw pixels to TextureManager.
+            std::cerr << "[GLTF] Warning: Image uses bufferView (embedded) - currently unsupported, skipping texture.\n";
+        }
+        return {img.name, uri_path};
+    };
+
+    // create materials in the material manager using the proper typed glTF structures
     for (const auto &mat : model.materials) {
         gfx::Material material{};
-        // Populate material properties from glTF data (e.g. base color,
-        // metallic, roughness) This is a simplified example; real glTF
-        // materials can be more complex
-        if (mat.values.find("baseColorFactor") != mat.values.end()) {
-            const auto &color = mat.values.at("baseColorFactor").ColorFactor();
-            material.albedo = glm::vec4(color[0], color[1], color[2], color[3]);
+
+        // --- PBR base values (with correct glTF 2.0 defaults) ---
+        const auto& pbr = mat.pbrMetallicRoughness;
+
+        if (pbr.baseColorFactor.size() == 4) {
+            material.albedo = glm::vec4(
+                static_cast<float>(pbr.baseColorFactor[0]),
+                static_cast<float>(pbr.baseColorFactor[1]),
+                static_cast<float>(pbr.baseColorFactor[2]),
+                static_cast<float>(pbr.baseColorFactor[3]));
+        } else {
+            material.albedo = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
         }
 
-        if (mat.values.find("metallicFactor") != mat.values.end()) {
-            material.metallic =
-                static_cast<float>(mat.values.at("metallicFactor").Factor());
-        }
+        material.metallic  = static_cast<float>(pbr.metallicFactor);
+        material.roughness = static_cast<float>(pbr.roughnessFactor);
+        material.normalStrength = 1.0f; // reasonable default; can be driven by normalTexture.scale later
 
-        if (mat.values.find("roughnessFactor") != mat.values.end()) {
-            material.roughness =
-                static_cast<float>(mat.values.at("roughnessFactor").Factor());
-        }
-
-        int32_t texture_count = static_cast<int32_t>(model.textures.size());
-        if (mat.values.find("baseColorTexture") != mat.values.end()) {
-            int32_t texture_index =
-                mat.values.at("baseColorTexture").TextureIndex();
-            if (texture_index >= 0 && texture_index < texture_count) {
-                const auto &texture = model.textures[texture_index];
-                const auto &image = model.images[texture.source];
+        // --- Textures via proper glTF accessors (not the legacy ParameterMap) ---
+        // baseColor
+        {
+            auto [img_name, uri] = get_safe_image_path(pbr.baseColorTexture.index);
+            if (!uri.empty()) {
                 material.albedo_texture_index =
-                    renderer.texture_manager.get_texture_handle(
-                        image.name, texture_path / image.uri);
+                    renderer.texture_manager.get_texture_handle(img_name, uri);
             }
         }
 
-        if (mat.values.find("normalTexture") != mat.values.end()) {
-            int32_t texture_index =
-                mat.values.at("normalTexture").TextureIndex();
-            if (texture_index >= 0 && texture_index < texture_count) {
-                const auto &texture = model.textures[texture_index];
-                const auto &image = model.images[texture.source];
-                const auto &texture_handle =
-                    renderer.texture_manager.get_texture_handle(
-                        image.name, texture_path / image.uri);
-                material.normal_texture_index = texture_handle;
-            }
-        }
-
-        if (mat.values.find("metallicRoughnessTexture") != mat.values.end()) {
-            int32_t texture_index =
-                mat.values.at("metallicRoughnessTexture").TextureIndex();
-            if (texture_index >= 0 && texture_index < texture_count) {
-                const auto &texture = model.textures[texture_index];
-                const auto &image = model.images[texture.source];
+        // metallicRoughness (typical layout: G=roughness, B=metallic)
+        {
+            auto [img_name, uri] = get_safe_image_path(pbr.metallicRoughnessTexture.index);
+            if (!uri.empty()) {
                 material.roughness_texture_index =
-                    renderer.texture_manager.get_texture_handle(
-                        image.name, texture_path / image.uri);
+                    renderer.texture_manager.get_texture_handle(img_name, uri);
             }
         }
 
-        // Emissive
-        if (mat.values.find("emissiveTexture") != mat.values.end()) {
-            int32_t texture_index =
-                mat.values.at("emissiveTexture").TextureIndex();
-            if (texture_index >= 0 && texture_index < texture_count) {
-                const auto &texture = model.textures[texture_index];
-                const auto &image = model.images[texture.source];
+        // normalTexture (top-level on Material)
+        {
+            auto [img_name, uri] = get_safe_image_path(mat.normalTexture.index);
+            if (!uri.empty()) {
+                material.normal_texture_index =
+                    renderer.texture_manager.get_texture_handle(img_name, uri);
+                // If we want to honor scale: material.normalStrength = static_cast<float>(mat.normalTexture.scale);
+            }
+        }
+
+        // emissiveTexture
+        {
+            auto [img_name, uri] = get_safe_image_path(mat.emissiveTexture.index);
+            if (!uri.empty()) {
                 material.emissive_texture_index =
-                    renderer.texture_manager.get_texture_handle(
-                        image.name, texture_path / image.uri);
+                    renderer.texture_manager.get_texture_handle(img_name, uri);
             }
         }
 
-        // Occlusion (AO) - separate texture in this model
-        if (mat.values.find("occlusionTexture") != mat.values.end()) {
-            int32_t texture_index =
-                mat.values.at("occlusionTexture").TextureIndex();
-            if (texture_index >= 0 && texture_index < texture_count) {
-                const auto &texture = model.textures[texture_index];
-                const auto &image = model.images[texture.source];
+        // occlusionTexture (AO)
+        {
+            auto [img_name, uri] = get_safe_image_path(mat.occlusionTexture.index);
+            if (!uri.empty()) {
                 material.ao_texture_index =
-                    renderer.texture_manager.get_texture_handle(
-                        image.name, texture_path / image.uri);
+                    renderer.texture_manager.get_texture_handle(img_name, uri);
             }
+        }
+
+        // Emissive factor (simple average into the existing scalar for now)
+        if (mat.emissiveFactor.size() == 3) {
+            float avg = (static_cast<float>(mat.emissiveFactor[0]) +
+                         static_cast<float>(mat.emissiveFactor[1]) +
+                         static_cast<float>(mat.emissiveFactor[2])) / 3.0f;
+            material.emissive = avg;
         }
 
         gfx::MaterialID id = renderer.material_manager.create_material(material);
@@ -346,7 +364,12 @@ scene::GltfLoader::value_or_ident(const std::vector<double> &value,
 }
 
 glm::mat4 scene::GltfLoader::extract_node_transform(const tinygltf::Node &node) {
-    std::vector<glm::mat4> transforms{};
+    // glTF nodes may specify either a 4x4 matrix or separate TRS.
+    // Matrix takes precedence when present and has 16 elements.
+    if (node.matrix.size() == 16) {
+        // tinygltf stores column-major (matches glm default)
+        return glm::make_mat4(node.matrix.data());
+    }
 
     auto translation = value_or_ident(node.translation, 3U);
     auto rotation = value_or_ident(node.rotation, 4U);

@@ -143,3 +143,29 @@ glm::mat4 scene::SceneManager::get_first_instance_transform() const {
     }
     return cpu_instances[0].transform;
 }
+
+std::pair<glm::vec3, float> scene::SceneManager::get_first_instance_framing_sphere() const {
+    std::shared_lock lock(instance_mutex);
+    if (cpu_instances.empty()) {
+        return {{0.0f, 0.0f, 0.0f}, 5.0f};
+    }
+
+    const auto& inst = cpu_instances[0];
+
+    if (inst.local_aabb.is_valid()) {
+        glm::vec3 c = inst.local_aabb.center();
+        glm::vec3 ext = inst.local_aabb.extents();
+        float radius = glm::length(ext) * 0.5f;   // bounding sphere
+        if (radius < 0.01f) radius = 1.0f;
+
+        // Small upward bias (proportional to object size) for more pleasing views
+        // (historical value was a fixed +1.2f offset for the helmet)
+        c.y += 0.12f * radius;
+
+        return {c, radius};
+    }
+
+    // Fallback for legacy cases with no AABB data
+    glm::vec3 c = glm::vec3(inst.transform[3]);
+    return {c, 7.0f};
+}

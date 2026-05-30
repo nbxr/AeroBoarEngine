@@ -338,3 +338,10 @@ uint32_t gfx::MeshManager::get_primitive_index_count(uint32_t index) const {
         return 0;
     return mesh_ssbo_cache[index].index_count;
 }
+
+core::AABB gfx::MeshManager::get_primitive_local_aabb(uint32_t index) const {
+    std::shared_lock lock(mesh_mutex);
+    if (index >= mesh_cache.size())
+        return core::AABB{};
+    return mesh_cache[index].local_aabb;
+}

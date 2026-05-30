@@ -37,6 +37,12 @@ public:
     // Frames the camera to nicely view a sphere (center + radius)
     void frame(const glm::vec3& center, float radius);
 
+    // Minimal support: apply a glTF camera node's world transform + projection params
+    void set_from_camera_node(const glm::mat4& world_transform,
+                              float yfov_radians,
+                              float znear,
+                              float zfar);
+
     // Tunables
     float movement_speed = 5.0f;
     float mouse_sensitivity = 0.35f;

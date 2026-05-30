@@ -26,13 +26,13 @@ bool gfx::Engine::init_graphics_pipeline() {
     std::vector<unsigned int> vertex_code;
     std::vector<unsigned int> fragment_code;
 
-    // Now using debug_draw shaders to draw actual uploaded scene data.
-    if (!load_shader_source("shaders/debug_draw.vert.spv", vertex_code)) {
+    // Real PBR shaders (now that GLTF loading reliably supplies per-primitive materials + textures)
+    if (!load_shader_source("shaders/pbr.vert.spv", vertex_code)) {
         LOG_ERROR("Failed to load vertex shader");
         return false;
     }
 
-    if (!load_shader_source("shaders/debug_draw.frag.spv", fragment_code)) {
+    if (!load_shader_source("shaders/pbr.frag.spv", fragment_code)) {
         LOG_ERROR("Failed to load fragment shader");
         return false;
     }

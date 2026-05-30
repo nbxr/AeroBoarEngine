@@ -4,6 +4,7 @@
 #include "gfx/MeshData.h"
 #include "gfx/MeshPrimitiveSSBO.h"
 #include "gfx/AllocatedBuffer.h"
+#include "core/AABB.h"
 #include <array>
 #include <shared_mutex>
 #include <stack>
@@ -84,6 +85,9 @@ class MeshManager {
     [[nodiscard]] uint32_t get_primitive_vertex_offset(uint32_t index) const;
     [[nodiscard]] uint32_t get_primitive_index_offset(uint32_t index) const;
     [[nodiscard]] uint32_t get_primitive_index_count(uint32_t index) const;
+
+    // Returns the local-space AABB for a given primitive (as computed during GLTF load)
+    [[nodiscard]] core::AABB get_primitive_local_aabb(uint32_t index) const;
 
     [[nodiscard]] AllocatedBuffer &get_render_index_buffer();
 

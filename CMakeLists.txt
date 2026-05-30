@@ -45,6 +45,8 @@ set(SHADER_FILES
     screen_clear.frag
     debug_draw.vert
     debug_draw.frag
+    pbr.vert
+    pbr.frag
 )
 
 # Create shader compilation rules

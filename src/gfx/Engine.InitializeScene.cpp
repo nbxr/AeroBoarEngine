@@ -6,6 +6,7 @@
 #include "nlohmann/json.hpp"
 #include "tiny_gltf.h"
 #include <fstream>
+#include <functional>
 #include <iostream>
 
 bool gfx::Engine::load_default_scene() {
@@ -96,19 +97,87 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
         offset += mesh.primitives.size();
     }
 
-    for (auto &node : model.nodes) {
-        auto transform = scene::GltfLoader::extract_node_transform(node);
-        auto &mesh = model.meshes[node.mesh];
-        size_t prim_i = 0;
-        size_t offset = prim_material_offsets[node.mesh];
-        for (auto &prim : model.meshes[node.mesh].primitives) {
-            scene::SceneInstance instance{};
-            instance.mesh_index = mesh_lookup[prim_i + offset];
-            instance.material_index = material_lookup[prim.material];
-            instance.transform = transform;
-            prim_i++;
+    // Minimal glTF camera capture (only perspective for now)
+    struct LoadedCameraInfo {
+        glm::mat4 world_transform{1.0f};
+        float yfov = glm::radians(60.0f);
+        float znear = 0.1f;
+        float zfar = 100.0f;
+        bool valid = false;
+    };
+    LoadedCameraInfo loaded_camera;
 
-            renderer.scene_manager.add_instance(instance);
+    // Safe GLTF traversal:
+    // - Only process nodes that actually reference a mesh (skip cameras, lights, groups, etc.)
+    // - Respect the scene graph: start from the default scene roots and accumulate world transforms via children.
+    // - Guard against prim.material == -1 (default material) and out-of-range indices.
+    std::function<void(int, const glm::mat4&)> add_mesh_node = [&](int node_idx, const glm::mat4& parent_xform) {
+        if (node_idx < 0 || node_idx >= (int)model.nodes.size())
+            return;
+        const auto& node = model.nodes[node_idx];
+        glm::mat4 local = scene::GltfLoader::extract_node_transform(node);
+        glm::mat4 world_xform = parent_xform * local;
+
+        // Capture the first camera we encounter (minimal implementation)
+        if (!loaded_camera.valid && node.camera >= 0 && node.camera < (int)model.cameras.size()) {
+            const auto& cam = model.cameras[node.camera];
+            if (cam.type == "perspective") {
+                const auto& p = cam.perspective;
+                loaded_camera.world_transform = world_xform;
+                loaded_camera.yfov = (p.yfov > 0.0) ? static_cast<float>(p.yfov) : glm::radians(60.0f);
+                loaded_camera.znear = (p.znear > 0.0) ? static_cast<float>(p.znear) : 0.1f;
+                loaded_camera.zfar = (p.zfar > 0.0) ? static_cast<float>(p.zfar) : 100.0f;
+                loaded_camera.valid = true;
+            }
+            // Orthographic cameras are ignored in this minimal version
+        }
+
+        if (node.mesh >= 0 && node.mesh < (int)model.meshes.size()) {
+            const size_t mesh_idx = static_cast<size_t>(node.mesh);
+            size_t prim_i = 0;
+            size_t mat_offset = prim_material_offsets[mesh_idx];
+
+            for (const auto& prim : model.meshes[mesh_idx].primitives) {
+                if (prim_i + mat_offset >= mesh_lookup.size())
+                    break;
+
+                scene::SceneInstance instance{};
+                instance.mesh_index = mesh_lookup[prim_i + mat_offset];
+
+                int mat_idx = prim.material;
+                if (mat_idx < 0 || mat_idx >= (int)material_lookup.size()) {
+                    mat_idx = 0; // fallback to first material (or default)
+                }
+                instance.material_index = material_lookup[mat_idx];
+                instance.transform = world_xform;
+                prim_i++;
+
+                // Store world-space AABB for this primitive (used for camera framing, future culling, etc.)
+                core::AABB local = renderer.mesh_manager.get_primitive_local_aabb(instance.mesh_index);
+                instance.local_aabb = local.transformed(world_xform);
+
+                renderer.scene_manager.add_instance(instance);
+            }
+        }
+
+        // Recurse into children with accumulated transform
+        for (int child : node.children) {
+            add_mesh_node(child, world_xform);
+        }
+    };
+
+    // Choose the active scene and walk from its root nodes
+    int active_scene = (model.defaultScene >= 0) ? model.defaultScene : 0;
+    if (!model.scenes.empty() && active_scene < (int)model.scenes.size()) {
+        for (int root_node : model.scenes[active_scene].nodes) {
+            add_mesh_node(root_node, glm::mat4(1.0f));
+        }
+    } else {
+        // Fallback for malformed files: walk any node that has a mesh (still safe)
+        for (size_t i = 0; i < model.nodes.size(); ++i) {
+            if (model.nodes[i].mesh >= 0) {
+                add_mesh_node(static_cast<int>(i), glm::mat4(1.0f));
+            }
         }
     }
 
@@ -134,14 +203,19 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     renderer.mesh_manager.bind_descriptor(3, 4, 5); // Mesh meta + vertex + index SSBOs
     renderer.texture_manager.bind_descriptor(6);    // Bindless textures (must be last binding)
 
-    // Auto-frame the camera on the first object for a good initial view
-    {
-        glm::mat4 t = renderer.scene_manager.get_first_instance_transform();
-        glm::vec3 center = glm::vec3(t[3]);
-
-        // Use a generous radius for initial view so the object is definitely visible
-        // (we can improve this later with real AABB data)
-        camera.frame(center, 8.0f);
+    // Minimal glTF camera support: use author camera if present, otherwise fall back to AABB framing
+    if (loaded_camera.valid) {
+        camera.set_from_camera_node(loaded_camera.world_transform,
+                                    loaded_camera.yfov,
+                                    loaded_camera.znear,
+                                    loaded_camera.zfar);
+        printf("[Camera] Using glTF camera node (perspective)\n");
+    } else {
+        // Fallback: AABB-based framing (existing behavior)
+        auto [center, radius] = renderer.scene_manager.get_first_instance_framing_sphere();
+        camera.frame(center, radius);
+        printf("[Camera] Initial frame using AABB: center=(%.2f, %.2f, %.2f) radius=%.2f\n",
+               center.x, center.y, center.z, radius);
     }
 
     // TODO: add proper memory barriers / vkFlushMappedMemoryRanges for the

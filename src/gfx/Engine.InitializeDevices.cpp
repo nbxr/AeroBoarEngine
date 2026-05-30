@@ -195,6 +195,33 @@ void gfx::Engine::recreate_swapchain() {
     }
     renderer.vk.swap_chain_image_views.clear();
 
+    // === IMPORTANT: Destroy transient MSAA color and depth images ===
+    // These must be recreated at the new window size. Keeping the old small
+    // images was causing the validation error when the window was maximized.
+    if (renderer.main_pass.msaa_color_image.view != VK_NULL_HANDLE) {
+        vkDestroyImageView(renderer.vk.device, renderer.main_pass.msaa_color_image.view, nullptr);
+        renderer.main_pass.msaa_color_image.view = VK_NULL_HANDLE;
+    }
+    if (renderer.main_pass.msaa_color_image.handle != VK_NULL_HANDLE) {
+        vmaDestroyImage(renderer.allocator,
+                        renderer.main_pass.msaa_color_image.handle,
+                        renderer.main_pass.msaa_color_image.allocation);
+        renderer.main_pass.msaa_color_image.handle = VK_NULL_HANDLE;
+        renderer.main_pass.msaa_color_image.allocation = VK_NULL_HANDLE;
+    }
+
+    if (renderer.main_pass.depth_image.view != VK_NULL_HANDLE) {
+        vkDestroyImageView(renderer.vk.device, renderer.main_pass.depth_image.view, nullptr);
+        renderer.main_pass.depth_image.view = VK_NULL_HANDLE;
+    }
+    if (renderer.main_pass.depth_image.handle != VK_NULL_HANDLE) {
+        vmaDestroyImage(renderer.allocator,
+                        renderer.main_pass.depth_image.handle,
+                        renderer.main_pass.depth_image.allocation);
+        renderer.main_pass.depth_image.handle = VK_NULL_HANDLE;
+        renderer.main_pass.depth_image.allocation = VK_NULL_HANDLE;
+    }
+
     // Recreate swapchain
     vkb::SwapchainBuilder swapchain_builder{renderer.vk.device};
     auto swap_ret =
@@ -221,9 +248,7 @@ void gfx::Engine::recreate_swapchain() {
     }
     renderer.vk.swap_chain_image_views = views_res.value();
 
-    // Recreate semaphores:
-    // - image_available: sized to MAX_FRAMES_IN_FLIGHT (unchanged count)
-    // - render_finished: sized to new number of swapchain images
+    // Recreate semaphores for the (possibly new) number of swapchain images
     for (auto sem : renderer.vk.render_finished_semaphores) {
         if (sem != VK_NULL_HANDLE) vkDestroySemaphore(renderer.vk.device, sem, nullptr);
     }
@@ -239,8 +264,18 @@ void gfx::Engine::recreate_swapchain() {
                           &renderer.vk.render_finished_semaphores[i]);
     }
 
-    // Recreate framebuffers for the new swapchain images
-    // (MSAA and depth images are kept; only swapchain views changed)
+    // Recreate the transient MSAA color and depth images at the **new** size.
+    // These are the attachments that were causing the framebuffer size mismatch.
+    if (!init_msaa_color_image()) {
+        LOG_ERROR("Failed to recreate MSAA color image during swapchain recreation");
+        return;
+    }
+    if (!init_depth_image()) {
+        LOG_ERROR("Failed to recreate depth image during swapchain recreation");
+        return;
+    }
+
+    // Now create new framebuffers using the freshly created (correctly sized) images
     renderer.main_pass.framebuffers.resize(renderer.vk.swap_chain_image_views.size());
 
     VkImageView msaa_color_view = renderer.main_pass.msaa_color_image.view;

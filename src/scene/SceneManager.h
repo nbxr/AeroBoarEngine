@@ -7,6 +7,7 @@
 #include <glm/glm.hpp>
 #include <mutex>
 #include <shared_mutex>
+#include <utility>
 #include <vector>
 #include <vma/vk_mem_alloc.h>
 #include <vulkan/vulkan.h>
@@ -64,6 +65,11 @@ class SceneManager {
 
     // Returns the world transform of the first loaded SceneInstance (identity if none)
     [[nodiscard]] glm::mat4 get_first_instance_transform() const;
+
+    // Returns a (center, radius) pair suitable for camera framing based on the
+    // first instance's world-space AABB. Falls back to transform + fixed radius
+    // if no valid AABB is available. Includes a small upward bias for better views.
+    [[nodiscard]] std::pair<glm::vec3, float> get_first_instance_framing_sphere() const;
 
     // Debug / render accessors for drawing all scene geometry.
     // NOTE: lock-free; safe for read-only use after load_scene() completes (no mutation during render).

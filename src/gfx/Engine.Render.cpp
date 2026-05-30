@@ -108,10 +108,12 @@ void gfx::Engine::render() {
 
     glm::mat4 viewProj = proj * view;
 
-    // Push constant struct matching the shader (exactly 128 bytes to match layout range)
-    struct DebugPush {
+    // Push constant struct matching pbr.vert / pbr.frag layout
+    // (viewProj + model + uvec4 extra where .x = materialIndex)
+    struct PbrPush {
         glm::mat4 viewProj;
         glm::mat4 model;
+        glm::uvec4 extra;   // x = materialIndex (for bindless material SSBO)
     } pushData{};
 
     auto& index_buf = renderer.mesh_manager.get_render_index_buffer();
@@ -132,13 +134,14 @@ void gfx::Engine::render() {
 
         pushData.viewProj = viewProj;
         pushData.model = inst.transform;
+        pushData.extra = glm::uvec4{inst.material_index, 0, 0, 0};
 
         vkCmdPushConstants(
             frame.command_buffer,
             vk.pipeline_layout,
             VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
             0,
-            sizeof(DebugPush),
+            sizeof(PbrPush),
             &pushData
         );
 
