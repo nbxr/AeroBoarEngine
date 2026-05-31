@@ -109,6 +109,7 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
 
     // Safe GLTF traversal:
     // - Only process nodes that actually reference a mesh (skip cameras, lights, groups, etc.)
+    //   See docs/architecture/lighting-implementation.md for planned KHR_lights_punctual support (Phase 2).
     // - Respect the scene graph: start from the default scene roots and accumulate world transforms via children.
     // - Guard against prim.material == -1 (default material) and out-of-range indices.
     std::function<void(int, const glm::mat4&)> add_mesh_node = [&](int node_idx, const glm::mat4& parent_xform) {

@@ -3,11 +3,10 @@
 #include "gfx/AllocatedImage.h"
 #include "gfx/Renderer.h"
 #include "scene/Camera.h"
+#include "core/Log.h"
 #include <iostream>
 #include <stdio.h>
 #include <utility>
-#define LOG_ERROR(value) std::cerr << value << std::endl
-#define LOG_INFO(value) std::cout << value << std::endl
 
 namespace gfx {
 class Engine {

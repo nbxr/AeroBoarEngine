@@ -109,15 +109,21 @@ void gfx::Engine::render() {
     glm::mat4 viewProj = proj * view;
 
     // Push constant struct matching pbr.vert / pbr.frag layout
-    // (viewProj + model + uvec4 extra where .x = materialIndex)
+    // (viewProj + model + uvec4 extra + cameraPos for Phase 1 lighting)
     struct PbrPush {
         glm::mat4 viewProj;
         glm::mat4 model;
         glm::uvec4 extra;   // x = materialIndex (for bindless material SSBO)
+        glm::vec4 cameraPos; // xyz = world camera position (Phase 1 lighting improvement)
     } pushData{};
 
+    // Bind index + vertex buffers (single large buffers; per-primitive offsets come from draw params)
     auto& index_buf = renderer.mesh_manager.get_render_index_buffer();
     vkCmdBindIndexBuffer(frame.command_buffer, index_buf.buffer, 0, VK_INDEX_TYPE_UINT32);
+
+    auto& vertex_buf = renderer.mesh_manager.get_render_vertex_buffer();
+    VkDeviceSize vbo_offset = 0;
+    vkCmdBindVertexBuffers(frame.command_buffer, 0, 1, &vertex_buf.buffer, &vbo_offset);
 
     // Draw ALL meshes/primitives in the scene (one draw call per SceneInstance primitive)
     const uint32_t inst_count = renderer.scene_manager.get_instance_count();
@@ -134,6 +140,7 @@ void gfx::Engine::render() {
 
         pushData.viewProj = viewProj;
         pushData.model = inst.transform;
+        pushData.cameraPos = glm::vec4(camera.get_position(), 1.0f); // Phase 1 lighting: real view vector
 
         // === DEBUG MODE (optional) ===
         // Set debugMode to non-zero values for diagnostics:

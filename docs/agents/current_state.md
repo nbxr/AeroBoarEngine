@@ -38,7 +38,7 @@ Early foundation phase. A basic PBR forward renderer is now implemented and acti
 
 ## Current Focus Areas
 
-- Improving PBR quality (currently using very simple overhead directional lighting + constant ambient)
+- Improving PBR quality (Phase 1 GGX BRDF + ambient complete; see lighting-implementation.md for status and next steps)
 - Fixing remaining visual issues with the current asset (the loaded DamagedHelmet only contains a single material/primitive)
 - Cleaning up the temporary debug rendering path (raw SSBO vertex pulling, forced depth hack in debug shader)
 - Removing or properly guarding the diagnostic material coloring code
@@ -46,7 +46,7 @@ Early foundation phase. A basic PBR forward renderer is now implemented and acti
 
 ## Known Gaps / Not Yet Implemented
 
-- PBR lighting is extremely basic (single overhead directional light + constant ambient). No IBL, no multiple lights.
+- PBR lighting was extremely basic. Phase 1 (proper Cook-Torrance GGX BRDF + improved ambient) is now in `pbr.frag`. See the full explanation and roadmap in `docs/architecture/lighting-implementation.md`. Multi-light data upload and IBL remain future phases.
 - The currently configured DamagedHelmet asset only contains a single material/primitive, so all geometry uses the same textures.
 - Still using raw SSBO vertex pulling in shaders (no proper vertex input attributes).
 - No instancing or indirect draws yet (CPU loop of `vkCmdDrawIndexed` per primitive).
@@ -59,8 +59,8 @@ Early foundation phase. A basic PBR forward renderer is now implemented and acti
 
 ## Next Immediate Priorities
 
-- Improve PBR lighting model (add IBL or at least better multi-light support)
-- Switch from raw SSBO vertex pulling to proper vertex attribute input
+- [Phase 1 done] Improve PBR lighting model — GGX BRDF + 2 analytic lights + real camera position (push constants). Full explanation + roadmap in `docs/architecture/lighting-implementation.md`. Binding 0 UBO + full multi-light data path planned for Phase 2.
+- [done] Switch from raw SSBO vertex pulling to proper vertex attribute input (pipeline + pbr.vert updated; vertex buffers now bound with VK_BUFFER_USAGE_VERTEX_BUFFER_BIT)
 - Investigate why the configured DamagedHelmet only has a single material (asset vs loading issue)
 - Add basic instancing or move toward indirect draws
 - Remove or clean up remaining debug/diagnostic code in the PBR path
@@ -87,16 +87,16 @@ A basic PBR forward renderer is now active:
 
 **Important limitation**: The specific DamagedHelmet asset currently configured only contains a single material. This is the main reason multiple distinct textures are not visible on different parts of the model.
 
-The implementation is still on a CPU-driven path (one draw call per primitive, raw SSBO vertex pulling). Moving to proper vertex attributes, instancing, and GPU-driven culling remains future work.
+The implementation is on a CPU-driven path (one draw call per primitive). Raw SSBO vertex pulling has been replaced by proper vertex attribute input (gfx::Vertex layout, matching pipeline state + pbr.vert attributes). Instancing and GPU-driven culling remain future work.
 
 ## Code Hygiene Follow-ups
 
 These are non-functional cleanup items identified after the namespace reorganization:
 
-- Replace the global `LOG_ERROR` / `LOG_INFO` macros (currently in `gfx/Engine.h`) with a proper namespaced logging utility.
+- [done] Replace the global `LOG_ERROR` / `LOG_INFO` macros (in `gfx/Engine.h`) → moved to `core/Log.h` (lightweight, call sites unchanged).
 - Reduce duplication across `MaterialManager`, `MeshManager`, `TextureManager`, and `SceneManager` (double-buffering, recycling, and buffer growth logic is nearly identical).
 - Standardize cache / storage naming across the resource managers (currently a mix of `cpu_materials`, `mesh_cache`, `texture_cache`, etc.).
-- Replace the raw `#define INVALID_HANDLE` in `core/Handle.h` with a `constexpr` constant.
+- [done] Replace the raw `#define INVALID_HANDLE` in `core/Handle.h` with a `constexpr` constant.
 - Reduce unnecessary `gfx::` qualification on types when already inside `namespace gfx`.
 - Consider whether the top-level `AeroBoar` stub class is still needed.
 

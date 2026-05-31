@@ -263,7 +263,7 @@ bool gfx::Engine::init_descriptor_set_layout() {
                              VK_SHADER_STAGE_FRAGMENT_BIT |
                              VK_SHADER_STAGE_COMPUTE_BIT;
 
-    // 4: Vertex buffer (storage view for vertex pulling in shaders)
+    // 4: Vertex buffer (SSBO view; primary path now uses proper vertex attributes)
     bindings[4].binding = 4;
     bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     bindings[4].descriptorCount = 1;

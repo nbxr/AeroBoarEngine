@@ -3,7 +3,7 @@
 
 namespace core {
 
-#define INVALID_HANDLE UINT32_MAX
+constexpr uint32_t INVALID_HANDLE = UINT32_MAX;
 
 template <typename T> struct Handle {
   public:

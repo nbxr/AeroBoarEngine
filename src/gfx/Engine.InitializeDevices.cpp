@@ -3,6 +3,23 @@
 #include "VkBootstrap.h"
 
 bool gfx::Engine::init_vk_instance(vkb::InstanceBuilder &builder) {
+    
+    // Get system info to check available layers
+    auto system_info_ret = vkb::SystemInfo::get_system_info();
+    if (!system_info_ret) {
+        std::cerr << "Failed to get system info: " << system_info_ret.error().message() << "\n";
+        return false;
+    }
+    
+    auto system_info = system_info_ret.value();
+
+    // This layer displays FPS in the window title bar
+    if (system_info.is_layer_available("VK_LAYER_LUNARG_monitor")) {
+        builder.enable_layer("VK_LAYER_LUNARG_monitor");
+    } else {
+        std::cout << "Warning: VK_LAYER_LUNARG_monitor not found. FPS counter disabled.\n";
+    }
+
     // vulkan instance
     auto inst_ret =
         builder.set_app_name("AeroBoar")

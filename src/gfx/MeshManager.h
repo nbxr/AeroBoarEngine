@@ -93,6 +93,7 @@ class MeshManager {
     [[nodiscard]] core::AABB get_primitive_local_aabb(uint32_t index) const;
 
     [[nodiscard]] AllocatedBuffer &get_render_index_buffer();
+    [[nodiscard]] AllocatedBuffer &get_render_vertex_buffer();
 
   private:
     bool ensure_capacity();
@@ -101,7 +102,6 @@ class MeshManager {
     void resize_index_buffer(uint64_t new_capacity);
 
     [[nodiscard]] AllocatedBuffer &get_upload_vertex_buffer();
-    [[nodiscard]] AllocatedBuffer &get_render_vertex_buffer();
     [[nodiscard]] AllocatedBuffer &get_upload_index_buffer();
     [[nodiscard]] AllocatedBuffer &get_upload_ssbo_buffer();
     [[nodiscard]] AllocatedBuffer &get_render_ssbo_buffer();

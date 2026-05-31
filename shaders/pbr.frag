@@ -2,13 +2,6 @@
 #extension GL_EXT_nonuniform_qualifier : require
 
 // Bindless resources
-layout(set = 0, binding = 1) readonly buffer SceneInstances {
-    uint material_index;
-    uint mesh_index;
-    uint flags;
-    mat4 transform;
-} scene_instances[];
-
 layout(set = 0, binding = 2) readonly buffer Materials {
     vec4  albedo;
     float roughness;
@@ -36,17 +29,52 @@ layout(location = 3) in vec2 inUV;
 layout(push_constant) uniform PushConstants {
     mat4   viewProj;
     mat4   model;
-    uvec4  extra;   // x = materialIndex
+    uvec4  extra;      // x = materialIndex
+    vec4   cameraPos;  // xyz = world-space camera position (w unused) — Phase 1 lighting
 } pc;
 
 layout(location = 0) out vec4 outColor;
 
-// Simple global overhead lighting for Phase 1 (per user request)
-// TODO (later phase): Replace with proper IBL or more sophisticated lighting
-const vec3  LIGHT_DIR   = normalize(vec3(0.0, -1.0, 0.0)); // Directly overhead
+// -----------------------------------------------------------------------------
+// Lighting (Phase 1 improvements — two analytic lights + proper GGX BRDF)
+// See docs/architecture/lighting-implementation.md for the full roadmap,
+// current vs. target math, Quest 3 constraints, and data design.
+// Phase 1: real Cook-Torrance + camera position + second fill light.
+// Future: binding 0 per-frame lights UBO, IBL (SH + prefilter), glTF lights.
+// -----------------------------------------------------------------------------
+
+const vec3  LIGHT_DIR   = normalize(vec3(0.0, -1.0, 0.0)); // Directly overhead (Phase 1)
 const vec3  LIGHT_COLOR = vec3(1.0, 0.98, 0.95);
 const float LIGHT_INTENSITY = 1.0;
-const vec3  AMBIENT       = vec3(0.03);
+
+// Improved ambient for Phase 1 (still constant; will become SH/IBL later)
+const vec3  AMBIENT       = vec3(0.02);   // slightly darker base
+const vec3  AMBIENT_TINT  = vec3(0.95, 0.98, 1.05); // very subtle cool tint
+
+const float PI = 3.14159265359;
+
+// GGX / Trowbridge-Reitz normal distribution
+float D_GGX(float NdotH, float roughness) {
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float NdotH2 = NdotH * NdotH;
+    float denom = NdotH2 * (a2 - 1.0) + 1.0;
+    return a2 / (PI * denom * denom);
+}
+
+// Schlick Fresnel approximation
+vec3 F_Schlick(float cosTheta, vec3 F0) {
+    return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
+}
+
+// Smith GGX geometry term (height-correlated)
+float G_SmithGGX(float NdotV, float NdotL, float roughness) {
+    float a = roughness * roughness;
+    float k = (a + 1.0) * (a + 1.0) / 8.0;   // Schlick-GGX k for direct lighting
+    float G1V = NdotV / (NdotV * (1.0 - k) + k);
+    float G1L = NdotL / (NdotL * (1.0 - k) + k);
+    return G1V * G1L;
+}
 
 const uint NO_TEXTURE = 0xFFFFFFFFu;
 
@@ -105,22 +133,60 @@ void main() {
     vec3 B = normalize(cross(N, T) * inTangent.w);
     N = getNormalFromMap(N, T, B, inUV, normalIdx, normalStr, materials[matIdx].flags);
 
-    // Simple lighting - overhead directional
-    vec3 L = LIGHT_DIR;
-    vec3 V = normalize(-inWorldPos); // Viewer at origin approximation for now
-    vec3 H = normalize(L + V);
+    // -----------------------------------------------------------------
+    // Phase 1 improved lighting — proper Cook-Torrance GGX BRDF + 2 lights
+    // (see docs/architecture/lighting-implementation.md for full roadmap)
+    // -----------------------------------------------------------------
+    vec3 V = normalize(pc.cameraPos.xyz - inWorldPos);  // Phase 1: real camera position for correct view vector
+    vec3 F0 = mix(vec3(0.04), albedo.rgb, sampledMetal);
 
-    float NdotL = max(dot(N, L), 0.0);
-    float NdotV = max(dot(N, V), 0.0);
-    float NdotH = max(dot(N, H), 0.0);
-    float VdotH = max(dot(V, H), 0.0);
+    vec3 color = vec3(0.0);
 
-    // Very simplified PBR (Lambert diffuse + basic specular)
-    vec3 diffuse  = albedo.rgb * (1.0 - sampledMetal) * NdotL;
-    vec3 specular = vec3(pow(NdotH, mix(2.0, 64.0, 1.0 - sampledRough))) * sampledMetal * NdotL;
+    // Light 0 — original overhead (warm key)
+    {
+        vec3 L = LIGHT_DIR;
+        vec3 H = normalize(L + V);
+        float NdotL = max(dot(N, L), 0.0);
+        float NdotV = max(dot(N, V), 0.0);
+        float NdotH = max(dot(N, H), 0.0);
+        float LdotH = max(dot(L, H), 0.0);
 
-    vec3 color = (diffuse + specular) * LIGHT_COLOR * LIGHT_INTENSITY;
-    color += albedo.rgb * AMBIENT;
+        float D = D_GGX(NdotH, sampledRough);
+        vec3  F = F_Schlick(LdotH, F0);
+        float G = G_SmithGGX(NdotV, NdotL, sampledRough);
+
+        vec3 spec = (F * D * G) / max(4.0 * NdotV * NdotL, 0.0001);
+        vec3 kD = (1.0 - F) * (1.0 - sampledMetal);
+        vec3 diff = kD * albedo.rgb / PI * NdotL;
+
+        color += (diff + spec) * LIGHT_COLOR * LIGHT_INTENSITY;
+    }
+
+    // Light 1 — Phase 1 demo fill/rim (cooler, from upper-right)
+    {
+        vec3 L = normalize(vec3(0.6, -0.4, 0.7));
+        vec3 Lc = vec3(0.6, 0.75, 0.95);
+        float Li = 0.45;
+
+        vec3 H = normalize(L + V);
+        float NdotL = max(dot(N, L), 0.0);
+        float NdotV = max(dot(N, V), 0.0);
+        float NdotH = max(dot(N, H), 0.0);
+        float LdotH = max(dot(L, H), 0.0);
+
+        float D = D_GGX(NdotH, sampledRough);
+        vec3  F = F_Schlick(LdotH, F0);
+        float G = G_SmithGGX(NdotV, NdotL, sampledRough);
+
+        vec3 spec = (F * D * G) / max(4.0 * NdotV * NdotL, 0.0001);
+        vec3 kD = (1.0 - F) * (1.0 - sampledMetal);
+        vec3 diff = kD * albedo.rgb / PI * NdotL;
+
+        color += (diff + spec) * Lc * Li;
+    }
+
+    // Ambient (Phase 1 improved constant + subtle tint)
+    color += albedo.rgb * AMBIENT * AMBIENT_TINT;
 
     // Emissive
     if (emissiveIdx != NO_TEXTURE) {

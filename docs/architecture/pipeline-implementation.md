@@ -15,7 +15,7 @@ As of late May 2026:
 - A working render loop exists and draws scenes using the bindless resources + per-draw push constants.
 - Single-subpass render pass with transient MSAA + `DONT_CARE` is in place.
 - The current active asset only contains a single material.
-- Multi-subpass structure, multiview, compute culling, indirect draws, proper vertex attributes, and advanced lighting (IBL) are **not yet implemented**.
+- Multi-subpass structure, multiview, compute culling, indirect draws, and advanced lighting (IBL + multi-light) are **not yet implemented**. (Phase 1 GGX BRDF analytic lighting is in; full roadmap in `docs/architecture/lighting-implementation.md`).
 - Drawing is still CPU-driven (one `vkCmdDrawIndexed` per primitive) with raw SSBO vertex pulling.
 
 See `docs/agents/current_state.md` for the latest implementation status.

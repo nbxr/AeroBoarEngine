@@ -39,12 +39,13 @@ bool gfx::MeshManager::initialize(VkDevice device, VmaAllocator allocator,
     bool ssbo_upload_initialized = gfx::BufferUtils::initialize_buffer(
         device, allocator, ssbo_size, get_upload_ssbo_buffer());
 
-    // vertex buffer
+    // vertex buffer (usable both as STORAGE_BUFFER for bindless and VERTEX_BUFFER for attribute input)
     VkDeviceSize vertex_size = initial_capacity * 100 * sizeof(Vertex);
+    VkBufferUsageFlags vertexExtra = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
     bool vertex_render_initialized = gfx::BufferUtils::initialize_buffer(
-        device, allocator, vertex_size, get_render_vertex_buffer());
+        device, allocator, vertex_size, get_render_vertex_buffer(), vertexExtra);
     bool vertex_upload_initialized = gfx::BufferUtils::initialize_buffer(
-        device, allocator, vertex_size, get_upload_vertex_buffer());
+        device, allocator, vertex_size, get_upload_vertex_buffer(), vertexExtra);
 
     // index buffer
     VkDeviceSize index_size = initial_capacity * 1000 * sizeof(Index);
@@ -238,7 +239,8 @@ void gfx::MeshManager::resize_vertex_buffer(uint64_t new_capacity) {
             device, allocator, new_size,
             get_upload_vertex_buffer(),
             vertex_count > 0 ? get_upload_vertex_buffer().mapped_data : nullptr,
-            need_copy ? vertex_count * sizeof(Vertex) : 0);
+            need_copy ? vertex_count * sizeof(Vertex) : 0,
+            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
     }
 }
 

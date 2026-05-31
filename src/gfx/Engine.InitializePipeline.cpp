@@ -80,14 +80,31 @@ bool gfx::Engine::init_graphics_pipeline() {
     VkPipelineShaderStageCreateInfo shader_stages[] = {vertex_stage_info,
                                                        fragment_stage_info};
 
-    // Vertex input state
+    // Vertex input state — proper attributes (replaces legacy SSBO vertex pulling)
+    // Matches gfx::Vertex exactly (stride 56):
+    //   loc 0: position (offset 0)
+    //   loc 1: normal   (offset 12)
+    //   loc 2: tangent  (offset 24)
+    //   loc 3: UV0 bits (offset 40, first 4 bytes of the packed uv[8] field)
+    static const VkVertexInputBindingDescription binding_desc = {
+        .binding = 0,
+        .stride = 56,
+        .inputRate = VK_VERTEX_INPUT_RATE_VERTEX
+    };
+
+    static const VkVertexInputAttributeDescription attr_descs[] = {
+        { .location = 0, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 0  },  // position
+        { .location = 1, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 12 },  // normal
+        { .location = 2, .binding = 0, .format = VK_FORMAT_R32G32B32A32_SFLOAT, .offset = 24 }, // tangent
+        { .location = 3, .binding = 0, .format = VK_FORMAT_R32G32_SFLOAT, .offset = 40 }   // UV0 (packed bits)
+    };
+
     VkPipelineVertexInputStateCreateInfo vertex_input_info = {};
-    vertex_input_info.sType =
-        VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertex_input_info.vertexBindingDescriptionCount = 0;
-    vertex_input_info.pVertexBindingDescriptions = nullptr;
-    vertex_input_info.vertexAttributeDescriptionCount = 0;
-    vertex_input_info.pVertexAttributeDescriptions = nullptr;
+    vertex_input_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertex_input_info.vertexBindingDescriptionCount = 1;
+    vertex_input_info.pVertexBindingDescriptions = &binding_desc;
+    vertex_input_info.vertexAttributeDescriptionCount = 4;
+    vertex_input_info.pVertexAttributeDescriptions = attr_descs;
 
     // Input assembly
     VkPipelineInputAssemblyStateCreateInfo input_assembly = {};
