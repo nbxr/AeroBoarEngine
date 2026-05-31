@@ -76,7 +76,8 @@ bool gfx::TextureManager::initialize(VkDevice device, VmaAllocator allocator,
 }
 
 gfx::TextureID gfx::TextureManager::get_texture_handle(const std::string &name,
-                                                  const std::string &filepath) {
+                                                  const std::string &filepath,
+                                                  bool is_srgb) {
 
     std::scoped_lock lock(texture_mutex);
 
@@ -98,6 +99,7 @@ gfx::TextureID gfx::TextureManager::get_texture_handle(const std::string &name,
         gfx::TextureInfo texture_info;
         texture_info.name = name.empty() ? filepath : name;
         texture_info.filepath = filepath;
+        texture_info.format = is_srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
 
         // use a recycled value if available
         if (!recycle_cache.empty()) {
@@ -171,7 +173,7 @@ void gfx::TextureManager::upload_textures() {
         VkImageCreateInfo image_info{};
         image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
         image_info.imageType = VK_IMAGE_TYPE_2D;
-        image_info.format = VK_FORMAT_R8G8B8A8_UNORM;
+        image_info.format = tex_info.format;
         image_info.extent = {static_cast<uint32_t>(tex_info.width),
                              static_cast<uint32_t>(tex_info.height), 1};
         image_info.mipLevels = 1;

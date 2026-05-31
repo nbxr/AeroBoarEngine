@@ -51,7 +51,8 @@ class TextureManager {
                     uint32_t transfer_queue_family_index,
                     VkDescriptorSet descriptor_set);
     TextureID get_texture_handle(const std::string &name,
-                                 const std::string &filepath);
+                                 const std::string &filepath,
+                                 bool is_srgb = false);
     void remove_texture(const TextureID texture_id);
     void upload_textures();
     void transfer_queue_ownership();

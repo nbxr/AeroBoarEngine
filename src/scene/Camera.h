@@ -5,6 +5,7 @@
 #define GLM_FORCE_RADIANS
 
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <GLFW/glfw3.h>
 
 namespace scene {
@@ -43,6 +44,10 @@ public:
                               float znear,
                               float zfar);
 
+    // Resets internal mouse tracking state. Call this after toggling cursor capture
+    // (e.g. with Escape) so that the next mouse delta does not cause a large jump.
+    void reset_mouse_state();
+
     // Tunables
     float movement_speed = 5.0f;
     float mouse_sensitivity = 0.35f;
@@ -50,14 +55,21 @@ public:
     float near_plane = 0.1f;
     float far_plane = 100.0f;
 
+    // When true, moving the mouse down will make the camera look up (inverted).
+    // Default is false (normal behavior: mouse down = look down).
+    bool invert_pitch = false;
+
 private:
     CameraMode mode = CameraMode::Desktop;
     GLFWwindow* window = nullptr;
 
     // Transform state
     glm::vec3 position{0.0f, 1.5f, 3.0f};
-    float yaw = -90.0f;   // degrees
-    float pitch = 0.0f;   // degrees
+    glm::quat orientation{1.0f, 0.0f, 0.0f, 0.0f};  // w, x, y, z  (identity)
+
+    // Legacy Euler angles (kept for frame() / set_from_camera_node() compatibility during transition)
+    float yaw = -90.0f;
+    float pitch = 0.0f;
 
     // Mouse state (desktop mode)
     double last_mouse_x = 0.0;

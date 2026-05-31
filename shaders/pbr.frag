@@ -50,11 +50,19 @@ const vec3  AMBIENT       = vec3(0.03);
 
 const uint NO_TEXTURE = 0xFFFFFFFFu;
 
-vec3 getNormalFromMap(vec3 N, vec3 T, vec3 B, vec2 uv, uint normalTexIdx, float strength) {
+vec3 getNormalFromMap(vec3 N, vec3 T, vec3 B, vec2 uv, uint normalTexIdx, float strength, uint matFlags) {
     if (normalTexIdx == NO_TEXTURE) {
         return normalize(N);
     }
     vec3 normalMap = texture(bindlessTextures[nonuniformEXT(normalTexIdx)], uv).xyz * 2.0 - 1.0;
+
+    // Optional green channel flip (bit 6 of material flags).
+    // Many tools export DirectX-style normal maps (inverted green).
+    // glTF recommends OpenGL convention (no flip), but this allows easy correction.
+    if ((matFlags & 0x40u) != 0u) {  // Bit 6 = NormalMapFlipY
+        normalMap.y = -normalMap.y;
+    }
+
     normalMap.xy *= strength;
     mat3 TBN = mat3(T, B, N);
     return normalize(TBN * normalMap);
@@ -95,7 +103,7 @@ void main() {
     vec3 N = normalize(inNormal);
     vec3 T = normalize(inTangent.xyz);
     vec3 B = normalize(cross(N, T) * inTangent.w);
-    N = getNormalFromMap(N, T, B, inUV, normalIdx, normalStr);
+    N = getNormalFromMap(N, T, B, inUV, normalIdx, normalStr, materials[matIdx].flags);
 
     // Simple lighting - overhead directional
     vec3 L = LIGHT_DIR;
@@ -143,4 +151,23 @@ void main() {
 
     // DIAGNOSTIC (commented out for normal rendering)
     // outColor = vec4(debugCol, 1.0);
+
+    // === DEBUG VISUALIZATION (controlled via push constant extra.y) ===
+    // Change the value in Engine.Render.cpp (look for "debugMode")
+    // 0 = Normal rendering
+    // 1 = UV visualization (Red = U, Green = V)
+    // 2+ = Per-primitive/section color (each draw call gets a different color)
+    uint debugMode = pc.extra.y;
+
+    if (debugMode == 1) {
+        // UV debug
+        outColor = vec4(inUV, 0.0, 1.0);
+    } else if (debugMode >= 2) {
+        // Per-primitive color using the value in extra.y as an ID
+        // This helps see if each draw call / primitive has constant UVs
+        float id = float(debugMode % 8);
+        vec3 col = vec3(id / 7.0);
+        outColor = vec4(col, 1.0);
+    }
+    // else: normal rendering (debugMode == 0)
 }

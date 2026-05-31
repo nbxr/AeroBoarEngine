@@ -13,6 +13,76 @@
 #include <map>
 #include <tiny_gltf.h>
 
+// Helper to read a TEXCOORD (always VEC2) from an accessor, properly handling
+// normalized integer formats that some optimized glTFs use.
+static glm::vec2 GetTexcoordFromAccessor(const tinygltf::Model& model,
+                                         const tinygltf::Accessor& acc,
+                                         size_t index) {
+    if (acc.type != TINYGLTF_TYPE_VEC2 || acc.bufferView < 0) {
+        return glm::vec2(0.0f, 0.0f);
+    }
+
+    const auto& bv = model.bufferViews[acc.bufferView];
+    if (bv.buffer < 0 || bv.buffer >= (int)model.buffers.size()) {
+        return glm::vec2(0.0f, 0.0f);
+    }
+
+    const auto& buf = model.buffers[bv.buffer];
+    const uint8_t* base = buf.data.data() + bv.byteOffset + acc.byteOffset;
+
+    int stride = acc.ByteStride(bv);
+    if (stride == 0) {
+        stride = tinygltf::GetNumComponentsInType(acc.type) *
+                 tinygltf::GetComponentSizeInBytes(acc.componentType);
+    }
+
+    const uint8_t* ptr = base + index * stride;
+
+    switch (acc.componentType) {
+        case TINYGLTF_COMPONENT_TYPE_FLOAT: {
+            const float* f = reinterpret_cast<const float*>(ptr);
+            return {f[0], f[1]};
+        }
+        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT: {
+            const uint16_t* s = reinterpret_cast<const uint16_t*>(ptr);
+            if (acc.normalized) {
+                return {float(s[0]) / 65535.0f, float(s[1]) / 65535.0f};
+            } else {
+                // Uncommon for UVs, but handle it
+                return {float(s[0]), float(s[1])};
+            }
+        }
+        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE: {
+            const uint8_t* b = reinterpret_cast<const uint8_t*>(ptr);
+            if (acc.normalized) {
+                return {float(b[0]) / 255.0f, float(b[1]) / 255.0f};
+            } else {
+                return {float(b[0]), float(b[1])};
+            }
+        }
+        // SHORT and BYTE are theoretically possible if normalized, but rare for UVs.
+        // Adding them for completeness:
+        case TINYGLTF_COMPONENT_TYPE_SHORT: {
+            const int16_t* s = reinterpret_cast<const int16_t*>(ptr);
+            if (acc.normalized) {
+                return {std::max(-1.0f, float(s[0]) / 32767.0f),
+                        std::max(-1.0f, float(s[1]) / 32767.0f)};
+            }
+            return {float(s[0]), float(s[1])};
+        }
+        case TINYGLTF_COMPONENT_TYPE_BYTE: {
+            const int8_t* b = reinterpret_cast<const int8_t*>(ptr);
+            if (acc.normalized) {
+                return {std::max(-1.0f, float(b[0]) / 127.0f),
+                        std::max(-1.0f, float(b[1]) / 127.0f)};
+            }
+            return {float(b[0]), float(b[1])};
+        }
+        default:
+            return glm::vec2(0.0f, 0.0f);
+    }
+}
+
 bool scene::GltfLoader::load_model(const std::string &filename,
                                   tinygltf::Model &model) {
     tinygltf::TinyGLTF loader{};
@@ -88,7 +158,7 @@ scene::GltfLoader::extract_material_data(const std::string &filename,
             auto [img_name, uri] = get_safe_image_path(pbr.baseColorTexture.index);
             if (!uri.empty()) {
                 material.albedo_texture_index =
-                    renderer.texture_manager.get_texture_handle(img_name, uri);
+                    renderer.texture_manager.get_texture_handle(img_name, uri, /*is_srgb=*/true);
             }
         }
 
@@ -164,8 +234,9 @@ scene::GltfLoader::extract_mesh_data(const tinygltf::Model &model,
 
             if (pos_it == primitive.attributes.end() ||
                 norm_it == primitive.attributes.end() ||
-                tex_it == primitive.attributes.end())
+                tex_it == primitive.attributes.end()) {
                 continue;
+            }
 
             const auto &pos_acc = model.accessors[pos_it->second];
             const auto &norm_acc = model.accessors[norm_it->second];
@@ -173,6 +244,18 @@ scene::GltfLoader::extract_mesh_data(const tinygltf::Model &model,
 
             if (pos_acc.componentType != TINYGLTF_COMPONENT_TYPE_FLOAT ||
                 pos_acc.type != TINYGLTF_TYPE_VEC3)
+                continue;
+
+            // Accept common TEXCOORD_0 formats (FLOAT + normalized integers)
+            bool texcoord_ok =
+                (tex_acc.type == TINYGLTF_TYPE_VEC2) &&
+                (tex_acc.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT ||
+                 tex_acc.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT ||
+                 tex_acc.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE ||
+                 tex_acc.componentType == TINYGLTF_COMPONENT_TYPE_SHORT ||
+                 tex_acc.componentType == TINYGLTF_COMPONENT_TYPE_BYTE);
+
+            if (!texcoord_ok)
                 continue;
 
             const size_t num_vertices = pos_acc.count;
@@ -204,21 +287,16 @@ scene::GltfLoader::extract_mesh_data(const tinygltf::Model &model,
 
             const uint8_t *pos_ptr = get_accessor_data(pos_acc);
             const uint8_t *norm_ptr = get_accessor_data(norm_acc);
-            const uint8_t *tex_ptr = get_accessor_data(tex_acc);
 
             int pos_stride =
                 pos_acc.ByteStride(model.bufferViews[pos_acc.bufferView]);
             int norm_stride =
                 norm_acc.ByteStride(model.bufferViews[norm_acc.bufferView]);
-            int tex_stride =
-                tex_acc.ByteStride(model.bufferViews[tex_acc.bufferView]);
 
             if (pos_stride == 0)
                 pos_stride = 12; // vec3 float
             if (norm_stride == 0)
                 norm_stride = 12;
-            if (tex_stride == 0)
-                tex_stride = 8; // vec2 float
 
             // === AABB (single pass) ===
             core::AABB aabb{{FLT_MAX, FLT_MAX, FLT_MAX},
@@ -277,12 +355,18 @@ scene::GltfLoader::extract_mesh_data(const tinygltf::Model &model,
 
                 // UV → packed uint16_t (little-endian) into 4x uint8_t
                 {
-                    const float *t = reinterpret_cast<const float *>(
-                        tex_ptr + i * tex_stride);
+                    // Use the new helper that properly handles normalized integer UVs
+                    glm::vec2 t = GetTexcoordFromAccessor(model, tex_acc, i);
+
+                    // Use fractional part so UVs outside [0,1] (tiling / repeat) are preserved
+                    // instead of being smashed to the texture edge.
+                    float u_frac = t.x - std::floor(t.x);
+                    float v_frac = t.y - std::floor(t.y);
+
                     uint16_t u = static_cast<uint16_t>(
-                        std::clamp(t[0], 0.0f, 1.0f) * 65535.0f);
+                        std::clamp(u_frac, 0.0f, 1.0f) * 65535.0f);
                     uint16_t vval = static_cast<uint16_t>(
-                        std::clamp(t[1], 0.0f, 1.0f) * 65535.0f);
+                        std::clamp(v_frac, 0.0f, 1.0f) * 65535.0f);
 
                     v.uv[0] = static_cast<uint8_t>(u & 0xFF);
                     v.uv[1] = static_cast<uint8_t>((u >> 8) & 0xFF);

@@ -151,6 +151,23 @@ void gfx::MeshManager::shutdown() {
     descriptor_set = VK_NULL_HANDLE;
 }
 
+void gfx::MeshManager::clear_all_caches() {
+    std::scoped_lock lock(mesh_mutex);
+
+    mesh_cache.clear();
+    mesh_ssbo_cache.clear();
+    while (!recycle_cache.empty())
+        recycle_cache.pop();
+
+    mesh_count = 0;
+    index_count = 0;
+    vertex_count = 0;
+
+    // Note: We do NOT destroy the GPU buffers here.
+    // The next update_buffers() will repopulate from an empty cache.
+    printf("[MeshManager] clear_all_caches() called - CPU caches wiped.\n");
+}
+
 void gfx::MeshManager::toggle_buffers() {
     render ^= 1;
     upload = render ^ 1;

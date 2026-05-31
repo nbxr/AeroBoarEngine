@@ -39,6 +39,7 @@ struct Material {
     // Bit 3: HasEmissiveTexture
     // Bit 4: IsEmissive
     // Bit 5: Transparent
+    // Bit 6: NormalMapFlipY (invert green channel - useful for some authored normal maps)
     uint32_t flags; // Material flags for shader branching
 
     // Padding to ensure 16-byte alignment for SSBO (80 bytes total)

@@ -69,6 +69,9 @@ class MeshManager {
     void toggle_buffers();  // exposed for Engine load-time commit (double-buffer swap)
     void shutdown();
 
+    // Force clear CPU-side mesh data (useful for debugging reloads / stale UV data)
+    void clear_all_caches();
+
     // Accessors for the first loaded primitive (used by the renderer)
     [[nodiscard]] uint32_t get_first_primitive_vertex_offset() const;
     [[nodiscard]] uint32_t get_first_primitive_index_offset() const;

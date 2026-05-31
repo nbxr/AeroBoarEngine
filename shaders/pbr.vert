@@ -53,9 +53,13 @@ void main() {
     uv.x = float((uvPacked >> 0) & 0xFFFFu) / 65535.0;
     uv.y = float((uvPacked >> 16) & 0xFFFFu) / 65535.0;
 
-    // glTF UVs are often top-left origin; flip V for correct texture orientation
-    // in Vulkan/OpenGL renderers. This fixes many "texture looks wrong" cases.
-    uv.y = 1.0 - uv.y;
+    // NOTE: We intentionally do NOT flip V here.
+    //
+    // glTF 2.0 defines UV origin at the top-left of the image (U right, V down).
+    // stb_image also loads images with (0,0) at top-left.
+    // When uploading directly to Vulkan, this matches the image data layout.
+    // Adding a 1.0 - uv.y flip was causing textures to sample from the bottom
+    // of the image (upside-down appearance) on correctly authored glTF assets.
 
     // Use the model matrix pushed per draw (Phase 1)
     mat4 modelMat = pc.model;

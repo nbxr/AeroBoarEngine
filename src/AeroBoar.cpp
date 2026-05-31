@@ -93,6 +93,10 @@ int AeroBoar::fly() {
                 cursor_captured = !cursor_captured;
                 glfwSetInputMode(engine.renderer.window.glfw_handle, GLFW_CURSOR,
                                  cursor_captured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+
+                // Prevent a large spurious mouse delta from being applied on the next frame
+                // when the cursor position "jumps" due to toggling capture mode.
+                engine.camera.reset_mouse_state();
             }
         }
         escape_was_pressed = escape_pressed;

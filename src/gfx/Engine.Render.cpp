@@ -134,7 +134,16 @@ void gfx::Engine::render() {
 
         pushData.viewProj = viewProj;
         pushData.model = inst.transform;
-        pushData.extra = glm::uvec4{inst.material_index, 0, 0, 0};
+
+        // === DEBUG MODE (optional) ===
+        // Set debugMode to non-zero values for diagnostics:
+        //   0 = Normal textured rendering (default)
+        //   1 = UV visualization (Red = U, Green = V)
+        //   2+ = Per-primitive color (each draw call gets its own color)
+        uint debugMode = 0;
+        uint primitiveHint = uint(i % 32);
+
+        pushData.extra = glm::uvec4{inst.material_index, debugMode + primitiveHint, 0, 0};
 
         vkCmdPushConstants(
             frame.command_buffer,
