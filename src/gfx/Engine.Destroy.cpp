@@ -1,5 +1,6 @@
 #include "gfx/Engine.h"
 #include "gfx/Renderer.h"
+#include "gfx/BufferUtils.h"
 #include "VkBootstrap.h"
 #include "vk_mem_alloc.h"
 
@@ -20,7 +21,11 @@ void gfx::Engine::destroy() {
     destroy_devices();
 }
 
-void gfx::Engine::destroy_buffers() {}
+void gfx::Engine::destroy_buffers() {
+    // Phase 2 lighting globals UBOs
+    gfx::BufferUtils::destroy_buffer(renderer.vk.device, renderer.allocator, renderer.frame_globals_buffer[0]);
+    gfx::BufferUtils::destroy_buffer(renderer.vk.device, renderer.allocator, renderer.frame_globals_buffer[1]);
+}
 
 void gfx::Engine::destroy_images() {
 

@@ -30,26 +30,37 @@ layout(push_constant) uniform PushConstants {
     mat4   viewProj;
     mat4   model;
     uvec4  extra;      // x = materialIndex
-    vec4   cameraPos;  // xyz = world-space camera position (w unused) — Phase 1 lighting
+    vec4   cameraPos;  // legacy (camera position now lives in FrameGlobals UBO)
 } pc;
 
 layout(location = 0) out vec4 outColor;
 
 // -----------------------------------------------------------------------------
-// Lighting (Phase 1 improvements — two analytic lights + proper GGX BRDF)
-// See docs/architecture/lighting-implementation.md for the full roadmap,
-// current vs. target math, Quest 3 constraints, and data design.
-// Phase 1: real Cook-Torrance + camera position + second fill light.
-// Future: binding 0 per-frame lights UBO, IBL (SH + prefilter), glTF lights.
+// Lighting (current model)
+// The engine provides a single reliable global directional light via the
+// FrameGlobals UBO (binding 0). This is the primary light source "for now".
+// Full per-scene lights (glTF KHR_lights_punctual), dynamic lights, and
+// production IBL are deferred to future work.
+// See docs/architecture/lighting-implementation.md for status and roadmap.
 // -----------------------------------------------------------------------------
 
-const vec3  LIGHT_DIR   = normalize(vec3(0.0, -1.0, 0.0)); // Directly overhead (Phase 1)
-const vec3  LIGHT_COLOR = vec3(1.0, 0.98, 0.95);
-const float LIGHT_INTENSITY = 1.0;
+layout(set = 0, binding = 0) uniform FrameGlobals {
+    vec4  cameraPosition;     // xyz = camera world position
+    float exposure;
+    uint  lightCount;
+    uint  padding0[2];
 
-// Improved ambient for Phase 1 (still constant; will become SH/IBL later)
-const vec3  AMBIENT       = vec3(0.02);   // slightly darker base
-const vec3  AMBIENT_TINT  = vec3(0.95, 0.98, 1.05); // very subtle cool tint
+    // Packed lights (see gfx::FrameGlobals)
+    vec4 lightDirectionsOrPositions[8];
+    vec4 lightColors[8];      // rgb + intensity in .a
+    vec4 lightParams[8];      // x=type, y=range, zw=spot angles
+
+    // Phase 3 IBL
+    vec4 shCoefficients[9];   // Diffuse SH (3-band)
+    uint specularEnvMapIndex;
+    uint brdfLutIndex;
+    uint padding1[2];
+} globals;
 
 const float PI = 3.14159265359;
 
@@ -134,22 +145,58 @@ void main() {
     N = getNormalFromMap(N, T, B, inUV, normalIdx, normalStr, materials[matIdx].flags);
 
     // -----------------------------------------------------------------
-    // Phase 1 improved lighting — proper Cook-Torrance GGX BRDF + 2 lights
-    // (see docs/architecture/lighting-implementation.md for full roadmap)
+    // Phase 2 lighting — data driven lights from binding 0 + proper GGX BRDF
+    // (see docs/architecture/lighting-implementation.md)
     // -----------------------------------------------------------------
-    vec3 V = normalize(pc.cameraPos.xyz - inWorldPos);  // Phase 1: real camera position for correct view vector
+    vec3 V = normalize(globals.cameraPosition.xyz - inWorldPos);
     vec3 F0 = mix(vec3(0.04), albedo.rgb, sampledMetal);
 
     vec3 color = vec3(0.0);
 
-    // Light 0 — original overhead (warm key)
-    {
-        vec3 L = LIGHT_DIR;
+    uint numLights = min(globals.lightCount, 8u);
+
+    for (uint i = 0u; i < numLights; ++i) {
+        uint lightType = uint(globals.lightParams[i].x + 0.5); // 0=dir, 1=point, 2=spot
+
+        vec3 L;
+        float attenuation = 1.0;
+
+        if (lightType == 0u) {
+            // Directional
+            L = normalize(globals.lightDirectionsOrPositions[i].xyz);
+        } else {
+            // Point or Spot
+            vec3 lightPos = globals.lightDirectionsOrPositions[i].xyz;
+            vec3 toLight = lightPos - inWorldPos;
+            float dist = length(toLight);
+            L = normalize(toLight);
+
+            float range = globals.lightParams[i].y;
+            if (range > 0.0) {
+                attenuation = max(0.0, 1.0 - (dist / range));
+                attenuation *= attenuation; // simple quadratic falloff
+            }
+
+            if (lightType == 2u) {
+                // Spot light
+                vec3 spotDir = normalize(globals.lightDirectionsOrPositions[i].xyz); // reuse for direction in this packing (simplified for Phase 2)
+                // Note: for real spot we would store direction separately. For now treat as point with cone.
+                float theta = dot(L, -spotDir); // simplified
+                float outer = globals.lightParams[i].w;
+                float inner = globals.lightParams[i].z;
+                float epsilon = inner - outer;
+                float spotAtten = clamp((theta - outer) / max(epsilon, 0.0001), 0.0, 1.0);
+                attenuation *= spotAtten;
+            }
+        }
+
         vec3 H = normalize(L + V);
         float NdotL = max(dot(N, L), 0.0);
         float NdotV = max(dot(N, V), 0.0);
         float NdotH = max(dot(N, H), 0.0);
         float LdotH = max(dot(L, H), 0.0);
+
+        if (NdotL <= 0.0) continue;
 
         float D = D_GGX(NdotH, sampledRough);
         vec3  F = F_Schlick(LdotH, F0);
@@ -159,34 +206,47 @@ void main() {
         vec3 kD = (1.0 - F) * (1.0 - sampledMetal);
         vec3 diff = kD * albedo.rgb / PI * NdotL;
 
-        color += (diff + spec) * LIGHT_COLOR * LIGHT_INTENSITY;
+        vec3 lightColor = globals.lightColors[i].rgb;
+        float intensity = globals.lightColors[i].a;
+
+        color += (diff + spec) * lightColor * intensity * attenuation;
     }
 
-    // Light 1 — Phase 1 demo fill/rim (cooler, from upper-right)
-    {
-        vec3 L = normalize(vec3(0.6, -0.4, 0.7));
-        vec3 Lc = vec3(0.6, 0.75, 0.95);
-        float Li = 0.45;
+    // -----------------------------------------------------------------
+    // Phase 3: IBL contribution (diffuse SH + stub for specular)
+    // -----------------------------------------------------------------
+    // Diffuse irradiance from spherical harmonics (3-band)
+    // (N was already computed and normal-mapped earlier in the function)
+    vec3 diffuseIBL = vec3(0.0);
 
-        vec3 H = normalize(L + V);
-        float NdotL = max(dot(N, L), 0.0);
-        float NdotV = max(dot(N, V), 0.0);
-        float NdotH = max(dot(N, H), 0.0);
-        float LdotH = max(dot(L, H), 0.0);
-
-        float D = D_GGX(NdotH, sampledRough);
-        vec3  F = F_Schlick(LdotH, F0);
-        float G = G_SmithGGX(NdotV, NdotL, sampledRough);
-
-        vec3 spec = (F * D * G) / max(4.0 * NdotV * NdotL, 0.0001);
-        vec3 kD = (1.0 - F) * (1.0 - sampledMetal);
-        vec3 diff = kD * albedo.rgb / PI * NdotL;
-
-        color += (diff + spec) * Lc * Li;
+    if (globals.shCoefficients[0].x > 0.0 || globals.shCoefficients[0].y > 0.0 || globals.shCoefficients[0].z > 0.0) {
+        // Standard 9-coefficient SH evaluation (L0 + L1 + L2)
+        diffuseIBL =
+            globals.shCoefficients[0].rgb +
+            globals.shCoefficients[1].rgb * N.y +
+            globals.shCoefficients[2].rgb * N.z +
+            globals.shCoefficients[3].rgb * N.x +
+            globals.shCoefficients[4].rgb * N.x * N.y +
+            globals.shCoefficients[5].rgb * N.y * N.z +
+            globals.shCoefficients[6].rgb * (3.0 * N.z * N.z - 1.0) * 0.5 +
+            globals.shCoefficients[7].rgb * N.z * N.x +
+            globals.shCoefficients[8].rgb * (N.x * N.x - N.y * N.y);
+    } else {
+        // Fallback simple ambient when no SH is provided
+        diffuseIBL = albedo.rgb * vec3(0.02) * vec3(0.95, 0.98, 1.05);
     }
 
-    // Ambient (Phase 1 improved constant + subtle tint)
-    color += albedo.rgb * AMBIENT * AMBIENT_TINT;
+    color += diffuseIBL * (1.0 - sampledMetal) * (1.0 - 0.3); // rough energy conservation hack
+
+    // Specular IBL stub (real split-sum requires prefiltered map + BRDF LUT)
+    // For now we leave it as future work. When maps are bound this can be expanded.
+    if (globals.specularEnvMapIndex != NO_TEXTURE && globals.brdfLutIndex != NO_TEXTURE) {
+        // Placeholder: in a full implementation you would sample the prefiltered cubemap
+        // using the reflection vector + roughness, then combine with BRDF LUT.
+        // For Phase 3 we at least have the plumbing ready.
+        vec3 R = reflect(-V, N);
+        // (left as exercise / next increment)
+    }
 
     // Emissive
     if (emissiveIdx != NO_TEXTURE) {

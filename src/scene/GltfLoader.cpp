@@ -214,6 +214,44 @@ scene::GltfLoader::extract_material_data(const std::string &filename,
     return material_lookup;
 }
 
+std::vector<gfx::Light>
+scene::GltfLoader::extract_light_data(const tinygltf::Model &model) {
+    std::vector<gfx::Light> lights;
+    lights.reserve(model.lights.size());
+
+    for (const auto& tinyLight : model.lights) {
+        gfx::Light l{};
+        l.intensity = static_cast<float>(tinyLight.intensity);
+
+        if (tinyLight.color.size() >= 3) {
+            l.color = glm::vec3(
+                static_cast<float>(tinyLight.color[0]),
+                static_cast<float>(tinyLight.color[1]),
+                static_cast<float>(tinyLight.color[2]));
+        } else {
+            l.color = glm::vec3(1.0f);
+        }
+
+        const std::string& t = tinyLight.type;
+        if (t == "directional") {
+            l.type = gfx::LightType::Directional;
+            l.positionOrDirection = glm::vec3(0.0f, -1.0f, 0.0f); // will be rotated by node if attached
+        } else if (t == "point") {
+            l.type = gfx::LightType::Point;
+            l.range = static_cast<float>(tinyLight.range);
+        } else if (t == "spot") {
+            l.type = gfx::LightType::Spot;
+            l.range = static_cast<float>(tinyLight.range);
+            l.innerConeAngle = static_cast<float>(tinyLight.spot.innerConeAngle);
+            l.outerConeAngle = static_cast<float>(tinyLight.spot.outerConeAngle);
+        }
+
+        lights.push_back(l);
+    }
+
+    return lights;
+}
+
 std::vector<gfx::MeshPrimitiveID>
 scene::GltfLoader::extract_mesh_data(const tinygltf::Model &model,
                                     gfx::Renderer &renderer) {

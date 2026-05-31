@@ -3,6 +3,7 @@
 #include "gfx/Renderer.h"
 #include "gfx/MaterialManager.h"
 #include "gfx/MeshData.h"
+#include "gfx/Light.h"
 
 // GLM configuration for Vulkan
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -29,6 +30,9 @@ class GltfLoader {
     static std::vector<gfx::MeshPrimitiveID>
     extract_mesh_data(const tinygltf::Model &model, gfx::Renderer &renderer);
     static glm::mat4 extract_node_transform(const tinygltf::Node &node);
+
+    // Phase 2 lighting: extract KHR_lights_punctual lights (if present)
+    static std::vector<gfx::Light> extract_light_data(const tinygltf::Model &model);
 
   private:
     static std::vector<double> value_or_ident(const std::vector<double> &value,

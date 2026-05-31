@@ -58,7 +58,7 @@ The single bindless descriptor set (allocated once, UPDATE_AFTER_BIND) uses thes
 
 | Binding | Type                          | Count  | Purpose / Consumers                  | Notes |
 |---------|-------------------------------|--------|--------------------------------------|-------|
-| 0       | UNIFORM_BUFFER                | 1      | Per-frame globals (future) — lighting (Phase 2+), camera, exposure | See lighting-implementation.md |
+| 0       | UNIFORM_BUFFER                | 1      | Per-frame globals — camera position + exposure + the engine's global directional light (current primary light source). Full multi-light / IBL data is future work. | See lighting-implementation.md for current model |
 | 1       | STORAGE_BUFFER                | 1      | SceneInstance (transform + mat/mesh indices) | `scene::SceneManager` |
 | 2       | STORAGE_BUFFER                | 1      | Materials (PBR + texture indices)    | `gfx::MaterialManager` |
 | 3       | STORAGE_BUFFER                | 1      | MeshPrimitiveSSBO metadata (v/i offsets) | `gfx::MeshManager` |

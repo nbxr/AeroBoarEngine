@@ -121,6 +121,15 @@ bool gfx::BufferUtils::update_descriptor(
     VkDevice device, const gfx::AllocatedBuffer &allocated_buffer,
     VkDescriptorSet descriptor_set, VkDeviceSize buffer_size,
     uint32_t binding_index) {
+    // Delegate to the version with explicit type (defaults to STORAGE_BUFFER for compatibility)
+    return update_descriptor(device, allocated_buffer, descriptor_set, buffer_size, binding_index,
+                             VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+}
+
+bool gfx::BufferUtils::update_descriptor(
+    VkDevice device, const gfx::AllocatedBuffer &allocated_buffer,
+    VkDescriptorSet descriptor_set, VkDeviceSize buffer_size,
+    uint32_t binding_index, VkDescriptorType descriptorType) {
 
     if (allocated_buffer.buffer == VK_NULL_HANDLE) {
         return false;
@@ -138,7 +147,7 @@ bool gfx::BufferUtils::update_descriptor(
     write.dstBinding = binding_index;
     write.dstArrayElement = 0;
     write.descriptorCount = 1;
-    write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    write.descriptorType = descriptorType;
     write.pBufferInfo = &buffer_info;
 
     vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);

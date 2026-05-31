@@ -4,6 +4,8 @@
 #include "gfx/VulkanContext.h"
 #include "gfx/PassContext.h"
 #include "scene/SceneInstance.h"
+#include "gfx/Light.h"
+#include "gfx/BufferUtils.h"
 
 // GLM configuration for Vulkan
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -114,10 +116,45 @@ void gfx::Engine::render() {
         glm::mat4 viewProj;
         glm::mat4 model;
         glm::uvec4 extra;   // x = materialIndex (for bindless material SSBO)
-        glm::vec4 cameraPos; // xyz = world camera position (Phase 1 lighting improvement)
+        glm::vec4 cameraPos; // legacy (camera position now lives in FrameGlobals UBO for lighting)
     } pushData{};
 
     // Bind index + vertex buffers (single large buffers; per-primitive offsets come from draw params)
+    // Phase 2: update per-frame globals UBO (camera position + lights)
+    {
+        uint32_t up = renderer.globals_upload;
+        auto* dst = static_cast<gfx::FrameGlobals*>(renderer.frame_globals_buffer[up].mapped_data);
+        if (dst) {
+            dst->cameraPosition = glm::vec4(camera.get_position(), 1.0f);
+            dst->exposure = 1.0f;
+
+            // Global light is the reliable primary light "for now".
+            // Re-apply it every frame so live tweaks to renderer.globalLight take effect.
+            if (renderer.globalLight.type == gfx::LightType::Directional) {
+                dst->lightDirectionsOrPositions[0] = glm::vec4(renderer.globalLight.positionOrDirection, 0.0f);
+                dst->lightColors[0] = glm::vec4(renderer.globalLight.color, renderer.globalLight.intensity);
+                dst->lightParams[0] = glm::vec4(
+                    static_cast<float>(renderer.globalLight.type),
+                    renderer.globalLight.range,
+                    renderer.globalLight.innerConeAngle,
+                    renderer.globalLight.outerConeAngle);
+            }
+
+            // Other lights (from glTF etc.) remain as set at load for now.
+            // Full dynamic scene lighting is future work.
+        }
+
+        // Write descriptor for the current render side (cheap, or we could do it only on toggle)
+        uint32_t renderIdx = renderer.globals_render;
+        gfx::BufferUtils::update_descriptor(
+            renderer.vk.device.device,
+            renderer.frame_globals_buffer[renderIdx],
+            renderer.vk.bindless_descriptor_set,
+            sizeof(gfx::FrameGlobals),
+            0,
+            VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+    }
+
     auto& index_buf = renderer.mesh_manager.get_render_index_buffer();
     vkCmdBindIndexBuffer(frame.command_buffer, index_buf.buffer, 0, VK_INDEX_TYPE_UINT32);
 

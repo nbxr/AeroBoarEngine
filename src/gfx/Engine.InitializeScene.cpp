@@ -3,6 +3,7 @@
 #include "gfx/Renderer.h"
 #include "scene/SceneManager.h"
 #include "gfx/TextureManager.h"
+#include "gfx/BufferUtils.h"
 #include "nlohmann/json.hpp"
 #include "tiny_gltf.h"
 #include <fstream>
@@ -88,6 +89,73 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     std::vector<MeshPrimitiveID> mesh_lookup =
         scene::GltfLoader::extract_mesh_data(model, renderer);
 
+    // Phase 2: extract KHR_lights_punctual lights (if any)
+    renderer.lights = scene::GltfLoader::extract_light_data(model);
+
+    // Populate initial FrameGlobals (lights + camera) into the upload side
+    {
+        uint32_t up = renderer.globals_upload;
+        auto* dst = static_cast<gfx::FrameGlobals*>(renderer.frame_globals_buffer[up].mapped_data);
+        if (dst) {
+            memset(dst, 0, sizeof(gfx::FrameGlobals));
+
+            // Camera (will be updated every frame in render too)
+            dst->cameraPosition = glm::vec4(camera.get_position(), 1.0f);
+            dst->exposure = 1.0f;
+
+            // Global light handling (current simplified model)
+            // The engine always provides one reliable global directional light.
+            // This is the primary light "for now". Full per-scene / glTF lighting is future work.
+            if (renderer.globalLight.type == gfx::LightType::Directional &&
+                glm::length(renderer.globalLight.positionOrDirection) < 0.001f) {
+                // Initialize a nice default global sun light if not yet configured
+                renderer.globalLight = {
+                    gfx::LightType::Directional,
+                    glm::vec3(0.0f, -1.0f, 0.0f),           // direction (overhead)
+                    glm::vec3(1.0f, 0.98f, 0.95f),          // warm sunlight color
+                    1.0f                                    // intensity
+                };
+            }
+
+            std::vector<gfx::Light> activeLights;
+            activeLights.push_back(renderer.globalLight);
+
+            // Scene lights from glTF are collected but not yet the primary source
+            // (we keep them for future expansion but currently rely on the global light).
+            // for (const auto& sl : renderer.lights) { ... }  // future work
+
+
+            dst->lightCount = std::min<uint32_t>(activeLights.size(), gfx::MAX_LIGHTS);
+            for (uint32_t i = 0; i < dst->lightCount; ++i) {
+                const auto& L = activeLights[i];
+                dst->lightDirectionsOrPositions[i] = glm::vec4(L.positionOrDirection, 0.0f);
+                dst->lightColors[i] = glm::vec4(L.color, L.intensity);
+                dst->lightParams[i] = glm::vec4(
+                    static_cast<float>(L.type),
+                    L.range,
+                    L.innerConeAngle,
+                    L.outerConeAngle);
+            }
+
+            // Phase 3 IBL defaults (simple cool-ish ambient SH + no maps yet)
+            // These are very rough L0 + L1 coefficients for a slightly blue ambient
+            dst->shCoefficients[0] = glm::vec4(0.15f, 0.18f, 0.22f, 0.0f); // L0
+            // Leave higher bands at zero for now (pure ambient)
+            for (int i = 1; i < 9; ++i) {
+                dst->shCoefficients[i] = glm::vec4(0.0f);
+            }
+
+            dst->specularEnvMapIndex = gfx::NO_TEXTURE;
+            dst->brdfLutIndex        = gfx::NO_TEXTURE;
+        }
+
+        // Mirror to render side for first frame (simple for Phase 2)
+        auto* renderDst = static_cast<gfx::FrameGlobals*>(renderer.frame_globals_buffer[renderer.globals_render].mapped_data);
+        if (renderDst && dst) {
+            memcpy(renderDst, dst, sizeof(gfx::FrameGlobals));
+        }
+    }
+
     // calculate offsets for material lookup based on primitives
     std::vector<size_t> prim_material_offsets{};
     prim_material_offsets.reserve(model.meshes.size());
@@ -109,7 +177,7 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
 
     // Safe GLTF traversal:
     // - Only process nodes that actually reference a mesh (skip cameras, lights, groups, etc.)
-    //   See docs/architecture/lighting-implementation.md for planned KHR_lights_punctual support (Phase 2).
+    //   See docs/architecture/lighting-implementation.md — glTF lights are extracted but the engine global light is the primary source for now.
     // - Respect the scene graph: start from the default scene roots and accumulate world transforms via children.
     // - Guard against prim.material == -1 (default material) and out-of-range indices.
     std::function<void(int, const glm::mat4&)> add_mesh_node = [&](int node_idx, const glm::mat4& parent_xform) {
@@ -204,6 +272,18 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     renderer.mesh_manager.bind_descriptor(3, 4, 5); // Mesh meta + vertex + index SSBOs
     renderer.texture_manager.bind_descriptor(6);    // Bindless textures (must be last binding)
 
+    // Phase 2 lighting: bind per-frame globals UBO (binding 0)
+    {
+        uint32_t renderIdx = renderer.globals_render;
+        gfx::BufferUtils::update_descriptor(
+            renderer.vk.device.device,
+            renderer.frame_globals_buffer[renderIdx],
+            renderer.vk.bindless_descriptor_set,
+            sizeof(gfx::FrameGlobals),
+            0,
+            VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+    }
+
     // Minimal glTF camera support: use author camera if present, otherwise fall back to AABB framing
     if (loaded_camera.valid) {
         camera.set_from_camera_node(loaded_camera.world_transform,
@@ -228,6 +308,17 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
 }
 
 void gfx::Engine::cleanup_scene() {
+    // Phase 2 lighting: clear lights and reset globals indices so reloads are safe
+    renderer.lights.clear();
+
+    // Reset globals double-buffer indices (simple safety)
+    renderer.globals_upload = 1;
+    renderer.globals_render = 0;
+
+    // TODO: In a fuller implementation we would also destroy/recreate the globals
+    // buffers here if supporting multiple scene loads without full engine restart.
+    // For now the buffers live for the lifetime of the Engine.
 
     // finally, clean up the scene manager
+    renderer.scene_manager.shutdown(); // existing (mostly empty) call
 }

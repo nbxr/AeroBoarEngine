@@ -21,10 +21,18 @@ bool resize_buffer(VkDevice device, VmaAllocator allocator,
 bool destroy_buffer(VkDevice device, VmaAllocator allocator,
                     AllocatedBuffer &allocated_buffer);
 
+// Legacy 5-param version (defaults to STORAGE_BUFFER) for existing call sites
 bool update_descriptor(VkDevice device,
                        const AllocatedBuffer &allocated_buffer,
                        VkDescriptorSet descriptor_set, VkDeviceSize buffer_size,
                        uint32_t binding_index);
+
+// Full version with explicit descriptor type (for UNIFORM_BUFFER etc.)
+bool update_descriptor(VkDevice device,
+                       const AllocatedBuffer &allocated_buffer,
+                       VkDescriptorSet descriptor_set, VkDeviceSize buffer_size,
+                       uint32_t binding_index,
+                       VkDescriptorType descriptorType);
 
 bool update_descriptor(VkDevice device,
                        std::vector<VkDescriptorImageInfo> &image_infos,

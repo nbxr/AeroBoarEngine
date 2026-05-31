@@ -38,7 +38,7 @@ Early foundation phase. A basic PBR forward renderer is now implemented and acti
 
 ## Current Focus Areas
 
-- Improving PBR quality (Phase 1 GGX BRDF + ambient complete; see lighting-implementation.md for status and next steps)
+- Improving PBR quality (proper GGX BRDF + reliable engine-provided global directional light via FrameGlobals UBO at binding 0; see lighting-implementation.md for exact current state)
 - Fixing remaining visual issues with the current asset (the loaded DamagedHelmet only contains a single material/primitive)
 - Cleaning up the temporary debug rendering path (raw SSBO vertex pulling, forced depth hack in debug shader)
 - Removing or properly guarding the diagnostic material coloring code
@@ -46,7 +46,7 @@ Early foundation phase. A basic PBR forward renderer is now implemented and acti
 
 ## Known Gaps / Not Yet Implemented
 
-- PBR lighting was extremely basic. Phase 1 (proper Cook-Torrance GGX BRDF + improved ambient) is now in `pbr.frag`. See the full explanation and roadmap in `docs/architecture/lighting-implementation.md`. Multi-light data upload and IBL remain future phases.
+- PBR lighting: We have a solid GGX BRDF. The engine now always provides one reliable global directional light (the primary light source "for now") through the FrameGlobals UBO (binding 0). glTF KHR_lights_punctual extraction exists but is not the active source. Full multi-light from scenes, dynamic lights, and production IBL (textured) are explicitly deferred. See `docs/architecture/lighting-implementation.md` for the precise current model and rough edges.
 - The currently configured DamagedHelmet asset only contains a single material/primitive, so all geometry uses the same textures.
 - Still using raw SSBO vertex pulling in shaders (no proper vertex input attributes).
 - No instancing or indirect draws yet (CPU loop of `vkCmdDrawIndexed` per primitive).
@@ -59,7 +59,7 @@ Early foundation phase. A basic PBR forward renderer is now implemented and acti
 
 ## Next Immediate Priorities
 
-- [Phase 1 done] Improve PBR lighting model — GGX BRDF + 2 analytic lights + real camera position (push constants). Full explanation + roadmap in `docs/architecture/lighting-implementation.md`. Binding 0 UBO + full multi-light data path planned for Phase 2.
+- Lighting is in a stable "good enough for now" state: proper GGX + one engine-owned global directional light. Remaining tasks (full glTF lights, IBL textures, spot lights, integration with future GameObject model, etc.) are intentionally deferred. See `docs/architecture/lighting-implementation.md` for the current model and documented rough edges.
 - [done] Switch from raw SSBO vertex pulling to proper vertex attribute input (pipeline + pbr.vert updated; vertex buffers now bound with VK_BUFFER_USAGE_VERTEX_BUFFER_BIT)
 - Investigate why the configured DamagedHelmet only has a single material (asset vs loading issue)
 - Add basic instancing or move toward indirect draws
