@@ -15,6 +15,33 @@ enum class CameraMode {
     VR         // Driven by OpenXR head tracking (future)
 };
 
+/**
+ * @brief 6DOF-style desktop development camera with quaternion-based orientation.
+ *
+ * Controls (Desktop mode):
+ * - WASD: Move forward/back/strafe left/right relative to current orientation.
+ * - Space / Left-Shift: Move up/down along the camera's local up vector.
+ * - Mouse (when captured): 
+ *     - X: Yaw (rotate left/right) around the camera's current Up vector.
+ *     - Y: Pitch up/down (direction controlled by `invert_pitch`).
+ * - Q / E: Roll the camera counterclockwise / clockwise around its forward axis.
+ * - R: Frame the camera on the loaded scene (AABB-based).
+ * - Escape: Toggle mouse capture.
+ *
+ * Public tunables:
+ * - `movement_speed`
+ * - `mouse_sensitivity`
+ * - `invert_pitch` (default false = normal behavior)
+ * - `fov_degrees`, `near_plane`, `far_plane`
+ *
+ * The camera maintains a quaternion `orientation` internally for robust 6DOF
+ * rotation (including roll). `get_view_matrix()` is derived from the current
+ * position + orientation.
+ *
+ * Note: The user may have applied personal sign tweaks inside the implementation
+ * to match their preferred feel. The public API and documented behavior above
+ * should be treated as the intended interface.
+ */
 class Camera {
 public:
     explicit Camera(GLFWwindow* glfwWindow = nullptr);

@@ -22,7 +22,18 @@ Early foundation phase. A basic PBR forward renderer is now implemented and acti
   - Metallic + Roughness (from metalRoughness texture or factors)
   - Emissive
   - Ambient Occlusion (separate texture)
-- Desktop `scene::Camera` system (WASD + mouse look, R to frame loaded scene)
+- Desktop `scene::Camera` system (fully documented in `src/scene/Camera.h`):
+  - Quaternion-based 6DOF orientation (full roll support).
+  - WASD: Move forward/back + strafe relative to current orientation.
+  - Space / Left-Shift: Move along the camera's local up / down.
+  - Mouse (when captured):
+    - X axis: Yaw (rotate left/right) around the camera's current Up vector.
+    - Y axis: Pitch (direction controlled by public `invert_pitch` flag; default = false = normal/non-inverted behavior).
+  - Q / E: Roll the camera counterclockwise / clockwise around its forward axis.
+  - R: Frame the view on the currently loaded scene (AABB-based).
+  - Escape: Toggle mouse capture (with safe mouse state reset).
+  - Public tunables: `movement_speed`, `mouse_sensitivity`, `invert_pitch`, `fov_degrees`, `near_plane`, `far_plane`.
+  - Note: The implementation contains personal sign adjustments chosen for comfortable desktop model inspection. The documented public behavior above is the intended interface.
 - `AGENTS.md` and shared documentation in `docs/agents/`
 
 ## Current Focus Areas

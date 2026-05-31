@@ -11,6 +11,7 @@ These files are intended to be read by any AI coding agent (Grok Build, Continue
 - `tech_context.md` — Core tech stack, libraries, and coding conventions.
 - `architecture_principles.md` — Key architectural patterns and Quest 3 optimization principles.
 - `current_state.md` — Lightweight view of where the project currently stands (what is done, what is in progress, major gaps).
+  - The `scene::Camera` desktop controls are documented in detail in `src/scene/Camera.h`.
 
 ## Usage
 

@@ -23,6 +23,10 @@
 - Keep CPU-side data (transforms, instances, etc.) lightweight and cache-friendly.
 - Namespaces: `core` (tiny universal utilities), `gfx` (all rendering/RHI/resources), `scene` (game object model + loading). See AGENTS.md for the current mapping.
 
+### Input & Camera
+The desktop `scene::Camera` is a quaternion-driven 6DOF camera intended for model/scene inspection during development.  
+See the class documentation in `src/scene/Camera.h` for the current control scheme and public configuration options (`invert_pitch`, sensitivity, speed, etc.). Internal sign conventions for pitch/yaw/roll have been adjusted to match expected desktop behavior (normal pitch by default).
+
 ## Resource Lifetime Rules
 
 **1. Vulkan Global (created once)**
