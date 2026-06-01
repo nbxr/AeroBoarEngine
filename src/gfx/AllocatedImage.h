@@ -8,6 +8,6 @@ struct AllocatedImage {
     VkImage handle{VK_NULL_HANDLE};
     VmaAllocation allocation{VK_NULL_HANDLE};
     VmaAllocationInfo info{};
-    VkImageView view{VK_NULL_HANDLE}; // often stored together
+    VkImageView view{VK_NULL_HANDLE};
 };
 }; // namespace gfx
