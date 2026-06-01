@@ -36,11 +36,11 @@ layout(push_constant) uniform PushConstants {
 layout(location = 0) out vec4 outColor;
 
 // -----------------------------------------------------------------------------
-// Lighting (current model)
-// The engine provides a single reliable global directional light via the
-// FrameGlobals UBO (binding 0). This is the primary light source "for now".
-// Full per-scene lights (glTF KHR_lights_punctual), dynamic lights, and
-// production IBL are deferred to future work.
+// Lighting (Phase 2+ model)
+// The engine populates FrameGlobals (binding 0) with 0..MAX_LIGHTS lights.
+// When the loaded glTF contains KHR_lights_punctual lights they are the active
+// source (world-transformed on CPU during load). Otherwise the engine global
+// directional fallback is used. Full IBL (textured) is still future work.
 // See docs/architecture/lighting-implementation.md for status and roadmap.
 // -----------------------------------------------------------------------------
 
@@ -145,8 +145,9 @@ void main() {
     N = getNormalFromMap(N, T, B, inUV, normalIdx, normalStr, materials[matIdx].flags);
 
     // -----------------------------------------------------------------
-    // Phase 2 lighting — data driven lights from binding 0 + proper GGX BRDF
-    // (see docs/architecture/lighting-implementation.md)
+    // Lighting — data driven from FrameGlobals (scene KHR_lights_punctual or
+    // engine global fallback) + proper GGX BRDF.
+    // See docs/architecture/lighting-implementation.md
     // -----------------------------------------------------------------
     vec3 V = normalize(globals.cameraPosition.xyz - inWorldPos);
     vec3 F0 = mix(vec3(0.04), albedo.rgb, sampledMetal);

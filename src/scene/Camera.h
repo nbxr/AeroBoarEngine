@@ -72,14 +72,21 @@ public:
     void set_position(const glm::vec3& position);
     [[nodiscard]] glm::vec3 get_position() const { return position; }
 
+    // Returns the world-space direction the camera is facing (our "front").
+    // Equivalent to normalize(orientation * vec3(0,0,-1)).
+    [[nodiscard]] glm::vec3 get_forward() const;
+
     // Frames the camera to nicely view a sphere (center + radius)
     void frame(const glm::vec3& center, float radius);
 
-    // Minimal support: apply a glTF camera node's world transform + projection params
+    // Minimal support: apply a glTF camera node's world transform + projection params.
+    // aspect_ratio (if > 0) comes from camera.perspective.aspectRatio in the glTF.
+    // When 0 we keep using the runtime window aspect in get_projection_matrix().
     void set_from_camera_node(const glm::mat4& world_transform,
                               float yfov_radians,
                               float znear,
-                              float zfar);
+                              float zfar,
+                              float aspect_ratio = 0.0f);
 
     // Resets internal mouse tracking state. Call this after toggling cursor capture
     // (e.g. with Escape) so that the next mouse delta does not cause a large jump.

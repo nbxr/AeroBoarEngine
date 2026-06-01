@@ -124,9 +124,14 @@ void gfx::Engine::render() {
             dst->cameraPosition = glm::vec4(camera.get_position(), 1.0f);
             dst->exposure = 1.0f;
 
-            // Global light is the reliable primary light "for now".
-            // Re-apply it every frame so live tweaks to renderer.globalLight take effect.
-            if (renderer.globalLight.type == gfx::LightType::Directional) {
+            // Camera position is updated every frame (correct for view-dependent BRDF).
+            // Lights: if the loaded scene provided KHR_lights_punctual lights (now the
+            // active source), we leave them exactly as written at load time (world
+            // transforms already applied). Only when no scene lights are present do we
+            // re-apply the engine globalLight every frame (allows live tweak via the
+            // public Renderer field for dev / empty scenes).
+            if (renderer.lights.empty() &&
+                renderer.globalLight.type == gfx::LightType::Directional) {
                 dst->lightDirectionsOrPositions[0] = glm::vec4(renderer.globalLight.positionOrDirection, 0.0f);
                 dst->lightColors[0] = glm::vec4(renderer.globalLight.color, renderer.globalLight.intensity);
                 dst->lightParams[0] = glm::vec4(
@@ -135,9 +140,6 @@ void gfx::Engine::render() {
                     renderer.globalLight.innerConeAngle,
                     renderer.globalLight.outerConeAngle);
             }
-
-            // Other lights (from glTF etc.) remain as set at load for now.
-            // Full dynamic scene lighting is future work.
         }
 
         // Write descriptor for the current render side (cheap, or we could do it only on toggle)
@@ -171,6 +173,12 @@ void gfx::Engine::render() {
         if (idx_cnt == 0)
             continue;
 
+        // Hierarchical transforms are fully resolved on the CPU during glTF loading
+        // (see add_mesh_node in Engine.InitializeScene.cpp). The world matrix stored
+        // in SceneInstance.transform is the final composed transform for that primitive.
+        // It is sent directly as the model matrix in the push constant.
+        // The vertex shader simply does: worldPos = model * localPos
+        // There is no additional hierarchy or skinning transform in the shader at this time.
         pushData.viewProj = viewProj;
         pushData.model = inst.transform;
         pushData.cameraPos = glm::vec4(camera.get_position(), 1.0f); // Phase 1 lighting: real view vector

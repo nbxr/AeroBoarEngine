@@ -2,6 +2,8 @@
 #include "core/InputManager.h"
 
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/matrix_inverse.hpp>
+#include <cstdio>
 #include <algorithm>
 
 namespace scene {
@@ -120,6 +122,10 @@ void Camera::set_position(const glm::vec3& pos) {
     position = pos;
 }
 
+glm::vec3 Camera::get_forward() const {
+    return glm::normalize(orientation * glm::vec3(0.0f, 0.0f, -1.0f));
+}
+
 void Camera::reset_mouse_state() {
     // Delegate to InputManager (which owns the tracking baseline and delta clearing)
     // so that capture toggles (Escape etc.) never produce jumps.
@@ -153,37 +159,61 @@ void Camera::frame(const glm::vec3& center, float radius) {
 void Camera::set_from_camera_node(const glm::mat4& world_transform,
                                   float yfov_radians,
                                   float znear,
-                                  float zfar)
+                                  float zfar,
+                                  float aspect_ratio)
 {
     // Position comes from the translation column of the node transform
     position = glm::vec3(world_transform[3]);
 
-    // Extract rotation from the glTF camera node's world transform
-    glm::mat3 rotMat = glm::mat3(world_transform);
+    // The upper 3x3 of the camera node's world transform is *already* the correct
+    // rotation matrix that takes the camera's local axes to world space.
+    //
+    // glTF camera convention (see KHR_lights_punctual and core glTF spec):
+    //   - The node's transform orients the camera in the scene.
+    //   - In the camera's local space, +Z points backward; therefore the camera
+    //     "looks" along local -Z.
+    //   - After the world transform, the look direction in world space is
+    //     therefore - (third column of the rotation part).
+    //
+    // scene::Camera convention (used by update_desktop, get_view_matrix, frame, etc.):
+    //   - "front" (the direction the camera is facing) is defined as
+    //     orientation * vec3(0, 0, -1)
+    //
+    // These two conventions line up perfectly. Therefore the correct implementation
+    // is simply:
+    //     orientation = quat_cast( mat3( camera_node_world_transform ) )
+    //
+    // No manual basis reconstruction or sign flipping is required.
+    glm::mat3 cameraRotation = glm::mat3(world_transform);
+    orientation = glm::quat_cast(cameraRotation);
 
-    // glTF cameras look along -Z after their transform
-    glm::vec3 newFront = -glm::normalize(rotMat[2]);
-    glm::vec3 newUp = glm::normalize(rotMat[1]);
+    // Derive look direction (for legacy yaw/pitch and diagnostics only)
+    glm::vec3 gltfLookDir = glm::normalize( -glm::vec3(cameraRotation[2]) );
 
-    // Build right from newFront and newUp to ensure orthonormal basis
-    glm::vec3 newRight = glm::normalize(glm::cross(newFront, newUp));
-    newUp = glm::cross(newRight, newFront); // re-orthogonalize
-
-    glm::mat3 finalRot(newRight, newUp, newFront);
-    orientation = glm::quat_cast(finalRot);
-
-    // Update legacy yaw/pitch
-    glm::vec3 forward = -newFront;
-    yaw = glm::degrees(std::atan2(forward.z, forward.x));
-    pitch = glm::degrees(std::asin(forward.y));
+    // Update legacy yaw/pitch for any code that still reads them (best-effort only)
+    yaw   = glm::degrees(std::atan2(gltfLookDir.z, gltfLookDir.x));
+    pitch = glm::degrees(std::asin(gltfLookDir.y));
 
     // Apply projection parameters from the glTF camera
     if (yfov_radians > 0.0f)
         fov_degrees = glm::degrees(yfov_radians);
+
+    if (aspect_ratio > 0.0f) {
+        // glTF provided an explicit aspectRatio for this camera.
+        // We currently always derive the projection from the runtime window aspect
+        // (so the view direction/position are correct, but the exact framing may
+        // differ if the window does not match the authored aspect).
+        // Future work: store the value and either force an initial window size
+        // or build a projection that respects the authored aspect + sensor fit.
+    }
+
     if (znear > 0.0f)
         near_plane = znear;
+
     if (zfar > 0.0f)
         far_plane = zfar;
+    else
+        far_plane = 100000.0f;   // glTF zfar == 0 means "infinite"
 }
 
 } // namespace scene

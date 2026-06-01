@@ -36,7 +36,10 @@ void main() {
     // Adding a 1.0 - uv.y flip was causing textures to sample from the bottom
     // of the image (upside-down appearance) on correctly authored glTF assets.
 
-    // Use the model matrix pushed per draw
+    // Use the model matrix pushed per draw.
+    // This is the *final world* transform after all hierarchical multiplications
+    // done on the CPU in the glTF loader (parent * local for every node in the chain).
+    // No additional hierarchy math happens in the shader.
     mat4 modelMat = pc.model;
 
     vec4 worldPos = modelMat * vec4(inPosition, 1.0);

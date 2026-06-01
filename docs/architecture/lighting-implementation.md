@@ -1,7 +1,7 @@
 # Lighting Implementation Guide
 
 **Current Lighting Model**:  
-One reliable engine-owned global directional light + correct GGX BRDF (via `FrameGlobals` UBO at binding 0). Everything else (per-scene lights, textured IBL, etc.) is deferred.
+Scene-driven lights via glTF `KHR_lights_punctual` (directional/point/spot, world transforms from node hierarchy) + correct GGX BRDF (via `FrameGlobals` UBO at binding 0). Engine global directional is the fallback when no scene lights are present. Textured IBL etc. still deferred.
 
 **Long-term Target**: High-quality, Quest 3 friendly PBR with IBL and efficient multi-light support.
 
@@ -21,8 +21,8 @@ The renderer uses a single forward pass with `pbr.vert` + `pbr.frag`.
 - Correct Cook-Torrance GGX BRDF with proper Fresnel, distribution, and geometry terms.
 - Basic diffuse spherical harmonic (SH) ambient contribution (very simple L0 fallback today).
 - Camera position is correctly provided for view-dependent lighting.
-- glTF `KHR_lights_punctual` extraction code exists but is **not** the active lighting source for now.
-- Full multi-light, spot lights, dynamic lights, and textured IBL (prefiltered cubemaps + BRDF LUT) are explicitly future work.
+- glTF `KHR_lights_punctual` extraction + world-transform application during load is now the active source for scenes that contain lights (e.g. DamagedHelmetScene). Engine global is fallback only.
+- Full multi-light (many lights, clustering), dynamic lights, shadows, and textured IBL (prefiltered cubemaps + BRDF LUT) are explicitly future work.
 
 This model is intentionally simple and reliable while the rest of the engine (scene model, culling, VR, etc.) matures.
 
@@ -68,12 +68,12 @@ The math is now production-ready for analytic lights; only the light source data
 
 ## 2. Limitations & Quest 3 Constraints
 
-- **Single light** (hardcoded direction in shader for Phase 1).
-- No dynamic or multiple lights from the scene.
-- No image-based lighting (reflections, diffuse environment).
-- Viewer position hack limits correctness on large scenes or when camera is not near origin.
-- glTF `KHR_lights_punctual` lights are ignored by `GltfLoader` (nodes with lights are skipped in the traversal comments).
+- **Limited lights per scene** (capped at MAX_LIGHTS=8 in UBO; fine for typical authored content).
+- No dynamic (per-frame) mutation of scene light properties/positions yet.
+- No image-based lighting (reflections, diffuse environment beyond the simple SH fallback).
+- glTF `KHR_lights_punctual` lights are now fully supported (extraction + node transform application).
 - No shadows (see `PassType::Shadow` scaffolding).
+- Spot light cone math uses a temporary packing hack (see Known Rough Edges).
 
 **Quest 3 (Adreno 740 / TBDR) realities** (from `architecture_principles.md`):
 - Every texture sample and DRAM round-trip is expensive.
@@ -114,22 +114,20 @@ Hardcoded single directional + constant ambient + fake specular (documented abov
 - Proper GGX BRDF implemented.
 - Two analytic lights + real camera position (via extended push constants).
 
-### Phase 2 — Data-Driven Lighting Foundation + Global Light (Current State)
-We built the infrastructure (FrameGlobals UBO, Light struct, glTF extraction, proper GGX), but have intentionally simplified the active model:
+### Phase 2 — Data-Driven Lighting Foundation + glTF Lights (Completed)
+We built the full infrastructure (FrameGlobals UBO at binding 0, `gfx::Light` + `FrameGlobals` layouts, `GltfLoader::extract_light_data`, world-transform application for light nodes during traversal using the node's final composed matrix, double-buffered upload, proper GGX + multi-light loop in shader).
 
-- The engine now owns and always provides **one global directional light** (`renderer.globalLight`).
-- This is written as the primary (and currently only active) light in the UBO.
-- The glTF light extraction code and multi-light loop in the shader exist and are kept for future expansion.
-- All the UBO, descriptor, and shader plumbing for more lights is in place.
+- When a glTF scene contains `KHR_lights_punctual` entries (and nodes referencing them), the lights are extracted, transformed into world space using their node hierarchy, and become the active lights written to the UBO (up to MAX_LIGHTS=8).
+- Engine `globalLight` is only used as fallback for scenes with no lights (and supports live tweak when active).
+- All three punctual types are supported in data; directional and point are fully wired in shader; spot has the known packing limitation noted in "Known Rough Edges".
+- Camera position, exposure, and basic SH ambient are provided every frame.
 
-**Current active behavior**: One clean global light + GGX BRDF. This is the supported model "for now".
+**Current active behavior**: Scene `KHR_lights_punctual` lights (or engine global fallback) + correct GGX BRDF. This is the supported production model for typical authored scenes.
 
-### Phase 2 — Full Analytic + glTF Lights
-- Multiple light types (directional + point + spot) with proper attenuation and cone for spots.
-- Load `KHR_lights_punctual` in `GltfLoader` (similar to materials).
-- Small `gfx::Light` struct + upload path (reuse or lightly extend the MaterialManager double-buffer idiom).
-- Real camera position passed every frame.
-- Basic exposure / tone mapping hook.
+### Phase 3 — IBL (Production Look)
+Basic diffuse SH coefficients are populated and evaluated in the shader as a simple ambient contribution.
+
+Full production IBL (real prefiltered specular cubemaps, BRDF LUT, proper asset pipeline, and textured environment) is deferred along with the rest of advanced lighting work. The UBO fields and shader hooks exist so we can pick this up cleanly later.
 
 ### Phase 3 — IBL (Production Look)
 Basic diffuse SH coefficients are populated and evaluated in the shader as a simple ambient contribution.
@@ -235,10 +233,32 @@ These were discovered during Phase 2 implementation and the subsequent shutdown 
 6. **Lighting data is not yet part of the main SceneInstance / future GameObject model**:
    - Lights are currently a flat list on `Renderer`. When we move to the full `GameObject` + `TransformManager` architecture, lights should be integrated properly (with transforms, etc.).
 
-7. **Current model is deliberately simplified**:
-   - We are using a single engine-owned global directional light as the primary (and currently only) light source. The more ambitious multi-light / glTF-driven / IBL system built during Phases 2–3 is kept as infrastructure but is not the active behavior. This is an explicit staging decision.
+7. **Spot light direction packing remains a known limitation** (documented in shader and Light.h):
+   - Direction for spots re-uses the position field in the current UBO layout; real separate direction storage + proper cone math is still TODO for full spot support.
 
-These should be addressed before shipping or before heavy use of scene reloading / multiple levels.
+8. **Scene lights are static after load**:
+   - No per-frame mutation of scene light positions/colors yet (globalLight fallback can still be tweaked live when no scene lights). Dynamic lights will need dirty tracking + proper double-buffer toggle for the globals.
+
+9. **Globals double-buffering / reload hygiene** (pre-existing):
+   - See earlier items in this list; still present.
+
+These (plus IBL, shadows, many-light clustering) are the remaining lighting work items.
+
+## Investigation in Progress (as of end of session)
+The data path for scene lights is complete and the diagnostics confirm values are reaching the shader. However, the point light in `DamagedHelmetScene.gltf` does not illuminate the model. The user is investigating glTF import correctness (node hierarchy, world transform accumulation for lights, physical intensity handling, and whether range=0 point lights need an explicit inverse-square term in the shader).
+
+Temporary diagnostic prints exist in `Engine.InitializeScene.cpp` for:
+- `[LIGHT-TRANSFORM]` (after applying node world transform to each extracted light)
+- Expanded `[LIGHTS]` block (exact values written into both sides of the FrameGlobals double buffer)
+
+These (plus the existing full hierarchy dump and camera pointing diagnostics) should be removed or guarded once the import bug is resolved.
+
+## Coordinate & Transform Notes for glTF Lights
+- All node world transforms are accumulated exactly once on the CPU during `load_scene` in the `add_mesh_node` traversal (meshes, cameras, and lights use the identical final composed matrix). The engine is strictly faithful to the glTF data (no global post-correction matrices).
+- **Directional lights** (per KHR_lights_punctual spec): the node orients a `(0,0,-1)` local emission direction (rays travel along local -Z). We store the opposite in `Light.positionOrDirection` (`= normalize(rot[2])`, the node's local +Z in world). This matches the `L` vector the shader expects for `NdotL = dot(N, L)`.
+- Point/spot positions are taken directly from the translation column of the node's final world matrix. Rotation/scale on the light node are ignored for position (per spec).
+
+**Historical note (2026)**: A global `BLENDER_CORRECTION` matrix (–90° X) was previously applied to every node's world transform to paper over common exporter artifacts from Blender. It was removed because it altered authored positions (especially lights) in standard +Y-up / +Z-forward glTF exports, producing incorrect lighting and camera framing relative to what the artist saw. The engine now trusts the glTF data exactly. If an asset needs correction, it should be fixed at export time in the DCC tool.
 
 ## References & Further Reading
 
@@ -250,6 +270,12 @@ These should be addressed before shipping or before heavy use of scene reloading
 
 ---
 
-**Current State (as of this update)**: Engine always provides one reliable global directional light + correct GGX BRDF. Full multi-light, IBL textures, and integration with the future scene model are deferred. See "Known Rough Edges" and the sections above for details.
+**Current State (end of session, 2026)**: 
+- Scene `KHR_lights_punctual` lights are extracted during `GltfLoader::extract_light_data`, their final world transforms (from the same `add_mesh_node` hierarchy traversal used for everything else) are captured, and the resulting values are written into `FrameGlobals` (binding 0). The multi-light GGX loop in `pbr.frag` consumes them.
+- A global `BLENDER_CORRECTION` matrix was introduced during camera/light debugging and has been completely removed. The engine now applies *only* the transforms exactly as present in the glTF file (policy: strict fidelity; export-time fixes only).
+- The count + per-light diagnostic logging (added during investigation) shows that the DamagedHelmetScene point light reaches the shader, but it produces no visible contribution on the model. The user is actively debugging why the asset is not importing correctly (likely transform, position, or intensity/falloff issues).
+- Engine `globalLight` fallback remains available for scenes without lights.
 
-**Maintained as of 2026**. Update this file when the active lighting model changes.
+See the "Historical note" in the Coordinate & Transform section above and the "Investigation in Progress" section for details.
+
+**Maintained as of 2026**. Update this file when the active lighting model changes or when the import investigation concludes.

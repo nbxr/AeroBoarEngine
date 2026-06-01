@@ -28,13 +28,14 @@ struct Renderer {
     TextureManager texture_manager{};
     scene::SceneManager scene_manager{};
 
-    // Simple global directional light that the engine always provides.
-    // This is the primary/reliable light for now. Scene-specific lights (from glTF etc.)
-    // are future work.
+    // Engine-owned fallback / dev light. Used only when the loaded scene has
+    // no KHR_lights_punctual lights. When a scene provides lights they become
+    // the active source (world transforms applied at load).
     gfx::Light globalLight{};
 
-    // Phase 2 lighting: lights extracted from the scene (KHR_lights_punctual or defaults)
-    // Currently not the primary source — see globalLight above.
+    // Lights extracted from the glTF via KHR_lights_punctual (if any).
+    // After load_scene these have been transformed into world space using
+    // their node hierarchy and are the primary lighting data sent to FrameGlobals.
     std::vector<gfx::Light> lights{};
 
     // Per-frame globals UBO (binding 0) - camera + lights + exposure

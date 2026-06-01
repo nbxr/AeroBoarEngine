@@ -503,3 +503,4 @@ glm::mat4 scene::GltfLoader::extract_node_transform(const tinygltf::Node &node) 
                glm::quat(rotation[0], rotation[1], rotation[2], rotation[3])) *
            glm::scale(glm::mat4(1.0f), glm::vec3(scale[0], scale[1], scale[2]));
 }
+
