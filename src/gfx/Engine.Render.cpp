@@ -6,6 +6,7 @@
 #include "scene/SceneInstance.h"
 #include "gfx/Light.h"
 #include "gfx/BufferUtils.h"
+#include "gfx/PbrPush.h"
 
 // GLM configuration for Vulkan
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -112,12 +113,7 @@ void gfx::Engine::render() {
 
     // Push constant struct matching pbr.vert / pbr.frag layout
     // (viewProj + model + uvec4 extra + cameraPos for Phase 1 lighting)
-    struct PbrPush {
-        glm::mat4 viewProj;
-        glm::mat4 model;
-        glm::uvec4 extra;   // x = materialIndex (for bindless material SSBO)
-        glm::vec4 cameraPos; // legacy (camera position now lives in FrameGlobals UBO for lighting)
-    } pushData{};
+    gfx::PbrPush pushData{};
 
     // Bind index + vertex buffers (single large buffers; per-primitive offsets come from draw params)
     // Phase 2: update per-frame globals UBO (camera position + lights)
