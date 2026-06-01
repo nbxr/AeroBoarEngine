@@ -6,7 +6,13 @@
 
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
-#include <GLFW/glfw3.h>
+
+// Forward declarations to avoid pulling GLFW into the public Camera header
+struct GLFWwindow;
+
+namespace core {
+class InputManager;
+}
 
 namespace scene {
 
@@ -26,7 +32,7 @@ enum class CameraMode {
  *     - Y: Pitch up/down (direction controlled by `invert_pitch`).
  * - Q / E: Roll the camera counterclockwise / clockwise around its forward axis.
  * - R: Frame the camera on the loaded scene (AABB-based).
- * - Escape: Toggle mouse capture.
+ * - Escape: Toggle mouse capture (robust jump prevention is handled by InputManager).
  *
  * Public tunables:
  * - `movement_speed`
@@ -50,7 +56,11 @@ public:
     [[nodiscard]] CameraMode get_mode() const { return mode; }
 
     // Main update - call once per frame
-    void update(float delta_time);
+    // input: provides processed keyboard + smoothed mouse deltas (and capture state)
+    void update(float delta_time, core::InputManager& input);
+
+    // TODO(desktop-input): Consider exposing runtime tuning for smoothing/acceleration
+    // (currently only available via InputManager setters) or a small debug UI.
 
     [[nodiscard]] glm::mat4 get_view_matrix() const;
     [[nodiscard]] glm::mat4 get_projection_matrix(float aspect_ratio) const;
@@ -98,15 +108,10 @@ private:
     float yaw = -90.0f;
     float pitch = 0.0f;
 
-    // Mouse state (desktop mode)
-    double last_mouse_x = 0.0;
-    double last_mouse_y = 0.0;
-    bool first_mouse = true;
-
     // VR override
     glm::mat4 vr_view_matrix{1.0f};
 
-    void update_desktop(float delta_time);
+    void update_desktop(float delta_time, core::InputManager& input);
 };
 
 } // namespace scene

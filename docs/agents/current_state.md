@@ -31,9 +31,16 @@ Early foundation phase. A basic PBR forward renderer is now implemented and acti
     - Y axis: Pitch (direction controlled by public `invert_pitch` flag; default = false = normal/non-inverted behavior).
   - Q / E: Roll the camera counterclockwise / clockwise around its forward axis.
   - R: Frame the view on the currently loaded scene (AABB-based).
-  - Escape: Toggle mouse capture (with safe mouse state reset).
+  - Escape: Toggle mouse capture (robust jump prevention handled by InputManager).
   - Public tunables: `movement_speed`, `mouse_sensitivity`, `invert_pitch`, `fov_degrees`, `near_plane`, `far_plane`.
   - Note: The implementation contains personal sign adjustments chosen for comfortable desktop model inspection. The documented public behavior above is the intended interface.
+- `core::InputManager` (desktop GLFW input layer):
+  - High-precision mouse delta tracking via `glfwSetCursorPosCallback` (sub-frame accumulation).
+  - Per-frame processing: non-linear mouse acceleration + EWMA temporal smoothing.
+  - Keyboard + mouse button state.
+  - Centralized cursor capture handling (`set_cursor_captured`) with automatic tracking reset to prevent jumps on Escape toggles.
+  - Decouples raw input from `scene::Camera` (Camera now receives an `InputManager&` and queries processed deltas/keys).
+  - See `docs/architecture/desktop-inputs.md` for full design rationale.
 - `AGENTS.md` and shared documentation in `docs/agents/`
 
 ## Current Focus Areas
@@ -55,7 +62,7 @@ Early foundation phase. A basic PBR forward renderer is now implemented and acti
 - No indirect drawing
 - No OpenXR / VR input layer (desktop GLFW only)
 - Scene model is still the simple flat `SceneInstance` (the full `GameObject` / `RenderMesh` + `TransformManager` SOA is future work)
-- No physics, audio, or higher-level input abstraction
+- No physics, audio, or higher-level input abstraction (desktop input layer is now complete via `core::InputManager`)
 
 ## Next Immediate Priorities
 
@@ -65,6 +72,7 @@ Early foundation phase. A basic PBR forward renderer is now implemented and acti
 - Add basic instancing or move toward indirect draws
 - Remove or clean up remaining debug/diagnostic code in the PBR path
 - Begin planning the transition from flat `SceneInstance` toward the full game-object model + GPU-driven culling
+- [done] Desktop input layer: `core::InputManager` (callback-driven deltas + EWMA + acceleration + capture state) + full decoupling from `scene::Camera` (see `docs/architecture/desktop-inputs.md` and the implementation plan). Pitch sign convention restored to original comfortable default.
 
 ## GPU Upload Path (Completed)
 The one-time scene upload at load is now fully wired:

@@ -1,4 +1,5 @@
 #include "scene/Camera.h"
+#include "core/InputManager.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
@@ -8,10 +9,6 @@ namespace scene {
 Camera::Camera(GLFWwindow* glfwWindow)
     : window(glfwWindow)
 {
-    if (window) {
-        glfwGetCursorPos(window, &last_mouse_x, &last_mouse_y);
-    }
-
     // Better default position for typical loaded scenes (e.g. DamagedHelmet at ~origin)
     position = {0.0f, 3.0f, 10.0f};
     yaw = -90.0f;
@@ -25,22 +22,19 @@ Camera::Camera(GLFWwindow* glfwWindow)
 void Camera::set_mode(CameraMode new_mode) {
     mode = new_mode;
 
-    if (mode == CameraMode::Desktop && window) {
-        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-        first_mouse = true;
-    } else if (mode == CameraMode::Desktop && window) {
-        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-    }
+    // Cursor capture is now driven via core::InputManager::set_cursor_captured()
+    // (called from the main loop or higher input handling). This keeps
+    // scene::Camera decoupled from GLFW details.
 }
 
-void Camera::update(float delta_time) {
+void Camera::update(float delta_time, core::InputManager& input) {
     if (mode == CameraMode::Desktop) {
-        update_desktop(delta_time);
+        update_desktop(delta_time, input);
     }
     // VR mode: view matrix is set externally via set_vr_view_matrix()
 }
 
-void Camera::update_desktop(float delta_time) {
+void Camera::update_desktop(float delta_time, core::InputManager& input) {
     if (!window) return;
 
     // Get current basis from orientation
@@ -51,66 +45,55 @@ void Camera::update_desktop(float delta_time) {
     float velocity = movement_speed * delta_time;
 
     // === Keyboard movement (now fully camera-relative) ===
-    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+    if (input.is_key_down(GLFW_KEY_W))
         position += front * velocity;
-    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+    if (input.is_key_down(GLFW_KEY_S))
         position -= front * velocity;
-    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+    if (input.is_key_down(GLFW_KEY_A))
         position -= right * velocity;
-    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+    if (input.is_key_down(GLFW_KEY_D))
         position += right * velocity;
-    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS)
+    if (input.is_key_down(GLFW_KEY_SPACE))
         position += camera_up * velocity;
-    if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS)
+    if (input.is_key_down(GLFW_KEY_LEFT_SHIFT))
         position -= camera_up * velocity;
 
     // === Q/E Roll (around camera forward) ===
     float rollSpeed = 90.0f; // degrees per second
-    if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) {
+    if (input.is_key_down(GLFW_KEY_Q)) {
         // Q = roll counterclockwise from the user's perspective when looking forward
         glm::quat roll = glm::angleAxis(glm::radians(-rollSpeed * delta_time), front);
         orientation = glm::normalize(roll * orientation);
     }
-    if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) {
+    if (input.is_key_down(GLFW_KEY_E)) {
         // E = roll clockwise from the user's perspective
         glm::quat roll = glm::angleAxis(glm::radians(+rollSpeed * delta_time), front);
         orientation = glm::normalize(roll * orientation);
     }
 
-    // === Mouse look ===
-    if (glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED) {
-        double xpos, ypos;
-        glfwGetCursorPos(window, &xpos, &ypos);
+    // === Mouse look (only while cursor is captured; deltas come pre-smoothed/accelerated from InputManager) ===
+    if (input.is_cursor_captured()) {
+        glm::vec2 mouse_delta = input.get_mouse_delta();
+        float xoffset = mouse_delta.x * mouse_sensitivity;
 
-        if (first_mouse) {
-            last_mouse_x = xpos;
-            last_mouse_y = ypos;
-            first_mouse = false;
-        }
+        // Negate Y delta to match the original comfortable desktop sign convention
+        // (last_y - current_y behavior from the pre-refactor polling code).
+        // With invert_pitch=false (default): mouse down → camera looks down.
+        float yoffset = -mouse_delta.y * mouse_sensitivity;
 
-        double xoffset = xpos - last_mouse_x;
-        double yoffset = last_mouse_y - ypos;
-        last_mouse_x = xpos;
-        last_mouse_y = ypos;
-
-        xoffset *= mouse_sensitivity;
-        yoffset *= mouse_sensitivity;
-
-        // 1. Mouse X now yaws around the camera's current Up (requirement #1)
-        if (xoffset != 0.0) {
-            glm::quat yawRot = glm::angleAxis(glm::radians(static_cast<float>(-xoffset)), camera_up);
+        // 1. Mouse X now yaws around the camera's current Up
+        if (xoffset != 0.0f) {
+            glm::quat yawRot = glm::angleAxis(glm::radians(-xoffset), camera_up);
             orientation = glm::normalize(yawRot * orientation);
         }
 
         // 2. Mouse Y pitches around the camera's current Right.
         // invert_pitch controls whether mouse down makes the camera look up or down.
-        if (yoffset != 0.0) {
+        if (yoffset != 0.0f) {
             float pitch_sign = invert_pitch ? -1.0f : +1.0f;
-            glm::quat pitchRot = glm::angleAxis(glm::radians(pitch_sign * static_cast<float>(yoffset)), right);
+            glm::quat pitchRot = glm::angleAxis(glm::radians(pitch_sign * yoffset), right);
             orientation = glm::normalize(pitchRot * orientation);
         }
-    } else {
-        first_mouse = true;
     }
 }
 
@@ -138,7 +121,9 @@ void Camera::set_position(const glm::vec3& pos) {
 }
 
 void Camera::reset_mouse_state() {
-    first_mouse = true;
+    // Delegate to InputManager (which owns the tracking baseline and delta clearing)
+    // so that capture toggles (Escape etc.) never produce jumps.
+    core::InputManager::get_instance().reset_mouse_state();
 }
 
 void Camera::frame(const glm::vec3& center, float radius) {

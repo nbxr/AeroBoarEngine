@@ -4,6 +4,7 @@
 #include "gfx/Engine.h"
 #include "gfx/Renderer.h"
 #include "scene/Camera.h"
+#include "core/InputManager.h"
 #include <GLFW/glfw3.h>
 
 int AeroBoar::fly() {
@@ -33,6 +34,8 @@ int AeroBoar::fly() {
     // Initialize camera (desktop mode by default)
     engine.camera = scene::Camera(engine.renderer.window.glfw_handle);
     engine.camera.set_mode(scene::CameraMode::Desktop);
+    core::InputManager::get_instance().initialize(engine.renderer.window.glfw_handle);
+    core::InputManager::get_instance().set_cursor_captured(true);
 
     // Make the window's context current
     glfwMakeContextCurrent(engine.renderer.window.glfw_handle);
@@ -62,6 +65,7 @@ int AeroBoar::fly() {
 
         // poll for window events
         glfwPollEvents();
+        core::InputManager::get_instance().update(delta_time);
 
         // handle resizing
         int width, height;
@@ -82,28 +86,24 @@ int AeroBoar::fly() {
         }
 
         // Update camera (desktop WASD + mouse for now)
-        engine.camera.update(delta_time);
+        auto& input = core::InputManager::get_instance();
+        engine.camera.update(delta_time, input);
 
         // Simple Escape handling to toggle cursor capture (desktop only)
         static bool escape_was_pressed = false;
-        bool escape_pressed = glfwGetKey(engine.renderer.window.glfw_handle, GLFW_KEY_ESCAPE) == GLFW_PRESS;
+        bool escape_pressed = input.is_key_down(GLFW_KEY_ESCAPE);
         if (escape_pressed && !escape_was_pressed) {
             if (engine.camera.get_mode() == scene::CameraMode::Desktop) {
-                static bool cursor_captured = true;
-                cursor_captured = !cursor_captured;
-                glfwSetInputMode(engine.renderer.window.glfw_handle, GLFW_CURSOR,
-                                 cursor_captured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
-
-                // Prevent a large spurious mouse delta from being applied on the next frame
-                // when the cursor position "jumps" due to toggling capture mode.
-                engine.camera.reset_mouse_state();
+                bool currently = input.is_cursor_captured();
+                input.set_cursor_captured(!currently);
+                // set_cursor_captured() internally resets mouse tracking to prevent jumps.
             }
         }
         escape_was_pressed = escape_pressed;
 
         // R key: re-frame camera on the first object in the scene (debug)
         static bool r_was_pressed = false;
-        bool r_pressed = glfwGetKey(engine.renderer.window.glfw_handle, GLFW_KEY_R) == GLFW_PRESS;
+        bool r_pressed = input.is_key_down(GLFW_KEY_R);
         if (r_pressed && !r_was_pressed) {
             auto [center, radius] = engine.renderer.scene_manager.get_first_instance_framing_sphere();
             engine.camera.frame(center, radius);

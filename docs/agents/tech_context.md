@@ -22,10 +22,20 @@
 - Prefer transient and lazily allocated memory for MSAA color and depth to keep data in GMEM when possible.
 - Keep CPU-side data (transforms, instances, etc.) lightweight and cache-friendly.
 - Namespaces: `core` (tiny universal utilities), `gfx` (all rendering/RHI/resources), `scene` (game object model + loading). See AGENTS.md for the current mapping.
+- **Include Guards:** always use `#pragma once` instead of `#ifndef` and `#define`
 
 ### Input & Camera
 The desktop `scene::Camera` is a quaternion-driven 6DOF camera intended for model/scene inspection during development.  
 See the class documentation in `src/scene/Camera.h` for the current control scheme and public configuration options (`invert_pitch`, sensitivity, speed, etc.). Internal sign conventions for pitch/yaw/roll have been adjusted to match expected desktop behavior (normal pitch by default).
+
+A `core::InputManager` provides the desktop input layer:
+- High-precision mouse deltas via GLFW callbacks (sub-frame accumulation instead of per-frame polling).
+- Per-frame processing: non-linear acceleration + EWMA smoothing.
+- Keyboard/mouse-button state queries.
+- Centralized cursor capture (`set_cursor_captured`) with automatic delta reset to prevent jumps on Escape.
+- `Camera` now receives an `InputManager&` (decoupling raw GLFW details from the scene layer).
+
+See `docs/architecture/desktop-inputs.md` for the full design (including rationale for singleton + user-pointer dispatch and config ownership split). The implementation is complete (see the companion implementation plan).
 
 ## Resource Lifetime Rules
 
