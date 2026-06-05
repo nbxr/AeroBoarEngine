@@ -77,7 +77,7 @@ private:
     // These defaults were chosen empirically for comfortable desktop model/scene
     // inspection on Linux (responsive without feeling laggy or jittery).
     // They can be adjusted at runtime via the setters for different mice / DPI / preference.
-    float smoothing_alpha = 0.35f;     // EWMA smoothing factor (higher = more lag, more stable)
+    float smoothing_alpha = 0.75f;     // EWMA smoothing factor (higher = more lag, more stable)
     float acceleration_scale = 0.008f; // Controls non-linear boost: acceleration = 1.0 + (mag * scale)
 };
 

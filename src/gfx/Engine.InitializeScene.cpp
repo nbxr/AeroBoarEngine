@@ -89,6 +89,28 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     std::vector<MaterialID> material_lookup =
         scene::GltfLoader::extract_material_data(filename, model, renderer);
 
+    // Ensure at least one material exists (e.g. minimal test scenes like Cameras.gltf
+    // define geometry but no materials array, and primitives may omit "material").
+    // The shader treats NO_TEXTURE indices by falling back to the factor values.
+    if (material_lookup.empty()) {
+        gfx::Material def{};
+        def.albedo = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
+        def.roughness = 0.5f;
+        def.metallic = 0.0f;
+        def.emissive = 0.0f;
+        def.normalStrength = 1.0f;
+        def.albedo_texture_index = gfx::Material::NO_TEXTURE;
+        def.normal_texture_index = gfx::Material::NO_TEXTURE;
+        def.roughness_texture_index = gfx::Material::NO_TEXTURE;
+        def.emissive_texture_index = gfx::Material::NO_TEXTURE;
+        def.ao_texture_index = gfx::Material::NO_TEXTURE;
+        def.sampler_index = gfx::Material::NO_TEXTURE;
+        def.flags = 0;
+        MaterialID def_id = renderer.material_manager.create_material(def);
+        material_lookup.push_back(def_id);
+        printf("[GLTF] No materials in file; injected default white material for geometry.\n");
+    }
+
     // get meshes using lookup to store material ID on MeshData
     std::vector<MeshPrimitiveID> mesh_lookup =
         scene::GltfLoader::extract_mesh_data(model, renderer);

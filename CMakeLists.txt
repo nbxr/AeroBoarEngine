@@ -78,6 +78,30 @@ if(GLSLC_AVAILABLE)
 endif()
 
 # -----------------------------------------------------------------------------
+# Asset / configuration copying
+# (Uses OUTPUT + DEPENDS so that *only* changing configuration.json will
+#  cause a re-copy on the next `cmake --build`, without needing to touch C++ sources.)
+# -----------------------------------------------------------------------------
+set(CONFIG_SOURCE ${CMAKE_SOURCE_DIR}/assets/scenes/configuration.json)
+set(CONFIG_DEST   ${CMAKE_BINARY_DIR}/assets/scenes/configuration.json)
+
+file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/assets/scenes)
+
+add_custom_command(
+    OUTPUT ${CONFIG_DEST}
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CONFIG_SOURCE}
+            ${CONFIG_DEST}
+    DEPENDS ${CONFIG_SOURCE}
+    COMMENT "Copying configuration.json to build directory"
+)
+
+add_custom_target(copy_configuration ALL
+    DEPENDS ${CONFIG_DEST}
+    COMMENT "Ensure configuration is up-to-date in build tree"
+)
+
+# -----------------------------------------------------------------------------
 # Dependencies
 # -----------------------------------------------------------------------------
 
@@ -191,7 +215,10 @@ add_executable(Aero_Boar_Engine
     src/gfx/TextureManager.cpp
 )
 
-# Make shaders available during build
+# Make sure configuration + (optionally) shaders are available during build.
+# The copy_configuration target has proper DEPENDS on the source json,
+# so editing only the .json will cause the copy step to run.
+add_dependencies(Aero_Boar_Engine copy_configuration)
 if(GLSLC_AVAILABLE)
     add_dependencies(Aero_Boar_Engine compile_shaders)
 endif()
@@ -216,14 +243,6 @@ target_link_libraries(Aero_Boar_Engine PRIVATE
     glm::glm
 )
 
-# Copy configuration to build directory after compilation
-add_custom_command(
-    TARGET Aero_Boar_Engine POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy
-    ${CMAKE_SOURCE_DIR}//assets/scenes/configuration.json
-    ${CMAKE_BINARY_DIR}/assets/scenes/configuration.json
-    COMMENT "Copying configuration to build directory"
-)
 
 # Copy shaders to build directory after compilation (optional, for easier deployment)
 if(GLSLC_AVAILABLE)

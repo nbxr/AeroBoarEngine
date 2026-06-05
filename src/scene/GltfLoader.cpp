@@ -134,6 +134,13 @@ scene::GltfLoader::extract_material_data(const std::string &filename,
     // create materials in the material manager using the proper typed glTF structures
     for (const auto &mat : model.materials) {
         gfx::Material material{};
+        material.albedo_texture_index = gfx::Material::NO_TEXTURE;
+        material.normal_texture_index = gfx::Material::NO_TEXTURE;
+        material.roughness_texture_index = gfx::Material::NO_TEXTURE;
+        material.emissive_texture_index = gfx::Material::NO_TEXTURE;
+        material.ao_texture_index = gfx::Material::NO_TEXTURE;
+        material.sampler_index = gfx::Material::NO_TEXTURE;
+        material.flags = 0;
 
         // --- PBR base values (with correct glTF 2.0 defaults) ---
         const auto& pbr = mat.pbrMetallicRoughness;
@@ -262,39 +269,56 @@ scene::GltfLoader::extract_mesh_data(const tinygltf::Model &model,
 
     for (const auto &mesh : model.meshes) {
         for (const auto &primitive : mesh.primitives) {
-            if (primitive.mode != TINYGLTF_MODE_TRIANGLES)
+            // glTF default primitive mode is TRIANGLES (4) when omitted (many minimal
+            // test assets like Cameras.gltf do not specify "mode").
+            int mode = (primitive.mode >= 0) ? primitive.mode : TINYGLTF_MODE_TRIANGLES;
+            if (mode != TINYGLTF_MODE_TRIANGLES)
                 continue;
 
-            // Early outs
+            // POSITION is mandatory for anything we can render. NORMAL and TEXCOORD_0
+            // are optional: we synthesize flat normal (0,0,1) and zero UVs so that
+            // minimal test scenes (pure camera tests, simple proxy geo) still load.
             auto pos_it = primitive.attributes.find("POSITION");
-            auto norm_it = primitive.attributes.find("NORMAL");
-            auto tex_it = primitive.attributes.find("TEXCOORD_0");
-
-            if (pos_it == primitive.attributes.end() ||
-                norm_it == primitive.attributes.end() ||
-                tex_it == primitive.attributes.end()) {
+            if (pos_it == primitive.attributes.end())
                 continue;
-            }
 
             const auto &pos_acc = model.accessors[pos_it->second];
-            const auto &norm_acc = model.accessors[norm_it->second];
-            const auto &tex_acc = model.accessors[tex_it->second];
-
             if (pos_acc.componentType != TINYGLTF_COMPONENT_TYPE_FLOAT ||
                 pos_acc.type != TINYGLTF_TYPE_VEC3)
                 continue;
 
-            // Accept common TEXCOORD_0 formats (FLOAT + normalized integers)
-            bool texcoord_ok =
-                (tex_acc.type == TINYGLTF_TYPE_VEC2) &&
-                (tex_acc.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT ||
-                 tex_acc.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT ||
-                 tex_acc.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE ||
-                 tex_acc.componentType == TINYGLTF_COMPONENT_TYPE_SHORT ||
-                 tex_acc.componentType == TINYGLTF_COMPONENT_TYPE_BYTE);
+            auto norm_it = primitive.attributes.find("NORMAL");
+            auto tex_it = primitive.attributes.find("TEXCOORD_0");
 
-            if (!texcoord_ok)
-                continue;
+            bool has_normal = (norm_it != primitive.attributes.end());
+            bool has_tex0   = (tex_it != primitive.attributes.end());
+
+            const tinygltf::Accessor *norm_acc_ptr = nullptr;
+            const tinygltf::Accessor *tex_acc_ptr  = nullptr;
+
+            if (has_normal) {
+                norm_acc_ptr = &model.accessors[norm_it->second];
+                if (norm_acc_ptr->componentType != TINYGLTF_COMPONENT_TYPE_FLOAT ||
+                    norm_acc_ptr->type != TINYGLTF_TYPE_VEC3) {
+                    has_normal = false;
+                    norm_acc_ptr = nullptr;
+                }
+            }
+
+            if (has_tex0) {
+                tex_acc_ptr = &model.accessors[tex_it->second];
+                bool texcoord_ok =
+                    (tex_acc_ptr->type == TINYGLTF_TYPE_VEC2) &&
+                    (tex_acc_ptr->componentType == TINYGLTF_COMPONENT_TYPE_FLOAT ||
+                     tex_acc_ptr->componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT ||
+                     tex_acc_ptr->componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE ||
+                     tex_acc_ptr->componentType == TINYGLTF_COMPONENT_TYPE_SHORT ||
+                     tex_acc_ptr->componentType == TINYGLTF_COMPONENT_TYPE_BYTE);
+                if (!texcoord_ok) {
+                    has_tex0 = false;
+                    tex_acc_ptr = nullptr;
+                }
+            }
 
             const size_t num_vertices = pos_acc.count;
 
@@ -324,17 +348,18 @@ scene::GltfLoader::extract_mesh_data(const tinygltf::Model &model,
             }
 
             const uint8_t *pos_ptr = get_accessor_data(pos_acc);
-            const uint8_t *norm_ptr = get_accessor_data(norm_acc);
+            const uint8_t *norm_ptr = has_normal && norm_acc_ptr ? get_accessor_data(*norm_acc_ptr) : nullptr;
 
             int pos_stride =
                 pos_acc.ByteStride(model.bufferViews[pos_acc.bufferView]);
-            int norm_stride =
-                norm_acc.ByteStride(model.bufferViews[norm_acc.bufferView]);
+            int norm_stride = 12;
+            if (has_normal && norm_acc_ptr) {
+                norm_stride = norm_acc_ptr->ByteStride(model.bufferViews[norm_acc_ptr->bufferView]);
+                if (norm_stride == 0) norm_stride = 12;
+            }
 
             if (pos_stride == 0)
                 pos_stride = 12; // vec3 float
-            if (norm_stride == 0)
-                norm_stride = 12;
 
             // === AABB (single pass) ===
             core::AABB aabb{{FLT_MAX, FLT_MAX, FLT_MAX},
@@ -366,13 +391,17 @@ scene::GltfLoader::extract_mesh_data(const tinygltf::Model &model,
                     v.position[2] = p[2];
                 }
 
-                // Normal
-                {
+                // Normal (required by Vertex; default to +Z if absent in glTF)
+                if (has_normal && norm_ptr) {
                     const float *n = reinterpret_cast<const float *>(
                         norm_ptr + i * norm_stride);
                     v.normal[0] = n[0];
                     v.normal[1] = n[1];
                     v.normal[2] = n[2];
+                } else {
+                    v.normal[0] = 0.0f;
+                    v.normal[1] = 0.0f;
+                    v.normal[2] = 1.0f;
                 }
 
                 // Tangent (from glTF or default)
@@ -393,8 +422,12 @@ scene::GltfLoader::extract_mesh_data(const tinygltf::Model &model,
 
                 // UV → packed uint16_t (little-endian) into 4x uint8_t
                 {
-                    // Use the new helper that properly handles normalized integer UVs
-                    glm::vec2 t = GetTexcoordFromAccessor(model, tex_acc, i);
+                    glm::vec2 t{0.0f, 0.0f};
+                    if (has_tex0 && tex_acc_ptr) {
+                        // Use the helper that properly handles normalized integer UVs
+                        t = GetTexcoordFromAccessor(model, *tex_acc_ptr, i);
+                    }
+                    // else: leave at (0,0) — fine for untextured proxy geometry (e.g. Cameras.gltf test plane)
 
                     // Use fractional part so UVs outside [0,1] (tiling / repeat) are preserved
                     // instead of being smashed to the texture edge.
@@ -471,20 +504,6 @@ scene::GltfLoader::extract_mesh_data(const tinygltf::Model &model,
     return meshes;
 }
 
-std::vector<double>
-scene::GltfLoader::value_or_ident(const std::vector<double> &value,
-                                 const size_t len) {
-    if (value.size() < len) {
-        std::vector<double> result{};
-        result.reserve(len);
-        for (size_t i = 0; i < len; i++)
-            result.push_back(1.0);
-        return result;
-    } else {
-        return value;
-    }
-}
-
 glm::mat4 scene::GltfLoader::extract_node_transform(const tinygltf::Node &node) {
     // glTF nodes may specify either a 4x4 matrix or separate TRS.
     // Matrix takes precedence when present and has 16 elements.
@@ -493,14 +512,35 @@ glm::mat4 scene::GltfLoader::extract_node_transform(const tinygltf::Node &node) 
         return glm::make_mat4(node.matrix.data());
     }
 
-    auto translation = value_or_ident(node.translation, 3U);
-    auto rotation = value_or_ident(node.rotation, 4U);
-    auto scale = value_or_ident(node.scale, 3U);
-    return glm::translate(
-               glm::mat4(1.0f),
-               glm::vec3(translation[0], translation[1], translation[2])) *
-           glm::mat4_cast(
-               glm::quat(rotation[0], rotation[1], rotation[2], rotation[3])) *
-           glm::scale(glm::mat4(1.0f), glm::vec3(scale[0], scale[1], scale[2]));
+    // glTF spec: absent TRS components mean identity (trans=0, rot=unit quat, scale=1).
+    // The old value_or_ident always supplied 1.0 which was wrong for translation
+    // (and for quaternion when rotation key omitted). Fixed to be glTF-compliant.
+    glm::vec3 t(0.0f);
+    if (node.translation.size() >= 3) {
+        t = glm::vec3(static_cast<float>(node.translation[0]),
+                      static_cast<float>(node.translation[1]),
+                      static_cast<float>(node.translation[2]));
+    }
+
+    glm::quat r(1.0f, 0.0f, 0.0f, 0.0f); // identity (w,x,y,z)
+    if (node.rotation.size() >= 4) {
+        // glTF stores rotation as [x, y, z, w]; glm::quat(w, x, y, z)
+        float rx = static_cast<float>(node.rotation[0]);
+        float ry = static_cast<float>(node.rotation[1]);
+        float rz = static_cast<float>(node.rotation[2]);
+        float rw = static_cast<float>(node.rotation[3]);
+        r = glm::quat(rw, rx, ry, rz);
+    }
+
+    glm::vec3 s(1.0f);
+    if (node.scale.size() >= 3) {
+        s = glm::vec3(static_cast<float>(node.scale[0]),
+                      static_cast<float>(node.scale[1]),
+                      static_cast<float>(node.scale[2]));
+    }
+
+    return glm::translate(glm::mat4(1.0f), t) *
+           glm::mat4_cast(r) *
+           glm::scale(glm::mat4(1.0f), s);
 }
 

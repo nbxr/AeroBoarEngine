@@ -35,7 +35,5 @@ class GltfLoader {
     static std::vector<gfx::Light> extract_light_data(const tinygltf::Model &model);
 
   private:
-    static std::vector<double> value_or_ident(const std::vector<double> &value,
-                                              const size_t len);
 };
 } // namespace scene

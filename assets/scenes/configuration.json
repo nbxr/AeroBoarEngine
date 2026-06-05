@@ -16,6 +16,10 @@
     {
       "name": "DamagedHelmetScene",
       "filename": "/home/nolin/repo/glTF-Sample-Assets/Models/DamagedHelmet/glTF-Scene/DamagedHelmetScene.gltf"
+    },
+    {
+      "name": "Cameras",
+      "filename": "/home/nolin/repo/glTF-Sample-Assets/Models/Cameras/glTF/Cameras.gltf"
     }
   ]
 }
