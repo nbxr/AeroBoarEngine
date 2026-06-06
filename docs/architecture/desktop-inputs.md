@@ -124,10 +124,12 @@ When the user presses Escape (or any future mechanism):
    - `glfwSetInputMode(...)` (shows/hides OS cursor, enables/disables raw delta mode).
    - Snapshot the *current* reported cursor position as `last_mouse_position_`.
    - Zero both `raw_mouse_delta_` and `smoothed_mouse_delta_`.
-4. On the very next frame, any callback delta that would have been a "jump" (because GLFW/OS warped the virtual cursor on mode change) is discarded because we reset the baseline.
-5. `Camera` sees either a clean zero delta or the first real post-toggle movement.
+   - Set the one-shot `suppress_next_mouse_delta_` flag (consumed by first post-reset captured cb or by the next `update`).
+4. The large-delta guard in the cursor cb (`mouse_delta_threshold_`) discards any *large* single-event jump (warps on toggle etc.). Small deltas are accumulated even for the first cb after reset (i.e. the user's first movement after pressing Escape contributes immediately; only large first deltas are dropped).
+5. `update` forces a clean zero `smoothed_mouse_delta_` while the suppress flag is still set (covers the window before the first cb arrives). The flag is expired either by the cb or by `update` itself.
+6. `Camera` (gated on `is_cursor_captured()`) sees either a clean zero or real post-toggle movement with no "lost first move" for modest user input.
 
-This is more robust than the pre-refactor `first_mouse` flag that lived inside `Camera` and had to be manually poked from the main loop.
+This is more robust than the pre-refactor `first_mouse` flag that lived inside `Camera` and had to be manually poked from the main loop. (See implementation in `core/InputManager` for the exact suppress/expiry + size-guard interaction.)
 
 ## Relationship to Existing Code (Pre-Refactor Baseline)
 

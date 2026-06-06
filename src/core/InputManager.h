@@ -79,6 +79,21 @@ private:
     // They can be adjusted at runtime via the setters for different mice / DPI / preference.
     float smoothing_alpha = 0.75f;     // EWMA smoothing factor (higher = more lag, more stable)
     float acceleration_scale = 0.008f; // Controls non-linear boost: acceleration = 1.0 + (mag * scale)
+
+    // suppress_next_mouse_delta_: when set by reset_mouse_state (on capture toggle
+    // or explicit reset), causes the next InputManager::update to force
+    // get_mouse_delta()=0. Cleared by the first captured cursor cb after a reset
+    // (or by update itself if no cb has arrived by then). This keeps the first
+    // post-Escape frame clean even if the cb for the mode change is delayed.
+    //
+    // mouse_delta_threshold_: while captured, any single cb delta larger than
+    // this is swallowed (no raw accumulation). This catches warps on toggle and
+    // other spurious jumps. *Small* deltas -- including the first real user
+    // movement immediately after pressing Escape to capture -- are always
+    // accumulated relative to the baseline captured in reset_mouse_state.
+    // Thus mouse look responds without a "dead first move" after capture.
+    bool suppress_next_mouse_delta_ = false;
+    float mouse_delta_threshold_ = 1000.0f;
 };
 
 } // namespace core

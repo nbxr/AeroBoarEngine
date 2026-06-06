@@ -31,12 +31,20 @@ enum class CameraMode {
  *     - X: Yaw (rotate left/right) around the camera's current Up vector.
  *     - Y: Pitch up/down (direction controlled by `invert_pitch`).
  * - Q / E: Roll the camera counterclockwise / clockwise around its forward axis.
- * - R: Frame the camera on the loaded scene (AABB-based).
+ * - R: Restore the exact camera pose from when the scene was loaded (authored
+ *   glTF camera node if present, otherwise the initial AABB framing). This is the
+ *   "get me back to the starting view" action.
+ * - Shift+R: Perform a generic AABB-based "frame the model nicely" (old R behavior).
+ *
+ * Startup behavior: The app starts with the cursor visible (mouse capture off).
+ * Move the mouse over the window freely (no camera effect). Press Escape to
+ * toggle capture on and start mouse-look control. Escape always toggles.
  * - Escape: Toggle mouse capture (robust jump prevention is handled by InputManager).
  *
  * Public tunables:
  * - `movement_speed`
  * - `mouse_sensitivity`
+ * - `roll_speed` (Q/E roll rate in degrees per second)
  * - `invert_pitch` (default false = normal behavior)
  * - `fov_degrees`, `near_plane`, `far_plane`
  *
@@ -92,9 +100,16 @@ public:
     // (e.g. with Escape) so that the next mouse delta does not cause a large jump.
     void reset_mouse_state();
 
+    // Save/restore the camera pose that was active immediately after the scene finished loading.
+    // This is used by the 'R' key so that it returns to the authored (glTF camera node) or
+    // initial framed view instead of always computing a generic AABB offset.
+    void save_initial_pose();
+    void restore_initial_pose();
+
     // Tunables
     float movement_speed = 5.0f;
     float mouse_sensitivity = 0.35f;
+    float roll_speed = 90.0f;     // Q/E roll rate in degrees per second
     float fov_degrees = 60.0f;
     float near_plane = 0.1f;
     float far_plane = 100.0f;
@@ -119,6 +134,14 @@ private:
     glm::mat4 vr_view_matrix{1.0f};
 
     void update_desktop(float delta_time, core::InputManager& input);
+
+    // Saved pose from right after load (for 'R' reset to "where it was when loaded")
+    bool has_initial_pose_ = false;
+    glm::vec3 initial_position_{0.0f};
+    glm::quat initial_orientation_{1.0f, 0.0f, 0.0f, 0.0f};
+    float initial_fov_degrees_ = 60.0f;
+    float initial_near_plane_ = 0.1f;
+    float initial_far_plane_ = 100.0f;
 };
 
 } // namespace scene

@@ -32,7 +32,7 @@ Early foundation phase. A basic PBR forward renderer is now implemented and acti
   - Q / E: Roll the camera counterclockwise / clockwise around its forward axis.
   - R: Frame the view on the currently loaded scene (AABB-based).
   - Escape: Toggle mouse capture (robust jump prevention handled by InputManager).
-  - Public tunables: `movement_speed`, `mouse_sensitivity`, `invert_pitch`, `fov_degrees`, `near_plane`, `far_plane`.
+  - Public tunables: `movement_speed`, `mouse_sensitivity`, `roll_speed` (Q/E roll), `invert_pitch`, `fov_degrees`, `near_plane`, `far_plane`.
   - Note: The implementation contains personal sign adjustments chosen for comfortable desktop model inspection. The documented public behavior above is the intended interface.
 - `core::InputManager` (desktop GLFW input layer):
   - High-precision mouse delta tracking via `glfwSetCursorPosCallback` (sub-frame accumulation).

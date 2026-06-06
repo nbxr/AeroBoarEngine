@@ -61,15 +61,14 @@ void Camera::update_desktop(float delta_time, core::InputManager& input) {
         position -= camera_up * velocity;
 
     // === Q/E Roll (around camera forward) ===
-    float rollSpeed = 90.0f; // degrees per second
     if (input.is_key_down(GLFW_KEY_Q)) {
         // Q = roll counterclockwise from the user's perspective when looking forward
-        glm::quat roll = glm::angleAxis(glm::radians(-rollSpeed * delta_time), front);
+        glm::quat roll = glm::angleAxis(glm::radians(-roll_speed * delta_time), front);
         orientation = glm::normalize(roll * orientation);
     }
     if (input.is_key_down(GLFW_KEY_E)) {
         // E = roll clockwise from the user's perspective
-        glm::quat roll = glm::angleAxis(glm::radians(+rollSpeed * delta_time), front);
+        glm::quat roll = glm::angleAxis(glm::radians(+roll_speed * delta_time), front);
         orientation = glm::normalize(roll * orientation);
     }
 
@@ -214,6 +213,31 @@ void Camera::set_from_camera_node(const glm::mat4& world_transform,
         far_plane = zfar;
     else
         far_plane = 100000.0f;   // glTF zfar == 0 means "infinite"
+}
+
+void Camera::save_initial_pose() {
+    initial_position_ = position;
+    initial_orientation_ = orientation;
+    initial_fov_degrees_ = fov_degrees;
+    initial_near_plane_ = near_plane;
+    initial_far_plane_ = far_plane;
+    has_initial_pose_ = true;
+}
+
+void Camera::restore_initial_pose() {
+    if (!has_initial_pose_) {
+        return;
+    }
+    position = initial_position_;
+    orientation = initial_orientation_;
+    fov_degrees = initial_fov_degrees_;
+    near_plane = initial_near_plane_;
+    far_plane = initial_far_plane_;
+
+    // Re-derive legacy yaw/pitch from the restored orientation (best effort; quat is authoritative)
+    glm::vec3 dir = get_forward();
+    yaw = glm::degrees(std::atan2(dir.z, dir.x));
+    pitch = glm::degrees(std::asin(dir.y));
 }
 
 } // namespace scene
