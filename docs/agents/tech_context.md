@@ -68,7 +68,7 @@ The single bindless descriptor set (allocated once, UPDATE_AFTER_BIND) uses thes
 
 | Binding | Type                          | Count  | Purpose / Consumers                  | Notes |
 |---------|-------------------------------|--------|--------------------------------------|-------|
-| 0       | UNIFORM_BUFFER                | 1      | Per-frame globals — camera position + exposure + lights (KHR_lights_punctual from scene when present, else engine global fallback). IBL data is future work. | See lighting-implementation.md for current model |
+| 0       | UNIFORM_BUFFER                | 1      | Per-frame globals (temporary `FrameGlobals` UBO) — camera position + exposure + lights (KHR_lights_punctual from scene when present, else engine global fallback). IBL data is future work. | See lighting-implementation.md. Note: this entire UBO + fixed light array design (including std140 padding workarounds) is temporary scaffolding. The next step is a proper lighting solution (small constants UBO + dedicated lights SSBO). |
 | 1       | STORAGE_BUFFER                | 1      | SceneInstance (transform + mat/mesh indices) | `scene::SceneManager` |
 | 2       | STORAGE_BUFFER                | 1      | Materials (PBR + texture indices)    | `gfx::MaterialManager` |
 | 3       | STORAGE_BUFFER                | 1      | MeshPrimitiveSSBO metadata (v/i offsets) | `gfx::MeshManager` |

@@ -78,6 +78,79 @@ void gfx::Engine::render() {
     // Bind pipeline (currently the screen_clear test pipeline)
     vkCmdBindPipeline(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, vk.pipeline);
 
+    // Phase 2: update per-frame globals UBO (camera + scene lights or fallback)
+    // MUST happen BEFORE vkCmdBindDescriptorSets so that the bind for the
+    // bindless set (which includes binding 0 for FrameGlobals) sees the
+    // current descriptor pointing at a buffer whose mapped contents have the
+    // correct light data (especially lightParams[i].x type) for this frame.
+    // The draws later in this command buffer will then read the right lightType
+    // in pbr.frag.
+    {
+        uint32_t renderIdx = renderer.globals_render;
+        auto* dst = static_cast<gfx::FrameGlobals*>(renderer.frame_globals_buffer[renderIdx].mapped_data);
+        if (dst) {
+            // Zero the entire mapped FrameGlobals first. This is required for two
+            // reasons:
+            // 1. std140 array-of-scalar padding rules mean there are "holes" (the
+            //    padding0/1 regions as seen by the shader) that must read as 0.
+            //    Direct field writes below do not touch every byte.
+            // 2. When falling back to globalLight we only write slot [0]; higher
+            //    slots must be zero so they don't leak stale values when lightCount
+            //    is small (the previous "index 6" symptom was a layout mismatch
+            //    variant of this + the padding stride issue).
+            memset(dst, 0, sizeof(gfx::FrameGlobals));
+
+            dst->cameraPosition = glm::vec4(camera.get_position(), 1.0f);
+
+            if (!renderer.lights.empty()) {
+                // Authoritative scene lights from the glTF (point light in this case).
+                // We write them here every frame directly into the side that will
+                // be referenced by the descriptor we are about to bind.
+                const uint32_t n = std::min<uint32_t>(renderer.lights.size(), gfx::MAX_LIGHTS);
+                dst->lightCount = n;
+                float maxI = 0.0f;
+                for (uint32_t i = 0; i < gfx::MAX_LIGHTS; ++i) {
+                    if (i < n) {
+                        const auto &L = renderer.lights[i];
+                        dst->lightDirectionsOrPositions[i] =
+                            glm::vec4(L.positionOrDirection, 0.0f);
+                        dst->lightColors[i] = glm::vec4(L.color, L.intensity);
+                        dst->lightParams[i] =
+                            glm::vec4(static_cast<float>(L.type), L.range,
+                                      L.innerConeAngle, L.outerConeAngle);
+                        if (L.intensity > maxI) maxI = L.intensity;
+                    } else {
+                        // Explicitly zero unused slots so stale data from prior
+                        // frames / larger light counts / other writes cannot
+                        // appear at higher indices (e.g. [6]) while lightCount=1.
+                        dst->lightDirectionsOrPositions[i] = glm::vec4(0.0f);
+                        dst->lightColors[i] = glm::vec4(0.0f);
+                        dst->lightParams[i] = glm::vec4(0.0f);
+                    }
+                }
+                dst->exposure = (maxI > 10.0f) ? (20.0f / maxI) : 1.0f;
+            } else if (renderer.globalLight.type == gfx::LightType::Directional) {
+                dst->lightCount = 1;
+                dst->exposure = 1.0f;
+                dst->lightDirectionsOrPositions[0] = glm::vec4(renderer.globalLight.positionOrDirection, 0.0f);
+                dst->lightColors[0] = glm::vec4(renderer.globalLight.color, renderer.globalLight.intensity);
+                dst->lightParams[0] = glm::vec4(
+                    static_cast<float>(renderer.globalLight.type),
+                    renderer.globalLight.range,
+                    renderer.globalLight.innerConeAngle,
+                    renderer.globalLight.outerConeAngle);
+            }
+        }
+
+        gfx::BufferUtils::update_descriptor(
+            renderer.vk.device.device,
+            renderer.frame_globals_buffer[renderIdx],
+            renderer.vk.bindless_descriptor_set,
+            sizeof(gfx::FrameGlobals),
+            0,
+            VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+    }
+
     // Bind the global bindless descriptor set (we will use it soon for real draws)
     vkCmdBindDescriptorSets(
         frame.command_buffer,
@@ -115,43 +188,9 @@ void gfx::Engine::render() {
     // (viewProj + model + uvec4 extra + cameraPos for Phase 1 lighting)
     gfx::PbrPush pushData{};
 
-    // Bind index + vertex buffers (single large buffers; per-primitive offsets come from draw params)
-    // Phase 2: update per-frame globals UBO (camera position + lights)
-    {
-        uint32_t up = renderer.globals_upload;
-        auto* dst = static_cast<gfx::FrameGlobals*>(renderer.frame_globals_buffer[up].mapped_data);
-        if (dst) {
-            dst->cameraPosition = glm::vec4(camera.get_position(), 1.0f);
-            dst->exposure = 1.0f;
-
-            // Camera position is updated every frame (correct for view-dependent BRDF).
-            // Lights: if the loaded scene provided KHR_lights_punctual lights (now the
-            // active source), we leave them exactly as written at load time (world
-            // transforms already applied). Only when no scene lights are present do we
-            // re-apply the engine globalLight every frame (allows live tweak via the
-            // public Renderer field for dev / empty scenes).
-            if (renderer.lights.empty() &&
-                renderer.globalLight.type == gfx::LightType::Directional) {
-                dst->lightDirectionsOrPositions[0] = glm::vec4(renderer.globalLight.positionOrDirection, 0.0f);
-                dst->lightColors[0] = glm::vec4(renderer.globalLight.color, renderer.globalLight.intensity);
-                dst->lightParams[0] = glm::vec4(
-                    static_cast<float>(renderer.globalLight.type),
-                    renderer.globalLight.range,
-                    renderer.globalLight.innerConeAngle,
-                    renderer.globalLight.outerConeAngle);
-            }
-        }
-
-        // Write descriptor for the current render side (cheap, or we could do it only on toggle)
-        uint32_t renderIdx = renderer.globals_render;
-        gfx::BufferUtils::update_descriptor(
-            renderer.vk.device.device,
-            renderer.frame_globals_buffer[renderIdx],
-            renderer.vk.bindless_descriptor_set,
-            sizeof(gfx::FrameGlobals),
-            0,
-            VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-    }
+    // (per-frame globals update for camera + lights moved earlier, before the
+    // bindless descriptor set bind, so the draw calls see the correct lightType
+    // from the glTF point light.)
 
     auto& index_buf = renderer.mesh_manager.get_render_index_buffer();
     vkCmdBindIndexBuffer(frame.command_buffer, index_buf.buffer, 0, VK_INDEX_TYPE_UINT32);

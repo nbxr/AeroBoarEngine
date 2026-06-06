@@ -58,7 +58,7 @@ if(GLSLC_AVAILABLE)
         
         add_custom_command(
             OUTPUT ${SHADER_SPIRV_OUTPUT}
-            COMMAND ${GLSLC} ${SHADER_SOURCE} -o ${SHADER_SPIRV_OUTPUT}
+            COMMAND ${GLSLC} -g ${SHADER_SOURCE} -o ${SHADER_SPIRV_OUTPUT}
             DEPENDS ${SHADER_SOURCE}
             COMMENT "Compiling shader: ${SHADER_NAME}"
         )

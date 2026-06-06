@@ -1,7 +1,15 @@
 # Lighting Implementation Guide
 
 **Current Lighting Model**:  
-Scene-driven lights via glTF `KHR_lights_punctual` (directional/point/spot, world transforms from node hierarchy) + correct GGX BRDF (via `FrameGlobals` UBO at binding 0). Engine global directional is the fallback when no scene lights are present. Textured IBL etc. still deferred.
+Scene-driven lights via glTF `KHR_lights_punctual` (directional/point/spot, world transforms from node hierarchy) + correct GGX BRDF (via temporary `FrameGlobals` UBO at binding 0). Engine global directional is the fallback when no scene lights are present. Textured IBL etc. still deferred.
+
+**Status of current implementation**: The `FrameGlobals` UBO + `gfx::FrameGlobals` / `gfx::Light` structs, fixed `MAX_LIGHTS` arrays, per-frame direct mapped writes, and any std140 padding accommodations (oversized `padding0`/`padding1` arrays in C++ to match GLSL uniform block layout rules for scalar arrays) is **temporary scaffolding**. It was built to quickly enable scene lights + GGX during early development. It has known layout, update, and scalability issues.
+
+**Next step**: The explicit next phase of the project is to implement a **proper lighting solution**. Recommended direction (based on recent analysis of the std140 pain and double-buffering limitations):
+- Small, clean per-frame constants UBO (camera, exposure, light count, IBL indices, flags).
+- Dedicated lights buffer (SSBO preferred for `std430` / flexible arrays / no padding hacks, easy dynamic updates, and larger light counts).
+- Proper support for dynamic lights, many lights (clustered/tiled later), full production IBL, and integration with the future scene/GameObject model.
+- See "Phased Roadmap" and "Known Rough Edges" below for context.
 
 **Long-term Target**: High-quality, Quest 3 friendly PBR with IBL and efficient multi-light support.
 
@@ -114,15 +122,17 @@ Hardcoded single directional + constant ambient + fake specular (documented abov
 - Proper GGX BRDF implemented.
 - Two analytic lights + real camera position (via extended push constants).
 
-### Phase 2 — Data-Driven Lighting Foundation + glTF Lights (Completed)
-We built the full infrastructure (FrameGlobals UBO at binding 0, `gfx::Light` + `FrameGlobals` layouts, `GltfLoader::extract_light_data`, world-transform application for light nodes during traversal using the node's final composed matrix, double-buffered upload, proper GGX + multi-light loop in shader).
+### Phase 2 — Data-Driven Lighting Foundation + glTF Lights (Temporary Scaffolding, Completed)
+We built the initial infrastructure (FrameGlobals UBO at binding 0, `gfx::Light` + `FrameGlobals` layouts with std140 accommodations, `GltfLoader::extract_light_data`, world-transform application for light nodes during traversal using the node's final composed matrix, double-buffered upload, proper GGX + multi-light loop in shader).
 
-- When a glTF scene contains `KHR_lights_punctual` entries (and nodes referencing them), the lights are extracted, transformed into world space using their node hierarchy, and become the active lights written to the UBO (up to MAX_LIGHTS=8).
+- When a glTF scene contains `KHR_lights_punctual` entries (and nodes referencing them), the lights are extracted, transformed into world space using their node hierarchy, and become the active lights written to the (temporary) UBO (up to MAX_LIGHTS=8).
 - Engine `globalLight` is only used as fallback for scenes with no lights (and supports live tweak when active).
 - All three punctual types are supported in data; directional and point are fully wired in shader; spot has the known packing limitation noted in "Known Rough Edges".
 - Camera position, exposure, and basic SH ambient are provided every frame.
 
-**Current active behavior**: Scene `KHR_lights_punctual` lights (or engine global fallback) + correct GGX BRDF. This is the supported production model for typical authored scenes.
+**This Phase 2 implementation is temporary**. The single `FrameGlobals` UBO, fixed arrays, direct per-frame writes to mapped memory, incomplete globals double-buffering, and C++/GLSL layout padding workarounds (required because `uint padding0[2]` arrays in a `uniform` block force 16-byte stride under std140) were sufficient to get scene lights working for iteration and debugging. They are not the intended long-term design.
+
+**Current active behavior (temporary)**: Scene `KHR_lights_punctual` lights (or engine global fallback) + correct GGX BRDF via the FrameGlobals UBO. This enables development but will be replaced by the proper lighting solution described at the top of this document.
 
 ### Phase 3 — IBL (Production Look)
 Basic diffuse SH coefficients are populated and evaluated in the shader as a simple ambient contribution.
@@ -242,7 +252,12 @@ These were discovered during Phase 2 implementation and the subsequent shutdown 
 9. **Globals double-buffering / reload hygiene** (pre-existing):
    - See earlier items in this list; still present.
 
-These (plus IBL, shadows, many-light clustering) are the remaining lighting work items.
+10. **The entire FrameGlobals UBO + fixed light array design is temporary scaffolding**:
+    - The recent std140 padding workaround (oversized `padding0[10]` / `padding1[10]` in C++ `gfx::FrameGlobals` to match GLSL `uniform` block array stride rules) and the need for per-frame `memset` + selective field writes are symptoms of the design.
+    - Layout fragility, limited light count, awkward update path, and mixing tiny scalars with light arrays in one UBO under std140 rules make this unsuitable as a long-term solution.
+    - The next step in the project is to implement a proper lighting solution (small per-frame constants UBO + dedicated lights SSBO with std430/clean layout, dynamic updates, larger/many lights, full IBL, and better scene integration). Do not extend the current UBO approach significantly without a design pass.
+
+These (plus IBL, shadows, many-light clustering, and the proper lighting architecture) are the remaining lighting work items.
 
 ## Investigation in Progress (as of end of session)
 The data path for scene lights is complete and the diagnostics confirm values are reaching the shader. However, the point light in `DamagedHelmetScene.gltf` does not illuminate the model. The user is investigating glTF import correctness (node hierarchy, world transform accumulation for lights, physical intensity handling, and whether range=0 point lights need an explicit inverse-square term in the shader).
@@ -271,11 +286,12 @@ These (plus the existing full hierarchy dump and camera pointing diagnostics) sh
 ---
 
 **Current State (end of session, 2026)**: 
-- Scene `KHR_lights_punctual` lights are extracted during `GltfLoader::extract_light_data`, their final world transforms (from the same `add_mesh_node` hierarchy traversal used for everything else) are captured, and the resulting values are written into `FrameGlobals` (binding 0). The multi-light GGX loop in `pbr.frag` consumes them.
+- Scene `KHR_lights_punctual` lights are extracted during `GltfLoader::extract_light_data`, their final world transforms (from the same `add_mesh_node` hierarchy traversal used for everything else) are captured, and the resulting values are written into the temporary `FrameGlobals` UBO (binding 0). The multi-light GGX loop in `pbr.frag` consumes them.
+- The `FrameGlobals` + fixed light arrays + std140 padding approach (including the C++ padding array sizing workaround) is explicitly temporary scaffolding. The next step in the project is a proper lighting solution (small per-frame constants UBO + dedicated lights SSBO/buffer with clean `std430` or scalar layout, dynamic updates, better scalability, full IBL, etc.).
 - A global `BLENDER_CORRECTION` matrix was introduced during camera/light debugging and has been completely removed. The engine now applies *only* the transforms exactly as present in the glTF file (policy: strict fidelity; export-time fixes only).
 - The count + per-light diagnostic logging (added during investigation) shows that the DamagedHelmetScene point light reaches the shader, but it produces no visible contribution on the model. The user is actively debugging why the asset is not importing correctly (likely transform, position, or intensity/falloff issues).
 - Engine `globalLight` fallback remains available for scenes without lights.
 
-See the "Historical note" in the Coordinate & Transform section above and the "Investigation in Progress" section for details.
+See the "Historical note" in the Coordinate & Transform section above, the "Investigation in Progress" section, and the status note at the top of this document for details.
 
-**Maintained as of 2026**. Update this file when the active lighting model changes or when the import investigation concludes.
+**Maintained as of 2026**. Update this file when the active (temporary) lighting model changes, when the proper lighting architecture is designed, or when the import investigation concludes.

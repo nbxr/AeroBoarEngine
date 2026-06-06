@@ -44,6 +44,8 @@ layout(location = 0) out vec4 outColor;
 // See docs/architecture/lighting-implementation.md for status and roadmap.
 // -----------------------------------------------------------------------------
 
+const uint MAX_LIGHTS = 8;   // Must match gfx::MAX_LIGHTS in Light.h for UBO std140 layout
+
 layout(set = 0, binding = 0) uniform FrameGlobals {
     vec4  cameraPosition;     // xyz = camera world position
     float exposure;
@@ -51,9 +53,9 @@ layout(set = 0, binding = 0) uniform FrameGlobals {
     uint  padding0[2];
 
     // Packed lights (see gfx::FrameGlobals)
-    vec4 lightDirectionsOrPositions[8];
-    vec4 lightColors[8];      // rgb + intensity in .a
-    vec4 lightParams[8];      // x=type, y=range, zw=spot angles
+    vec4 lightDirectionsOrPositions[MAX_LIGHTS];
+    vec4 lightColors[MAX_LIGHTS];      // rgb + intensity in .a
+    vec4 lightParams[MAX_LIGHTS];      // x=type, y=range, zw=spot angles
 
     // Phase 3 IBL
     vec4 shCoefficients[9];   // Diffuse SH (3-band)
@@ -175,7 +177,10 @@ void main() {
             float range = globals.lightParams[i].y;
             if (range > 0.0) {
                 attenuation = max(0.0, 1.0 - (dist / range));
-                attenuation *= attenuation; // simple quadratic falloff
+                attenuation *= attenuation; // simple quadratic falloff (used when range specified)
+            } else {
+                // range == 0 per KHR_lights_punctual: infinite range, inverse-square falloff
+                attenuation = 1.0 / (dist * dist + 1.0);
             }
 
             if (lightType == 2u) {
@@ -210,7 +215,7 @@ void main() {
         vec3 lightColor = globals.lightColors[i].rgb;
         float intensity = globals.lightColors[i].a;
 
-        color += (diff + spec) * lightColor * intensity * attenuation;
+        color += (diff + spec) * lightColor * intensity * attenuation * globals.exposure;
     }
 
     // -----------------------------------------------------------------
@@ -261,6 +266,11 @@ void main() {
         ao = texture(bindlessTextures[nonuniformEXT(aoIdx)], inUV).r;
     }
     color *= ao;
+
+    // Simple compressor so high-intensity scene lights (after exposure scaling)
+    // and any bright emissive produce visible shading instead of hard white.
+    // (A full tonemapper + gamma would go here in a later phase.)
+    color = color / (color + 1.0);
 
     outColor = vec4(color, albedo.a);
 

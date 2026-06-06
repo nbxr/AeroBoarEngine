@@ -45,7 +45,7 @@ Early foundation phase. A basic PBR forward renderer is now implemented and acti
 
 ## Current Focus Areas
 
-- Improving PBR quality (proper GGX BRDF + scene `KHR_lights_punctual` lights via FrameGlobals UBO at binding 0 when present in the glTF; engine global is fallback; see lighting-implementation.md for exact current state)
+- Improving PBR quality (proper GGX BRDF + scene `KHR_lights_punctual` lights). The current `FrameGlobals` UBO (binding 0) + fixed `MAX_LIGHTS` arrays + std140 padding accommodations in `gfx::FrameGlobals` is a temporary stopgap implementation. The next step in the project is to implement a proper lighting solution (small per-frame constants + dedicated lights SSBO/buffer with clean layout, dynamic updates, better scalability, and full IBL integration). See `docs/architecture/lighting-implementation.md`.
 - Fixing remaining visual issues with the current asset (the loaded DamagedHelmet only contains a single material/primitive)
 - Cleaning up the temporary debug rendering path (raw SSBO vertex pulling, forced depth hack in debug shader)
 - Removing or properly guarding the diagnostic material coloring code
@@ -53,7 +53,9 @@ Early foundation phase. A basic PBR forward renderer is now implemented and acti
 
 ## Known Gaps / Not Yet Implemented
 
-- PBR lighting: We have a solid GGX BRDF. glTF `KHR_lights_punctual` lights present in the loaded scene are now the active source (extracted + world-transformed from their nodes during load using the node's final composed matrix, written to FrameGlobals UBO binding 0). Engine global directional is the automatic fallback for scenes without lights. Full multi-light (large numbers), dynamic lights, and production IBL (textured) are explicitly deferred. See `docs/architecture/lighting-implementation.md` for the precise current model and rough edges.
+- PBR lighting: We have a solid GGX BRDF. glTF `KHR_lights_punctual` lights present in the loaded scene are now the active source (extracted + world-transformed from their nodes during load using the node's final composed matrix, written to the temporary `FrameGlobals` UBO at binding 0). Engine global directional is the automatic fallback for scenes without lights.
+
+  **Important**: The current `FrameGlobals` UBO implementation (fixed-size light arrays, std140 layout workarounds in C++ to match GLSL `uniform` block padding rules for scalar arrays, direct mapped writes every frame, and incomplete double-buffering) is explicitly a temporary scaffolding solution. The next major step for the project is to implement a proper lighting solution. Recommended direction: a small, naturally-aligned per-frame constants UBO + a dedicated lights buffer (SSBO for std430/flexible layout and dynamic updates), support for larger light counts, proper dynamic light mutation, full production IBL, and better integration with the future scene/GameObject model. See `docs/architecture/lighting-implementation.md` for the current (temporary) model, known rough edges, and roadmap.
 
   **Note (end of session)**: The data path for scene lights is working (count + per-light values are logged and reach the shader). However, on the current `DamagedHelmetScene.gltf` asset the point light produces no visible illumination. The user is actively investigating glTF import / hierarchical transform correctness for lights (and cameras). (Cameras.gltf camera nodes and transforms now reproduce the authored poses and look directions correctly after fixing default TRS handling.) A global `BLENDER_CORRECTION` matrix that had been added experimentally was fully removed; the engine is now strictly faithful to the transforms present in the glTF file. Temporary rich diagnostic logging for light values and node hierarchy remains in place to support the investigation.
 - The currently configured DamagedHelmet asset only contains a single material/primitive, so all geometry uses the same textures.
@@ -68,8 +70,9 @@ Early foundation phase. A basic PBR forward renderer is now implemented and acti
 
 ## Next Immediate Priorities
 
-- Lighting data path for `KHR_lights_punctual` is implemented and active. However, scene lights are not yet producing correct visual results on the current asset. The user is investigating why assets (DamagedHelmetScene + its point light) are not importing correctly (transforms, world-space positions, intensity handling). A previous global Blender axis correction was removed; strict fidelity to glTF node data is now policy. See the note in the PBR lighting gap above and `docs/architecture/lighting-implementation.md`.
-- Remaining lighting polish (inverse-square falloff for range=0 point lights, spot cone math, IBL, etc.) is intentionally deferred until import correctness is resolved.
+- Lighting data path for `KHR_lights_punctual` is implemented and active via the temporary `FrameGlobals` UBO. However, scene lights are not yet producing correct visual results on the current asset. The user is investigating why assets (DamagedHelmetScene + its point light) are not importing correctly (transforms, world-space positions, intensity handling). A previous global Blender axis correction was removed; strict fidelity to glTF node data is now policy. See the note in the PBR lighting gap above and `docs/architecture/lighting-implementation.md`.
+- The current FrameGlobals + fixed light array + std140 padding approach is temporary scaffolding. Once the data path and import issues stabilize, the explicit next step is to design and implement a proper lighting solution (small per-frame UBO + dedicated lights SSBO/buffer, clean layout without hacks, dynamic lights, larger counts, full IBL, etc.).
+- Remaining lighting polish (inverse-square falloff for range=0 point lights, spot cone math, IBL, etc.) is intentionally deferred until the proper architecture is in place.
 - [done] Switch from raw SSBO vertex pulling to proper vertex attribute input (pipeline + pbr.vert updated; vertex buffers now bound with VK_BUFFER_USAGE_VERTEX_BUFFER_BIT)
 - Investigate why the configured DamagedHelmet only has a single material (asset vs loading issue)
 - Add basic instancing or move toward indirect draws

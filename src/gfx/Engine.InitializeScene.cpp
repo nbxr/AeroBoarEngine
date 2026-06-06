@@ -348,14 +348,7 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     // emission direction per KHR spec: "emit light in the direction of the local -z axis").
     for (size_t i = 0; i < renderer.lights.size() && i < light_world_transforms.size(); ++i) {
         const glm::mat4& w = light_world_transforms[i];
-        auto& L = renderer.lights[i];
-        glm::mat3 rot = glm::mat3(w);
-        if (L.type == gfx::LightType::Directional) {
-            L.positionOrDirection = glm::normalize(rot[2]);  // local +Z in world
-        } else {
-            // Point / Spot position is the node's world translation (spec: scale/rot ignored for pos)
-            L.positionOrDirection = glm::vec3(w[3]);
-        }
+        scene::GltfLoader::apply_world_transform_to_light(renderer.lights[i], w);
     }
 
     // Upload CPU data (populated by GltfLoader) into the persistently-mapped
@@ -424,18 +417,49 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
             auto *dst = static_cast<gfx::FrameGlobals *>(
                 renderer.frame_globals_buffer[side].mapped_data);
             if (dst) {
+                memset(dst, 0, sizeof(gfx::FrameGlobals));
                 dst->lightCount = n;
-                for (uint32_t i = 0; i < n; ++i) {
-                    const auto &L = renderer.lights[i];
-                    dst->lightDirectionsOrPositions[i] =
-                        glm::vec4(L.positionOrDirection, 0.0f);
-                    dst->lightColors[i] = glm::vec4(L.color, L.intensity);
-                    dst->lightParams[i] =
-                        glm::vec4(static_cast<float>(L.type), L.range,
-                                  L.innerConeAngle, L.outerConeAngle);
+                float maxI = 0.0f;
+                for (uint32_t i = 0; i < gfx::MAX_LIGHTS; ++i) {
+                    if (i < n) {
+                        const auto &L = renderer.lights[i];
+                        dst->lightDirectionsOrPositions[i] =
+                            glm::vec4(L.positionOrDirection, 0.0f);
+                        dst->lightColors[i] = glm::vec4(L.color, L.intensity);
+                        dst->lightParams[i] =
+                            glm::vec4(static_cast<float>(L.type), L.range,
+                                      L.innerConeAngle, L.outerConeAngle);
+                        if (L.intensity > maxI) maxI = L.intensity;
+                    } else {
+                        // Explicitly zero unused slots (see per-frame path for rationale).
+                        dst->lightDirectionsOrPositions[i] = glm::vec4(0.0f);
+                        dst->lightColors[i] = glm::vec4(0.0f);
+                        dst->lightParams[i] = glm::vec4(0.0f);
+                    }
                 }
+                // Choose a display exposure so the photometric intensities
+                // (e.g. 54k from Blender Power=1000 export via KHR_lights_punctual)
+                // produce visible contributions on the model. The shader multiplies
+                // the direct (diff+spec) term by this value; a cheap compressor in
+                // the frag prevents hard clipping.
+                dst->exposure = (maxI > 10.0f) ? (20.0f / maxI) : 1.0f;
                 // Leave higher slots (if any) as they were; lightCount gates them.
             }
+        }
+
+        // Re-bind the globals descriptor now that we have written the final
+        // scene light data + chosen exposure into the buffers. The initial
+        // bind happened earlier (with the temporary fallback); this ensures
+        // the descriptor sees the authoritative scene light values.
+        {
+            uint32_t renderIdx = renderer.globals_render;
+            gfx::BufferUtils::update_descriptor(
+                renderer.vk.device.device,
+                renderer.frame_globals_buffer[renderIdx],
+                renderer.vk.bindless_descriptor_set,
+                sizeof(gfx::FrameGlobals),
+                0,
+                VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
         }
     }
 

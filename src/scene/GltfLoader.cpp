@@ -226,7 +226,8 @@ scene::GltfLoader::extract_light_data(const tinygltf::Model &model) {
     std::vector<gfx::Light> lights;
     lights.reserve(model.lights.size());
 
-    for (const auto& tinyLight : model.lights) {
+    for (size_t i = 0; i < model.lights.size(); ++i) {
+        const auto& tinyLight = model.lights[i];
         gfx::Light l{};
         l.intensity = static_cast<float>(tinyLight.intensity);
 
@@ -257,6 +258,21 @@ scene::GltfLoader::extract_light_data(const tinygltf::Model &model) {
     }
 
     return lights;
+}
+
+void scene::GltfLoader::apply_world_transform_to_light(gfx::Light& light, const glm::mat4& worldTransform) {
+    glm::mat3 rot = glm::mat3(worldTransform);
+    if (light.type == gfx::LightType::Directional) {
+        // Consistent with camera node handling (see set_from_camera_node and gltfLookDir derivation there):
+        // glTF orients the light so that it emits along the node's local -Z axis.
+        // The engine stores the to-light vector (L in the shader) for directional lights.
+        // to-light = - (emission dir) = the node's +Z axis in world space.
+        light.positionOrDirection = glm::normalize(rot[2]);
+    } else {
+        // For point and spot lights, per spec only the translation of the node matters for position
+        // (rotation and scale are ignored for the light's position).
+        light.positionOrDirection = glm::vec3(worldTransform[3]);
+    }
 }
 
 std::vector<gfx::MeshPrimitiveID>
