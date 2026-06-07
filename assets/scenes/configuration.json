@@ -1,6 +1,6 @@
 {
   "defaultScene": "DamagedHelmetScene",
-  "activeSystem": "Windows",
+  "activeSystem": "Linux",
   "home": [
     {
       "system": "Windows",
