@@ -1,25 +1,36 @@
 {
   "defaultScene": "DamagedHelmetScene",
+  "activeSystem": "Windows",
+  "home": [
+    {
+      "system": "Windows",
+      "path": "W:/git/"
+    },
+    {
+      "system": "Linux",
+      "path": "/home/nolin/repo/"
+    }
+  ],
   "scenes": [
     {
       "name": "Sponza",
-      "filename": "/home/nolin/repo/glTF-Sample-Assets/Models/Sponza/glTF/Sponza.gltf"
+      "filename": "glTF-Sample-Assets/Models/Sponza/glTF/Sponza.gltf"
     },
     {
       "name": "DamagedHelmet",
-      "filename": "/home/nolin/repo/glTF-Sample-Assets/Models/DamagedHelmet/glTF/DamagedHelmet.gltf"
+      "filename": "glTF-Sample-Assets/Models/DamagedHelmet/glTF/DamagedHelmet.gltf"
     },
     {
       "name": "Dev",
-      "filename": "/home/nolin/repo/glTF-Sample-Assets/Models/Suzanne/glTF/Suzanne.gltf"
+      "filename": "glTF-Sample-Assets/Models/Suzanne/glTF/Suzanne.gltf"
     },
     {
       "name": "DamagedHelmetScene",
-      "filename": "/home/nolin/repo/glTF-Sample-Assets/Models/DamagedHelmet/glTF-Scene/DamagedHelmetScene.gltf"
+      "filename": "glTF-Sample-Assets/Models/DamagedHelmet/glTF-Scene/DamagedHelmetScene.gltf"
     },
     {
       "name": "Cameras",
-      "filename": "/home/nolin/repo/glTF-Sample-Assets/Models/Cameras/glTF/Cameras.gltf"
+      "filename": "glTF-Sample-Assets/Models/Cameras/glTF/Cameras.gltf"
     }
   ]
 }

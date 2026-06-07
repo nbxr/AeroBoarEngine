@@ -11,6 +11,7 @@
 #include <iostream>
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 
 #include <glm/gtc/quaternion.hpp>  // for mat3_cast in pointing debug
 
@@ -51,10 +52,34 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
         return false;
     }
 
-    // get the filename from the json config using the scene_name as a key
+    // Resolve active home path from activeSystem + home[] array
+    std::string active_system;
+    if (config.contains("activeSystem")) {
+        active_system = config["activeSystem"].get<std::string>();
+    } else {
+        active_system = "Windows"; // legacy fallback
+    }
+
+    std::string home_path;
+    if (config.contains("home") && config["home"].is_array()) {
+        for (const auto &entry : config["home"]) {
+            if (entry.contains("system") && entry["system"] == active_system &&
+                entry.contains("path")) {
+                home_path = entry["path"].get<std::string>();
+                break;
+            }
+        }
+    }
+
+    if (home_path.empty()) {
+        std::cerr << "No home path configured for activeSystem '" << active_system
+                  << "' in configuration.json" << std::endl;
+        return false;
+    }
+
+    // get the filename from the json config using the scene_name
     if (!config.contains("scenes")) {
-        std::cerr << "Scene name '" << scene_name
-                  << "' not found in configuration.json" << std::endl;
+        std::cerr << "scenes array not found in configuration.json" << std::endl;
         return false;
     }
 
@@ -79,15 +104,20 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
         return false;
     }
 
+    // Concatenate home path for activeSystem with the scene's relative filename
+    std::filesystem::path resolved_path =
+        std::filesystem::path(home_path) / filename;
+    std::string resolved_filename = resolved_path.make_preferred().string();
+
     // extract mesh data and create GPU buffers
     tinygltf::Model model{};
-    if (!scene::GltfLoader::load_model(filename, model)) {
+    if (!scene::GltfLoader::load_model(resolved_filename, model)) {
         return false;
     }
 
     // create materials in the material manager and get a lookup
     std::vector<MaterialID> material_lookup =
-        scene::GltfLoader::extract_material_data(filename, model, renderer);
+        scene::GltfLoader::extract_material_data(resolved_filename, model, renderer);
 
     // Ensure at least one material exists (e.g. minimal test scenes like Cameras.gltf
     // define geometry but no materials array, and primitives may omit "material").

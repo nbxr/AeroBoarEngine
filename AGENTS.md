@@ -47,7 +47,11 @@ cmake --build build -j$(nproc)
 ### Running
 The executable currently opens a desktop GLFW window. It loads the scene defined in `assets/scenes/configuration.json`.
 
-**Important**: The current `configuration.json` contains absolute paths from the original developer's machine. Update it for your environment before running scene loading.
+**Important**: Scene loading reads `assets/scenes/configuration.json`.
+- `defaultScene` selects the entry from `scenes[]` by name.
+- `activeSystem` picks which entry in the `home[]` array to use.
+- The resolved path is `home[activeSystem].path` concatenated with the chosen scene's `filename` (relative).
+Update the `home` paths for your platform(s) before running. The `scenes[].filename` values are portable relative paths under the chosen home.
 
 ### Important Notes
 - A basic render loop (`Engine::render()`) now exists and can draw complete scenes. It is still using temporary debug shaders and will evolve significantly.
