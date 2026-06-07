@@ -275,6 +275,14 @@ target_link_libraries(Aero_Boar_Engine PRIVATE
     glm::glm
 )
 
+# Make Visual Studio debugger use the build directory as the working directory.
+# This matches how the project copies configuration.json + shaders into ${CMAKE_BINARY_DIR}/assets and /shaders.
+# The engine (and configuration.json) expects to run with CWD at the build root so that
+# relative paths like "assets/scenes/..." resolve correctly.
+# (On Linux this often "just worked" depending on how you launched the binary.)
+set_target_properties(Aero_Boar_Engine PROPERTIES
+    VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
+)
 
 # Copy shaders to build directory after compilation (optional, for easier deployment)
 if(GLSLC_AVAILABLE)

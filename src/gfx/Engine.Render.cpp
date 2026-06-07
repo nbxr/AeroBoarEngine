@@ -230,7 +230,8 @@ void gfx::Engine::render() {
     submit_info.signalSemaphoreCount = 1;
     submit_info.pSignalSemaphores = signal_semaphores;
 
-    if (vkQueueSubmit(vk.graphics_queue, 1, &submit_info, frame.in_flight_fence) != VK_SUCCESS) {
+    result = vkQueueSubmit(vk.graphics_queue, 1, &submit_info, frame.in_flight_fence);
+    if (result != VK_SUCCESS) {
         LOG_ERROR("Failed to submit draw command buffer");
         return;
     }
