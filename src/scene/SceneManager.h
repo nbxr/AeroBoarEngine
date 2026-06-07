@@ -9,7 +9,7 @@
 #include <shared_mutex>
 #include <utility>
 #include <vector>
-#include <vma/vk_mem_alloc.h>
+#include <vk_mem_alloc.h>
 #include <vulkan/vulkan.h>
 
 namespace scene {

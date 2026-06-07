@@ -165,7 +165,7 @@ scene::GltfLoader::extract_material_data(const std::string &filename,
             auto [img_name, uri] = get_safe_image_path(pbr.baseColorTexture.index);
             if (!uri.empty()) {
                 material.albedo_texture_index =
-                    renderer.texture_manager.get_texture_handle(img_name, uri, /*is_srgb=*/true);
+                    renderer.texture_manager.get_texture_handle(img_name, uri.string(), /*is_srgb=*/true);
             }
         }
 
@@ -174,7 +174,7 @@ scene::GltfLoader::extract_material_data(const std::string &filename,
             auto [img_name, uri] = get_safe_image_path(pbr.metallicRoughnessTexture.index);
             if (!uri.empty()) {
                 material.roughness_texture_index =
-                    renderer.texture_manager.get_texture_handle(img_name, uri);
+                    renderer.texture_manager.get_texture_handle(img_name, uri.string());
             }
         }
 
@@ -183,7 +183,7 @@ scene::GltfLoader::extract_material_data(const std::string &filename,
             auto [img_name, uri] = get_safe_image_path(mat.normalTexture.index);
             if (!uri.empty()) {
                 material.normal_texture_index =
-                    renderer.texture_manager.get_texture_handle(img_name, uri);
+                    renderer.texture_manager.get_texture_handle(img_name, uri.string());
                 // If we want to honor scale: material.normalStrength = static_cast<float>(mat.normalTexture.scale);
             }
         }
@@ -193,7 +193,7 @@ scene::GltfLoader::extract_material_data(const std::string &filename,
             auto [img_name, uri] = get_safe_image_path(mat.emissiveTexture.index);
             if (!uri.empty()) {
                 material.emissive_texture_index =
-                    renderer.texture_manager.get_texture_handle(img_name, uri);
+                    renderer.texture_manager.get_texture_handle(img_name, uri.string());
             }
         }
 
@@ -202,7 +202,7 @@ scene::GltfLoader::extract_material_data(const std::string &filename,
             auto [img_name, uri] = get_safe_image_path(mat.occlusionTexture.index);
             if (!uri.empty()) {
                 material.ao_texture_index =
-                    renderer.texture_manager.get_texture_handle(img_name, uri);
+                    renderer.texture_manager.get_texture_handle(img_name, uri.string());
             }
         }
 

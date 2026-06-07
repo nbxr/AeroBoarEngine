@@ -6,7 +6,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include <vma/vk_mem_alloc.h>
+#include <vk_mem_alloc.h>
 
 namespace gfx {
 class TextureManager {

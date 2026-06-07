@@ -1,7 +1,7 @@
 #pragma once
 #include "gfx/AllocatedBuffer.h"
 #include <vector>
-#include <vma/vk_mem_alloc.h>
+#include <vk_mem_alloc.h>
 #include <vulkan/vulkan.h>
 
 namespace gfx {
