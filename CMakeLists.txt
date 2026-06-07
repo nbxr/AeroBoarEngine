@@ -6,6 +6,20 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# -----------------------------------------------------------------------------
+# Basic sanity checks
+# -----------------------------------------------------------------------------
+if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+    message(FATAL_ERROR
+        "32-bit build detected (i686 / mingw32 style).\n"
+        "This engine requires a 64-bit toolchain (x86_64 or ARM64).\n"
+        "Current compiler: ${CMAKE_CXX_COMPILER}\n\n"
+        "On Windows:\n"
+        "  - Preferred: cmake -G \"Visual Studio 17 2022\" -A x64\n"
+        "  - For 64-bit MinGW: use x86_64-w64-mingw32-gcc/g++ (not the i686 'mingw32' one)\n"
+        "Delete your build/ directory and reconfigure with a 64-bit compiler.")
+endif()
+
 # Add position-independent code for Linux builds
 if(UNIX AND NOT APPLE)
     set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -106,11 +120,29 @@ add_custom_target(copy_configuration ALL
 # -----------------------------------------------------------------------------
 
 # Find Vulkan SDK
+# Windows requires explicit help. The stock FindVulkan is sensitive to how CMake
+# is invoked (shell vs IDE, generator, whether the env var was present at first configure).
+# We seed it using the same $ENV{VULKAN_SDK} that our glslc finder (lines 19-25) already trusts.
+if(WIN32)
+    if(DEFINED ENV{VULKAN_SDK})
+        # Make the whole SDK visible to find modules and any Vulkan*.cmake the SDK ships.
+        list(APPEND CMAKE_PREFIX_PATH "$ENV{VULKAN_SDK}")
+
+        # Directly set the two cache variables that FindVulkan populates and caches.
+        # FORCE makes the current environment win over any stale build/ cache from a prior run.
+        set(Vulkan_INCLUDE_DIR "$ENV{VULKAN_SDK}/Include" CACHE PATH "Vulkan headers" FORCE)
+        set(Vulkan_LIBRARY     "$ENV{VULKAN_SDK}/Lib/vulkan-1.lib" CACHE FILEPATH "Vulkan loader" FORCE)
+    else()
+        message(WARNING "VULKAN_SDK is not set in the environment. Vulkan discovery on Windows will likely fail.")
+    endif()
+endif()
+
 find_package(Vulkan REQUIRED)
 if(NOT Vulkan_FOUND)
     message(FATAL_ERROR "Vulkan SDK not found. Please install Vulkan SDK or set the VULKAN_SDK environment variable.")
 else()
     message(STATUS "Vulkan SDK found at: ${Vulkan_INCLUDE_DIRS}")
+    message(STATUS "Vulkan library: ${Vulkan_LIBRARY}")
 endif()
 
 # Setup FetchContent
@@ -234,15 +266,23 @@ target_include_directories(Aero_Boar_Engine PRIVATE
     
 )
 
-# Link libraries
+# Link libraries - use ${Vulkan_LIBRARIES} as fallback if necessary
 target_link_libraries(Aero_Boar_Engine PRIVATE 
-    ${Vulkan_LIBRARIES}
+    Vulkan::Vulkan
     vk-bootstrap::vk-bootstrap
     GPUOpen::VulkanMemoryAllocator    
     glfw
     glm::glm
 )
 
+# Make Visual Studio debugger use the build directory as the working directory.
+# This matches how the project copies configuration.json + shaders into ${CMAKE_BINARY_DIR}/assets and /shaders.
+# The engine (and configuration.json) expects to run with CWD at the build root so that
+# relative paths like "assets/scenes/..." resolve correctly.
+# (On Linux this often "just worked" depending on how you launched the binary.)
+set_target_properties(Aero_Boar_Engine PROPERTIES
+    VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
+)
 
 # Copy shaders to build directory after compilation (optional, for easier deployment)
 if(GLSLC_AVAILABLE)

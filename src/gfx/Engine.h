@@ -12,7 +12,7 @@ namespace gfx {
 class Engine {
   public:
     Renderer renderer{};
-    scene::Camera camera;   // Desktop + future VR camera system
+    scene::Camera camera{};   // Desktop + future VR camera system
 
 
     bool initialize();

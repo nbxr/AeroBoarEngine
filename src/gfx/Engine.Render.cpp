@@ -227,8 +227,8 @@ void gfx::Engine::render() {
         //   0 = Normal textured rendering (default)
         //   1 = UV visualization (Red = U, Green = V)
         //   2+ = Per-primitive color (each draw call gets its own color)
-        uint debugMode = 0;
-        uint primitiveHint = uint(i % 32);
+        uint32_t debugMode = 0;
+        uint32_t primitiveHint = uint32_t(i % 32);
 
         pushData.extra = glm::uvec4{inst.material_index, debugMode + primitiveHint, 0, 0};
 
@@ -269,7 +269,8 @@ void gfx::Engine::render() {
     submit_info.signalSemaphoreCount = 1;
     submit_info.pSignalSemaphores = signal_semaphores;
 
-    if (vkQueueSubmit(vk.graphics_queue, 1, &submit_info, frame.in_flight_fence) != VK_SUCCESS) {
+    result = vkQueueSubmit(vk.graphics_queue, 1, &submit_info, frame.in_flight_fence);
+    if (result != VK_SUCCESS) {
         LOG_ERROR("Failed to submit draw command buffer");
         return;
     }

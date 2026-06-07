@@ -166,7 +166,7 @@ layout(set = 0, binding = 0) uniform FrameGlobals {
     vec3  cameraPosition;
     float exposure;
     // Lights (Phase 1–2)
-    uint  lightCount;
+    uint32_t  lightCount;
     vec4  lightDirections[4];   // direction.xyz + unused
     vec4  lightColors[4];       // rgb + intensity
     // IBL (Phase 3+)
