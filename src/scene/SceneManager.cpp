@@ -9,12 +9,10 @@ bool scene::SceneManager::is_initialized() {
 }
 
 bool scene::SceneManager::initialize(VkDevice device, VmaAllocator allocator,
-                                    VkDescriptorSet descriptor_set,
                                     uint32_t initial_capacity) {
     std::scoped_lock lock(instance_mutex);
     this->device = device;
     this->allocator = allocator;
-    this->descriptor_set = descriptor_set;
     this->instance_count = 0;
     for (size_t i = 0; i < max_instances.size(); i++)
         this->max_instances[i] = initial_capacity;
@@ -75,10 +73,10 @@ void scene::SceneManager::update_buffers() {
     }
 }
 
-void scene::SceneManager::bind_descriptor(uint32_t binding_index) {
+void scene::SceneManager::bind_descriptor(uint32_t binding_index, VkDescriptorSet target_set) {
     VkDeviceSize size = instance_count * sizeof(SceneInstance);
     gfx::BufferUtils::update_descriptor(device, get_render_buffer(),
-                                         descriptor_set, size, binding_index);
+                                         target_set, size, binding_index);
 }
 
 void scene::SceneManager::shutdown() {
@@ -107,7 +105,6 @@ void scene::SceneManager::shutdown() {
 
     device = VK_NULL_HANDLE;
     allocator = VK_NULL_HANDLE;
-    descriptor_set = VK_NULL_HANDLE;
     cpu_instances.clear();
     instance_count = 0;
     max_instances = {0, 0};

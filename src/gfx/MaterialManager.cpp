@@ -13,11 +13,9 @@ bool gfx::MaterialManager::is_initialized() {
 }
 
 bool gfx::MaterialManager::initialize(VkDevice device, VmaAllocator allocator,
-                                      VkDescriptorSet descriptor_set,
                                       uint32_t initial_capacity) {
     this->device = device;
     this->allocator = allocator;
-    this->descriptor_set = descriptor_set;
     for (size_t i = 0; i < max_materials.size(); i++)
         this->max_materials[i] = initial_capacity;
     this->material_count = 0;
@@ -93,10 +91,10 @@ void gfx::MaterialManager::update_buffers() {
     }
 }
 
-void gfx::MaterialManager::bind_descriptor(uint32_t binding_index) {
+void gfx::MaterialManager::bind_descriptor(uint32_t binding_index, VkDescriptorSet target_set) {
     std::shared_lock lock(material_mutex);
     gfx::BufferUtils::update_descriptor(
-        device, get_render_buffer(), descriptor_set,
+        device, get_render_buffer(), target_set,
         material_count * sizeof(Material), binding_index);
 }
 
@@ -115,7 +113,6 @@ void gfx::MaterialManager::shutdown() {
 
     device = VK_NULL_HANDLE;
     allocator = VK_NULL_HANDLE;
-    descriptor_set = VK_NULL_HANDLE;
 }
 
 void gfx::MaterialManager::resize_buffer(uint32_t new_capacity) {

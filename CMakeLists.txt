@@ -241,6 +241,7 @@ add_executable(Aero_Boar_Engine
     src/scene/SceneManager.cpp
     src/scene/Camera.cpp
     src/core/InputManager.cpp
+    src/core/Configuration.cpp
     src/gfx/ShaderLoader.cpp
     src/gfx/MaterialManager.cpp
     src/gfx/MeshManager.cpp

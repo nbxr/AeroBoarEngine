@@ -92,6 +92,8 @@ The one-time scene upload at load is now fully wired:
 
 The data is now in descriptors and ready for the render pass / shader work. Future dynamic updates will need per-frame-in-flight fencing + dirty tracking.
 
+Per-frame bindless descriptor sets (one per `MAX_FRAMES_IN_FLIGHT`) are now used for everything, including binding 0 (the per-frame `FrameGlobals` UBO). Static resources are bound to all sets at load time; per-frame data (globals) is updated only on the matching set using `current_frame`. A small helper `bind_frame_globals_to_all_sets()` encapsulates the initial binding. Legacy `globals_upload`/`globals_render` fields were removed.
+
 ## Rendering Milestone (Achieved)
 
 A basic PBR forward renderer is now active:
@@ -115,5 +117,12 @@ These are non-functional cleanup items identified after the namespace reorganiza
 - [done] Replace the raw `#define INVALID_HANDLE` in `core/Handle.h` with a `constexpr` constant.
 - Reduce unnecessary `gfx::` qualification on types when already inside `namespace gfx`.
 - Consider whether the top-level `AeroBoar` stub class is still needed.
+- [done] Complete per-frame bindless descriptor consistency for globals (binding 0): legacy `globals_upload`/`globals_render` removed, `bind_frame_globals_to_all_sets()` helper added, all sets now correctly paired with their buffers.
+
+## Debugging & Diagnostics
+- `core/Log.h` now supports a persistent log file (`aero_boar.log`). The file is explicitly opened relative to `std::filesystem::current_path()` (the process working directory) at startup. This respects the project's CMake setting `VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"`, so under normal debugging the log lands in the `build/` folder. At init time the code prints the **full absolute path** to both the console and the Visual Studio / VS Code debugger Output window so you always know exactly where the validation crash log went.
+- Replaced vk-bootstrap's default debug messenger with a custom `VkDebugUtilsMessengerEXT` callback (`vulkan_debug_callback` in Engine.InitializeDevices.cpp) that funnels every validation layer message (errors, warnings, info, loader messages, etc.) through the logger. This ensures the exact validation text that precedes a crash (e.g. the DEVICE_LOST / bindless / sync issues you are hunting) is retained in the log file even when stdout/stderr buffers are lost.
+- The log is enabled unconditionally at the very start of `main()`; no new config or command-line flags were added (kept minimal per project rules).
+- The messenger is still cleaned up via `vkb::destroy_debug_utils_messenger` in the normal destroy path.
 
 Update this file when major phases complete or the focus shifts significantly.

@@ -140,27 +140,26 @@ bool gfx::Engine::init_surface() {
 }
 
 bool gfx::Engine::init_resource_managers() {
+    // Initialize managers. The initial capacity is passed; binding to specific
+    // descriptor sets happens later via explicit bind_descriptor(target) calls
+    // (replicated to all per-frame sets at load time in InitializeScene).
     if (!renderer.scene_manager.initialize(
-            renderer.vk.device.device, renderer.allocator,
-            renderer.vk.bindless_descriptor_set, 100))
+            renderer.vk.device.device, renderer.allocator, 100))
         return false;
 
     if (!renderer.material_manager.initialize(
-            renderer.vk.device.device, renderer.allocator,
-            renderer.vk.bindless_descriptor_set, 100))
+            renderer.vk.device.device, renderer.allocator, 100))
         return false;
 
     if (!renderer.mesh_manager.initialize(
-            renderer.vk.device.device, renderer.allocator,
-            renderer.vk.bindless_descriptor_set, 100))
+            renderer.vk.device.device, renderer.allocator, 100))
         return false;
 
     if (!renderer.texture_manager.initialize(
             renderer.vk.device.device, renderer.allocator,
             renderer.vk.transfer_queue, renderer.vk.graphics_queue,
             renderer.vk.graphics_family_index,
-            renderer.vk.transfer_family_index,
-            renderer.vk.bindless_descriptor_set))
+            renderer.vk.transfer_family_index))
         return false;
 
     // Phase 2: small UBO for per-frame globals (binding 0) - camera + lights

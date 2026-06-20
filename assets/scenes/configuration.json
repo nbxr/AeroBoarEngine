@@ -1,6 +1,6 @@
 {
   "defaultScene": "DamagedHelmetScene",
-  "activeSystem": "Linux",
+  "activeSystem": "Windows",
   "home": [
     {
       "system": "Windows",
@@ -31,6 +31,12 @@
     {
       "name": "Cameras",
       "filename": "glTF-Sample-Assets/Models/Cameras/glTF/Cameras.gltf"
+    }
+  ],
+  "validationFeatures" : [
+    {
+      "name": "gpuAssistedValidation",
+      "enabled": false
     }
   ]
 }

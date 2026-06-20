@@ -17,7 +17,6 @@ class MaterialManager {
   private:
     VkDevice device{VK_NULL_HANDLE};
     VmaAllocator allocator{VK_NULL_HANDLE};
-    VkDescriptorSet descriptor_set{VK_NULL_HANDLE};
 
     // Internal storage using AllocatedBuffer
     std::array<AllocatedBuffer, 2> material_buffer{};
@@ -50,7 +49,7 @@ class MaterialManager {
     // Common buffer management methods
     bool is_initialized();
     bool initialize(VkDevice device, VmaAllocator allocator,
-                    VkDescriptorSet descriptor_set, uint32_t initial_capacity);
+                    uint32_t initial_capacity);
 
     // Create a new material and return its ID
     MaterialID create_material(const gfx::Material &material);
@@ -60,9 +59,11 @@ class MaterialManager {
     void update_material(MaterialID material_id, const gfx::Material &material);
 
     void update_buffers();
-    void bind_descriptor(uint32_t binding_index);
+    void bind_descriptor(uint32_t binding_index, VkDescriptorSet target_set);
     void toggle_buffers();  // exposed for Engine load-time commit (double-buffer swap)
     void shutdown();
+
+    [[nodiscard]] uint32_t get_material_count() const { return material_count; }
 
   private:
     void resize_buffer(uint32_t new_capacity);

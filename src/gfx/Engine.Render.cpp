@@ -19,8 +19,21 @@ void gfx::Engine::render() {
     auto& vk = renderer.vk;
     auto& frame = renderer.frames[renderer.current_frame];
 
+    static uint64_t frame_counter = 0;
+    if (frame_counter < 5) {
+        LOG_INFO("[Render] Enter render() frame " << frame_counter);
+    }
+
     // 1. Wait for the previous frame using this slot to finish
-    vkWaitForFences(vk.device, 1, &frame.in_flight_fence, VK_TRUE, UINT64_MAX);
+    VkResult wait_res = vkWaitForFences(vk.device, 1, &frame.in_flight_fence, VK_TRUE, UINT64_MAX);
+    if (wait_res == VK_ERROR_DEVICE_LOST) {
+        renderer.vk.device_lost = true;
+        LOG_ERROR("FATAL: vkWaitForFences returned VK_ERROR_DEVICE_LOST");
+        return;
+    } else if (wait_res != VK_SUCCESS) {
+        LOG_ERROR("vkWaitForFences failed with VkResult=" << (int)wait_res);
+        return;
+    }
 
     // 2. Acquire next swapchain image
     uint32_t image_index;
@@ -37,8 +50,26 @@ void gfx::Engine::render() {
         recreate_swapchain();
         return;
     } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
-        LOG_ERROR("Failed to acquire swapchain image");
+        if (result == VK_ERROR_DEVICE_LOST) {
+            renderer.vk.device_lost = true;
+            LOG_ERROR("FATAL: vkAcquireNextImageKHR returned VK_ERROR_DEVICE_LOST");
+        } else {
+            LOG_ERROR("Failed to acquire swapchain image (VkResult=" << (int)result << ")");
+        }
         return;
+    }
+
+    // Diagnostic: log acquire details for the first N frames so we can see
+    // the relationship between current_frame (CPU double buffer) and the
+    // actual image_index returned by the driver, plus the total number of
+    // images in the swapchain. This is critical for diagnosing the
+    // "already acquired N images" VUID + DEVICE_LOST.
+    if (frame_counter < 12) {
+        LOG_INFO("[Render] frame=" << frame_counter
+                 << " current_frame=" << renderer.current_frame
+                 << " acquired_image=" << image_index
+                 << " / " << vk.swap_chain_image_count
+                 << " (MAX_FRAMES_IN_FLIGHT=" << renderer.MAX_FRAMES_IN_FLIGHT << ")");
     }
 
     // Reset fence for this frame
@@ -86,7 +117,17 @@ void gfx::Engine::render() {
     // The draws later in this command buffer will then read the right lightType
     // in pbr.frag.
     {
-        uint32_t renderIdx = renderer.globals_render;
+        // Use current_frame (0 or 1) to select the globals UBO. This matches the
+        // double-buffering intent of frame_globals_buffer[] and the per-slot
+        // fence wait at the top of render(): when we re-enter this current_frame
+        // slot two frames later, the fence guarantees the previous submit that
+        // used this globals buffer has completed.
+        // Previously a fixed index was used for the globals buffer (always the
+        // same one), which caused every frame to stomp the buffer while the
+        // previous frame's in-flight shaders were still reading it via the
+        // shared bindless set → data race → VK_ERROR_DEVICE_LOST on the second
+        // submit.
+        uint32_t renderIdx = renderer.current_frame;
         auto* dst = static_cast<gfx::FrameGlobals*>(renderer.frame_globals_buffer[renderIdx].mapped_data);
         if (dst) {
             // Zero the entire mapped FrameGlobals first. This is required for two
@@ -142,22 +183,31 @@ void gfx::Engine::render() {
             }
         }
 
+        // Update only *this frame's* bindless set (prevents cross-frame races on the shared
+        // descriptor set while another in-flight CB is still executing).
         gfx::BufferUtils::update_descriptor(
             renderer.vk.device.device,
             renderer.frame_globals_buffer[renderIdx],
-            renderer.vk.bindless_descriptor_set,
+            renderer.vk.bindless_descriptor_sets[renderer.current_frame],
             sizeof(gfx::FrameGlobals),
             0,
             VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+
+        if (frame_counter < 2) {
+            LOG_INFO("[Render]   globals: lights=" << dst->lightCount
+                     << " exposure=" << dst->exposure
+                     << " camPos=" << dst->cameraPosition.x << "," << dst->cameraPosition.y << "," << dst->cameraPosition.z);
+        }
     }
 
-    // Bind the global bindless descriptor set (we will use it soon for real draws)
+    // Bind *this frame's* bindless set. Each frame has its own copy of the static bindings
+    // (updated at load) + its own per-frame globals.
     vkCmdBindDescriptorSets(
         frame.command_buffer,
         VK_PIPELINE_BIND_POINT_GRAPHICS,
         vk.pipeline_layout,
         0, 1,
-        &vk.bindless_descriptor_set,
+        &vk.bindless_descriptor_sets[renderer.current_frame],
         0, nullptr
     );
 
@@ -232,6 +282,15 @@ void gfx::Engine::render() {
 
         pushData.extra = glm::uvec4{inst.material_index, debugMode + primitiveHint, 0, 0};
 
+        if (frame_counter < 2) {
+            LOG_INFO("[Render]   draw i=" << i
+                     << " mesh=" << inst.mesh_index
+                     << " mat=" << inst.material_index
+                     << " vtx_off=" << vtx_off
+                     << " idx_off=" << idx_off
+                     << " cnt=" << idx_cnt);
+        }
+
         vkCmdPushConstants(
             frame.command_buffer,
             vk.pipeline_layout,
@@ -271,8 +330,21 @@ void gfx::Engine::render() {
 
     result = vkQueueSubmit(vk.graphics_queue, 1, &submit_info, frame.in_flight_fence);
     if (result != VK_SUCCESS) {
-        LOG_ERROR("Failed to submit draw command buffer");
+        if (result == VK_ERROR_DEVICE_LOST) {
+            renderer.vk.device_lost = true;
+            LOG_ERROR("FATAL: vkQueueSubmit returned VK_ERROR_DEVICE_LOST. GPU is gone.");
+            // TODO: query VK_EXT_device_fault here for shader PC, address, etc. before exiting.
+        } else {
+            LOG_ERROR("vkQueueSubmit failed with VkResult=" << (int)result
+                      << " (VK_ERROR_DEVICE_LOST=-4, VK_TIMEOUT=-2 are the ones that kill the GPU)");
+        }
         return;
+    }
+
+    static bool first_submit = true;
+    if (first_submit) {
+        LOG_INFO("[Render] First vkQueueSubmit succeeded for frame.");
+        first_submit = false;
     }
 
     // 5. Present
@@ -289,11 +361,23 @@ void gfx::Engine::render() {
     result = vkQueuePresentKHR(vk.present_queue, &present_info);
 
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
+        std::cerr << "[Render] Present returned SUBOPTIMAL/OUT_OF_DATE, recreating swapchain.\n";
         recreate_swapchain();
+    } else if (result == VK_ERROR_DEVICE_LOST) {
+        renderer.vk.device_lost = true;
+        LOG_ERROR("FATAL: vkQueuePresentKHR returned VK_ERROR_DEVICE_LOST");
     } else if (result != VK_SUCCESS) {
-        LOG_ERROR("Failed to present swapchain image");
+        LOG_ERROR("vkQueuePresentKHR failed with VkResult=" << (int)result);
+    } else {
+        static bool first_present = true;
+        if (first_present) {
+            LOG_INFO("[Render] First successful present.");
+            first_present = false;
+        }
     }
 
     // Advance to next frame in flight
     renderer.current_frame = (renderer.current_frame + 1) % Renderer::MAX_FRAMES_IN_FLIGHT;
+
+    frame_counter++;
 }

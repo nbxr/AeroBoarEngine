@@ -13,12 +13,10 @@ bool gfx::MeshManager::is_initialized() {
 }
 
 bool gfx::MeshManager::initialize(VkDevice device, VmaAllocator allocator,
-                                  VkDescriptorSet descriptor_set,
                                   uint32_t initial_capacity) {
     std::scoped_lock lock(mesh_mutex);
     this->device = device;
     this->allocator = allocator;
-    this->descriptor_set = descriptor_set;
     this->mesh_count = 0;
     for (size_t i = 0; i < max_meshes.size(); i++) {
         this->max_meshes[i] = initial_capacity;
@@ -104,19 +102,19 @@ void gfx::MeshManager::update_buffers() {
 }
 
 void gfx::MeshManager::bind_descriptor(uint32_t ssbo, uint32_t vertex,
-                                       uint32_t index) {
+                                       uint32_t index, VkDescriptorSet target_set) {
     std::shared_lock lock(mesh_mutex);
     // SSBO buffer
     gfx::BufferUtils::update_descriptor(
-        device, get_render_ssbo_buffer(), descriptor_set,
+        device, get_render_ssbo_buffer(), target_set,
         mesh_count * sizeof(MeshPrimitiveSSBO), ssbo);
     // Vertex buffer
     gfx::BufferUtils::update_descriptor(device, get_render_vertex_buffer(),
-                                         descriptor_set,
+                                         target_set,
                                          vertex_count * sizeof(Vertex), vertex);
     // Index buffer
     gfx::BufferUtils::update_descriptor(device, get_render_index_buffer(),
-                                         descriptor_set,
+                                         target_set,
                                          index_count * sizeof(Index), index);
 }
 
@@ -149,7 +147,6 @@ void gfx::MeshManager::shutdown() {
 
     device = VK_NULL_HANDLE;
     allocator = VK_NULL_HANDLE;
-    descriptor_set = VK_NULL_HANDLE;
 }
 
 void gfx::MeshManager::clear_all_caches() {

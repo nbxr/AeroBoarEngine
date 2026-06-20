@@ -24,10 +24,14 @@ struct PassContext {
     VkRect2D scissor{};
     VkSampleCountFlagBits sample_count{VK_SAMPLE_COUNT_1_BIT}; // 1, 2, or 4
     
-    // Transient / on-chip friendly images
-    AllocatedImage msaa_color_image{};
-    AllocatedImage resolved_color_image{};    // final store target
-    AllocatedImage depth_image{};             // for non-MSAA passes or depth resolve
+    // Transient / on-chip friendly images - one set per swapchain image so that
+    // multiple frames in flight (using different acquired swap images) can have
+    // their render passes execute without overlapping on the same transient
+    // attachment images. Sharing them worked for 1 frame in flight but caused
+    // DEVICE_LOST when 2 frames' graphics work overlapped on the shared MSAA
+    // color and depth (both use the same views in their framebuffers).
+    std::vector<AllocatedImage> msaa_color_images{};
+    std::vector<AllocatedImage> depth_images{};
 
     // Optional: fixed foveated density map
     AllocatedImage fdm_image{};

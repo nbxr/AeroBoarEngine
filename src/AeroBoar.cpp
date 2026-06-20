@@ -2,11 +2,14 @@
 #include <iostream>
 #include <algorithm>
 #include <cmath>
+#include <thread>
+#include <chrono>
 #define GLFW_INCLUDE_VULKAN
 #include "gfx/Engine.h"
 #include "gfx/Renderer.h"
 #include "scene/Camera.h"
 #include "core/InputManager.h"
+#include "core/Log.h"
 #include <GLFW/glfw3.h>
 
 int AeroBoar::fly() {
@@ -32,6 +35,17 @@ int AeroBoar::fly() {
         glfwTerminate();
         return -1;
     }
+
+    // Initialize tracked window size from the actual framebuffer size right after
+    // creation. This prevents the main loop's size check from unconditionally
+    // triggering a recreate_swapchain() on the very first frame (because the
+    // Renderer struct defaults width/height to 0). The early recreate was
+    // correlating with the immediate DEVICE_LOST on the first present in the
+    // latest run (even with 3 swapchain images).
+    int initial_width, initial_height;
+    glfwGetFramebufferSize(engine.renderer.window.glfw_handle, &initial_width, &initial_height);
+    engine.renderer.window.width = initial_width;
+    engine.renderer.window.height = initial_height;
 
     // Initialize camera (desktop mode by default)
     engine.camera = scene::Camera(engine.renderer.window.glfw_handle);
@@ -95,6 +109,8 @@ int AeroBoar::fly() {
             // Only handle resizing if the new dimensions are valid
         if (width != engine.renderer.window.width || 
             height != engine.renderer.window.height) {
+            LOG_INFO("[Main] Window size changed: " << engine.renderer.window.width << "x" << engine.renderer.window.height
+                     << " -> " << width << "x" << height << " (triggering swapchain recreate)");
             engine.renderer.window.width = width;
             engine.renderer.window.height = height;
             // Recreate swapchain and related resources here
@@ -121,6 +137,15 @@ int AeroBoar::fly() {
         }
 
         engine.camera.update(delta_time, input);
+
+        // If the device was lost (DEVICE_LOST from acquire/submit/present/wait),
+        // stop the render loop instead of spinning at full speed and flooding
+        // the validation log with millions of repeated errors.
+        if (engine.renderer.vk.device_lost) {
+            LOG_ERROR("Device lost - exiting main loop to avoid log spam and further invalid calls.");
+            glfwSetWindowShouldClose(engine.renderer.window.glfw_handle, GLFW_TRUE);
+            break;
+        }
 
         // Escape toggles mouse capture (cursor visible vs. look control).
         // At startup we begin uncaptured so the user can position the mouse over

@@ -1,13 +1,91 @@
 #include "gfx/Engine.h"
 #include "gfx/Renderer.h"
+#include "core/Configuration.h"
 #include "VkBootstrap.h"
+#include <vulkan/vulkan.h>
+#include <nlohmann/json.hpp>
+
+// Custom debug messenger callback. Routes all validation layer output through
+// our logger (console + aero_boar.log with flush) so messages are retained
+// even if the process crashes due to a Vulkan error (DEVICE_LOST, etc.).
+//
+// We apply light deduplication for repeated identical messages. After a crash
+// (e.g. DEVICE_LOST) the main loop can keep calling into Vulkan at high speed;
+// without this the log file would be flooded with millions of identical lines
+// (as happened with the vkAcquireNextImageKHR VUID after device loss).
+static VKAPI_ATTR VkBool32 VKAPI_CALL vulkan_debug_callback(
+    VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+    VkDebugUtilsMessageTypeFlagsEXT messageType,
+    const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
+    void* /*pUserData*/) {
+
+    auto ms = vkb::to_string_message_severity(messageSeverity);
+    auto mt = vkb::to_string_message_type(messageType);
+
+    std::string prefix;
+    if (pCallbackData->pMessageIdName && pCallbackData->pMessageIdName[0]) {
+        prefix = std::string("[") + ms + ": " + mt + "] " + pCallbackData->pMessageIdName + " : ";
+    } else {
+        prefix = std::string("[") + ms + ": " + mt + "] ";
+    }
+
+    std::string full = prefix + (pCallbackData->pMessage ? pCallbackData->pMessage : "");
+
+    // Simple cross-call dedup (not perfect under heavy threading, but good enough
+    // for the hot failure loops that produce millions of lines).
+    static std::string last_logged;
+    static int repeat_count = 0;
+
+    bool is_error_or_warn = (messageSeverity & (VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT |
+                                                VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)) != 0;
+
+    if (full == last_logged) {
+        ++repeat_count;
+        // Only emit a summary line occasionally for repeats so the file stays usable.
+        // For real crashes we still want the first occurrence + a count.
+        if (repeat_count % 1000 == 0) {
+            std::string summary = full + "  (repeated " + std::to_string(repeat_count) + " times)";
+            if (is_error_or_warn) {
+                LOG_ERROR(summary);
+            } else {
+                LOG_INFO(summary);
+            }
+        }
+        return VK_FALSE;
+    }
+
+    // Message changed — emit a final repeat summary for the previous one if it repeated a lot.
+    if (repeat_count > 0) {
+        std::string summary = last_logged + "  (repeated " + std::to_string(repeat_count) + " times total)";
+        // We don't know the old severity, so use the current one as approximation; in practice
+        // the spammy messages after a crash are the same severity.
+        if (is_error_or_warn) {
+            LOG_ERROR(summary);
+        } else {
+            LOG_INFO(summary);
+        }
+    }
+
+    last_logged = full;
+    repeat_count = 0;
+
+    // Push errors and warnings through LOG_ERROR for high visibility in both
+    // console and the persistent log file (with flush). Info/verbose go through LOG_INFO.
+    if (is_error_or_warn) {
+        LOG_ERROR(full);
+    } else {
+        LOG_INFO(full);
+    }
+
+    return VK_FALSE; // continue processing; do not suppress the call to driver
+}
 
 bool gfx::Engine::init_vk_instance(vkb::InstanceBuilder &builder) {
     
     // Get system info to check available layers
     auto system_info_ret = vkb::SystemInfo::get_system_info();
     if (!system_info_ret) {
-        std::cerr << "Failed to get system info: " << system_info_ret.error().message() << "\n";
+        LOG_ERROR("Failed to get system info: " << system_info_ret.error().message());
         return false;
     }
     
@@ -20,12 +98,75 @@ bool gfx::Engine::init_vk_instance(vkb::InstanceBuilder &builder) {
         std::cout << "Warning: VK_LAYER_LUNARG_monitor not found. FPS counter disabled.\n";
     }
 
+    // === Validation layer + advanced validation features ===
+    // .request_validation_layers(true) only loads VK_LAYER_KHRONOS_validation.
+    // The really useful things for DEVICE_LOST / texture / bindless bugs are
+    // the *features* inside the validation layer:
+    //   - Synchronization Validation (catches bad layouts, missing barriers, wrong access masks)
+    //   - GPU-Assisted Validation (instruments shaders for OOB, invalid descriptors, bad image sampling)
+    //   - Best Practices
+    //
+    // These are enabled via VkValidationFeaturesEXT (chained at instance creation).
+    // We do it here so that a normal Debug run of the exe gets strong validation
+    // without requiring the user to run Vulkan Configurator or set env vars every time.
+    //
+    // Note: GPU-AV has a noticeable perf cost and higher memory use. It is intended
+    // for development/debug builds when hunting bugs like the Sponza crash.
+    renderer.vk.enable_gpu_assisted_validation =
+        core::Configuration::get_instance().find<bool>("gpuAssistedValidation");
+
+    if (renderer.vk.enable_validation_layers) {
+        constexpr const char* khronos_validation = "VK_LAYER_KHRONOS_validation";
+        if (system_info.is_layer_available(khronos_validation)) {
+            builder.request_validation_layers(true);
+
+            // Required to use VkValidationFeaturesEXT
+            builder.enable_extension(VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME);
+
+            // Core features for this class of GPU fault:
+            builder.add_validation_feature_enable(
+                VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT);
+
+            if (renderer.vk.enable_gpu_assisted_validation) {
+                builder.add_validation_feature_enable(
+                    VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT);
+                builder.add_validation_feature_enable(
+                    VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_RESERVE_BINDING_SLOT_EXT);
+            }
+
+            // Very useful warnings (e.g. too many dedicated allocations, suboptimal image usage, etc.)
+            builder.add_validation_feature_enable(
+                VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT);
+
+            // Uncomment for shader printf debugging during hard investigations:
+            // builder.add_validation_feature_enable(VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT);
+
+            LOG_INFO("[Vulkan] Validation layer + Synchronization Validation enabled"
+                     << (renderer.vk.enable_gpu_assisted_validation ? " + GPU-Assisted Validation" : " (GPU-AV disabled)")
+                     << ".  Validation output will also be written to aero_boar.log (flushed).");
+        } else {
+            LOG_INFO("Warning: VK_LAYER_KHRONOS_validation not available.");
+        }
+    }
+
     // vulkan instance
+    // Use our custom debug callback (instead of use_default_debug_messenger)
+    // so that validation messages are written to both console *and* the log file
+    // (aero_boar.log) with immediate flush. This lets us recover the exact
+    // validation errors that precede a crash.
     auto inst_ret =
         builder.set_app_name("AeroBoar")
             .require_api_version(1, 4)
-            .request_validation_layers(renderer.vk.enable_validation_layers)
-            .use_default_debug_messenger()
+            .set_debug_callback(vulkan_debug_callback)
+            .set_debug_messenger_severity(
+                VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT |
+                VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
+            // Note: We deliberately do not request INFO level by default.
+            // INFO produces a lot of one-time loader messages at startup (useful)
+            // but can also be very chatty at runtime. The dedup logic above plus
+            // only ERROR+WARNING keeps the log file practical while still capturing
+            // the validation failures you care about for crash diagnosis.
+            // If you need more context, temporarily add INFO_BIT_EXT here.
             .build();
 
     if (!inst_ret) {
@@ -133,7 +274,7 @@ bool gfx::Engine::init_graphics_queue(vkb::Device &dev) {
     }
     VkQueue graphics_queue = graphics_queue_ret.value();
     renderer.vk.graphics_queue = graphics_queue;
-    renderer.vk.graphics_family_index = 0;
+    renderer.vk.graphics_family_index = dev.get_queue_index(vkb::QueueType::graphics).value();
     return true;
 }
 
@@ -145,7 +286,7 @@ bool gfx::Engine::init_present_queue(vkb::Device &dev) {
     }
     VkQueue present_queue = present_queue_ret.value();
     renderer.vk.present_queue = present_queue;
-    renderer.vk.present_family_index = 0;
+    renderer.vk.present_family_index = dev.get_queue_index(vkb::QueueType::present).value();
     return true;
 }
 
@@ -171,7 +312,11 @@ bool gfx::Engine::init_swapchain(vkb::Device &dev) {
     vkb::SwapchainBuilder swapchain_builder{dev, renderer.vk.surface};
     auto swap_ret =
         swapchain_builder
-            .set_desired_min_image_count(renderer.MAX_FRAMES_IN_FLIGHT)
+            // Quick experiment (Step 2): request one extra image beyond MAX_FRAMES_IN_FLIGHT
+            // to give the present engine headroom. With 2 frames + 2 images + vsync we were
+            // hitting the "already acquired 1 image" VUID + immediate DEVICE_LOST on submit.
+            // For Quest 3 the runtime controls the actual count; desktop can afford a bit more slack.
+            .set_desired_min_image_count(renderer.MAX_FRAMES_IN_FLIGHT + 1)
             .build();
 
     if (!swap_ret) {
@@ -191,6 +336,10 @@ bool gfx::Engine::init_swapchain(vkb::Device &dev) {
     }
 
     renderer.vk.swap_chain_image_views = views_res.value();
+    renderer.vk.swap_chain_image_count = static_cast<uint32_t>(renderer.vk.swap_chain_image_views.size());
+
+    LOG_INFO("[Swapchain] Created with " << renderer.vk.swap_chain_image_count
+             << " images (requested minImageCount=" << renderer.MAX_FRAMES_IN_FLIGHT + 1 << " for headroom experiment)");
 
     return true;
 }
@@ -208,8 +357,8 @@ void gfx::Engine::recreate_swapchain() {
     // --- Local variables for new resources ---
     VkSwapchainKHR                 new_swapchain = VK_NULL_HANDLE;
     std::vector<VkImageView>       new_swapchain_views;
-    AllocatedImage                 new_msaa;
-    AllocatedImage                 new_depth;
+    std::vector<AllocatedImage>    new_msaa_images;
+    std::vector<AllocatedImage>    new_depth_images;
     std::vector<VkSemaphore>       new_render_finished;
     std::vector<VkFramebuffer>     new_framebuffers;
 
@@ -221,7 +370,9 @@ void gfx::Engine::recreate_swapchain() {
     vkb::SwapchainBuilder swapchain_builder{renderer.vk.device};
     auto swap_ret = swapchain_builder
         .set_old_swapchain(renderer.vk.swapchain)
-        .set_desired_min_image_count(renderer.MAX_FRAMES_IN_FLIGHT)
+        // Quick experiment (Step 2): request one extra image beyond MAX_FRAMES_IN_FLIGHT
+        // (same rationale as in init_swapchain).
+        .set_desired_min_image_count(renderer.MAX_FRAMES_IN_FLIGHT + 1)
         .set_desired_extent(renderer.window.width, renderer.window.height)
         .build();
 
@@ -243,22 +394,26 @@ void gfx::Engine::recreate_swapchain() {
     }
 
     // --------------------------------------------------------
-    // 2. Create new transient MSAA color image at new size
+    // 2. Create new transient MSAA + depth images (one pair per swap image)
+    //    so that in-flight frames using different swap images don't overlap
+    //    on the same transient attachments (this was causing DEVICE_LOST
+    //    on the second frame's submit when 2 frames were in flight).
     // --------------------------------------------------------
     if (success) {
-        if (!create_msaa_color_image(renderer.vk.swap_chain_extent, new_msaa)) {
-            LOG_ERROR("Failed to create new MSAA color image during recreation");
-            success = false;
-        }
-    }
-
-    // --------------------------------------------------------
-    // 3. Create new transient depth image at new size
-    // --------------------------------------------------------
-    if (success) {
-        if (!create_depth_image(renderer.vk.swap_chain_extent, new_depth)) {
-            LOG_ERROR("Failed to create new depth image during recreation");
-            success = false;
+        const uint32_t new_image_count = static_cast<uint32_t>(new_swapchain_views.size());
+        new_msaa_images.resize(new_image_count);
+        new_depth_images.resize(new_image_count);
+        for (uint32_t i = 0; i < new_image_count; ++i) {
+            if (!create_msaa_color_image(renderer.vk.swap_chain_extent, new_msaa_images[i])) {
+                LOG_ERROR("Failed to create new MSAA color image during recreation");
+                success = false;
+                break;
+            }
+            if (!create_depth_image(renderer.vk.swap_chain_extent, new_depth_images[i])) {
+                LOG_ERROR("Failed to create new depth image during recreation");
+                success = false;
+                break;
+            }
         }
     }
 
@@ -282,7 +437,8 @@ void gfx::Engine::recreate_swapchain() {
     }
 
     // --------------------------------------------------------
-    // 5. Create new framebuffers using the new images
+    // 5. Create new framebuffers using the new images (each gets its own
+    //    transient MSAA + depth so concurrent frames don't share them).
     // --------------------------------------------------------
     if (success) {
         const uint32_t new_image_count = static_cast<uint32_t>(new_swapchain_views.size());
@@ -290,9 +446,9 @@ void gfx::Engine::recreate_swapchain() {
 
         for (uint32_t i = 0; i < new_image_count; ++i) {
             VkImageView attachments[3] = {
-                new_msaa.view,
+                new_msaa_images[i].view,
                 new_swapchain_views[i],
-                new_depth.view
+                new_depth_images[i].view
             };
 
             VkFramebufferCreateInfo fb_info{};
@@ -341,34 +497,50 @@ void gfx::Engine::recreate_swapchain() {
             if (sem != VK_NULL_HANDLE) vkDestroySemaphore(renderer.vk.device, sem, nullptr);
         }
 
-        // Destroy old MSAA and depth images
-        if (renderer.main_pass.msaa_color_image.view != VK_NULL_HANDLE) {
-            vkDestroyImageView(renderer.vk.device, renderer.main_pass.msaa_color_image.view, nullptr);
+        // Destroy old per-swap-image transient MSAA and depth images
+        for (auto &img : renderer.main_pass.msaa_color_images) {
+            if (img.view != VK_NULL_HANDLE) {
+                vkDestroyImageView(renderer.vk.device, img.view, nullptr);
+            }
+            if (img.handle != VK_NULL_HANDLE) {
+                vmaDestroyImage(renderer.allocator, img.handle, img.allocation);
+            }
         }
-        if (renderer.main_pass.msaa_color_image.handle != VK_NULL_HANDLE) {
-            vmaDestroyImage(renderer.allocator, renderer.main_pass.msaa_color_image.handle,
-                            renderer.main_pass.msaa_color_image.allocation);
-        }
+        renderer.main_pass.msaa_color_images.clear();
 
-        if (renderer.main_pass.depth_image.view != VK_NULL_HANDLE) {
-            vkDestroyImageView(renderer.vk.device, renderer.main_pass.depth_image.view, nullptr);
+        for (auto &img : renderer.main_pass.depth_images) {
+            if (img.view != VK_NULL_HANDLE) {
+                vkDestroyImageView(renderer.vk.device, img.view, nullptr);
+            }
+            if (img.handle != VK_NULL_HANDLE) {
+                vmaDestroyImage(renderer.allocator, img.handle, img.allocation);
+            }
         }
-        if (renderer.main_pass.depth_image.handle != VK_NULL_HANDLE) {
-            vmaDestroyImage(renderer.allocator, renderer.main_pass.depth_image.handle,
-                            renderer.main_pass.depth_image.allocation);
-        }
+        renderer.main_pass.depth_images.clear();
 
         // Adopt new resources
         renderer.vk.swapchain = new_swapchain;
         renderer.vk.swap_chain_image_views = std::move(new_swapchain_views);
-        renderer.main_pass.msaa_color_image = new_msaa;
-        renderer.main_pass.depth_image = new_depth;
+        renderer.vk.swap_chain_image_count = static_cast<uint32_t>(renderer.vk.swap_chain_image_views.size());
+        renderer.main_pass.msaa_color_images = std::move(new_msaa_images);
+        renderer.main_pass.depth_images = std::move(new_depth_images);
         renderer.vk.render_finished_semaphores = std::move(new_render_finished);
         renderer.main_pass.framebuffers = std::move(new_framebuffers);
 
         // Update window size tracking
         renderer.window.width = renderer.vk.swap_chain_extent.width;
         renderer.window.height = renderer.vk.swap_chain_extent.height;
+
+        // Restart frame index after swapchain recreation. The per-frame fences
+        // and image_available semaphores were not recreated here (they are
+        // sized to MAX_FRAMES_IN_FLIGHT, not tied to a particular swapchain),
+        // but starting back at 0 gives a clean sequence for the next render()
+        // calls. The first post-recreate wait should still work because we did
+        // a full vkDeviceWaitIdle above.
+        renderer.current_frame = 0;
+
+        LOG_INFO("[Swapchain] Recreated with " << renderer.vk.swap_chain_image_count
+                 << " images (requested minImageCount=" << renderer.MAX_FRAMES_IN_FLIGHT + 1 << " for headroom experiment)");
 
     } else {
         // --- ROLLBACK: Something failed. Clean up everything we created and keep old resources ---
@@ -384,20 +556,22 @@ void gfx::Engine::recreate_swapchain() {
             if (sem != VK_NULL_HANDLE) vkDestroySemaphore(renderer.vk.device, sem, nullptr);
         }
 
-        // Cleanup new depth image
-        if (new_depth.view != VK_NULL_HANDLE) {
-            vkDestroyImageView(renderer.vk.device, new_depth.view, nullptr);
+        // Cleanup new per-image transient MSAA and depth images
+        for (auto &img : new_msaa_images) {
+            if (img.view != VK_NULL_HANDLE) {
+                vkDestroyImageView(renderer.vk.device, img.view, nullptr);
+            }
+            if (img.handle != VK_NULL_HANDLE) {
+                vmaDestroyImage(renderer.allocator, img.handle, img.allocation);
+            }
         }
-        if (new_depth.handle != VK_NULL_HANDLE) {
-            vmaDestroyImage(renderer.allocator, new_depth.handle, new_depth.allocation);
-        }
-
-        // Cleanup new MSAA image
-        if (new_msaa.view != VK_NULL_HANDLE) {
-            vkDestroyImageView(renderer.vk.device, new_msaa.view, nullptr);
-        }
-        if (new_msaa.handle != VK_NULL_HANDLE) {
-            vmaDestroyImage(renderer.allocator, new_msaa.handle, new_msaa.allocation);
+        for (auto &img : new_depth_images) {
+            if (img.view != VK_NULL_HANDLE) {
+                vkDestroyImageView(renderer.vk.device, img.view, nullptr);
+            }
+            if (img.handle != VK_NULL_HANDLE) {
+                vmaDestroyImage(renderer.allocator, img.handle, img.allocation);
+            }
         }
 
         // Cleanup new swapchain views

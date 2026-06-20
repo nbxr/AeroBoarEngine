@@ -39,10 +39,10 @@ struct Renderer {
     std::vector<gfx::Light> lights{};
 
     // Per-frame globals UBO (binding 0) - camera + lights + exposure
-    // Double-buffered for future dynamic updates
+    // Double-buffered and paired with bindless_descriptor_sets[] by current_frame.
+    // Each frame uses its own buffer + descriptor set to avoid races with
+    // in-flight command buffers.
     std::array<AllocatedBuffer, 2> frame_globals_buffer{};
-    uint32_t globals_upload = 1;
-    uint32_t globals_render = 0;
 
     uint32_t current_frame = 0;
 

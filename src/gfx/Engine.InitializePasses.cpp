@@ -58,13 +58,26 @@ bool gfx::Engine::init_render_pass() {
     subpass.pResolveAttachments = &resolve_attachment_ref;  // MSAA resolve to swapchain
     subpass.pDepthStencilAttachment = &depth_attachment_ref;
 
+    // External subpass dependency.
+    // This tells Vulkan (and sync validation) what previous work must complete
+    // before this render pass can begin its implicit layout transitions and
+    // loadOp clears (including the depth clear on attachment 2).
+    //
+    // The previous version only covered color. That was the source of the
+    // SYNC-HAZARD-WRITE-AFTER-WRITE errors on the depth attachment and the
+    // cross-frame hazard between EndRenderPass and the next BeginRenderPass.
     VkSubpassDependency dependency = {};
     dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
     dependency.dstSubpass = 0;
-    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dependency.srcAccessMask = 0;
-    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                              VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                              VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    dependency.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                               VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                              VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                               VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
     // The three attachments must match the order used in
     // VkFramebuffers
@@ -142,7 +155,14 @@ bool gfx::Engine::create_msaa_color_image(VkExtent2D extent, AllocatedImage& out
 }
 
 bool gfx::Engine::init_msaa_color_image() {
-    return create_msaa_color_image(renderer.vk.swap_chain_extent, renderer.main_pass.msaa_color_image);
+    const uint32_t n = static_cast<uint32_t>(renderer.vk.swap_chain_image_views.size());
+    renderer.main_pass.msaa_color_images.resize(n);
+    for (uint32_t i = 0; i < n; ++i) {
+        if (!create_msaa_color_image(renderer.vk.swap_chain_extent, renderer.main_pass.msaa_color_images[i])) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool gfx::Engine::create_depth_image(VkExtent2D extent, AllocatedImage& out_image) {
@@ -154,7 +174,7 @@ bool gfx::Engine::create_depth_image(VkExtent2D extent, AllocatedImage& out_imag
     depth_image_info.extent = {extent.width, extent.height, 1};
     depth_image_info.mipLevels = 1;
     depth_image_info.arrayLayers = 1;
-    depth_image_info.samples = renderer.vk.msaa_color;
+    depth_image_info.samples = renderer.vk.msaa_depth;
     depth_image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
     depth_image_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
                              VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
@@ -195,14 +215,24 @@ bool gfx::Engine::create_depth_image(VkExtent2D extent, AllocatedImage& out_imag
 }
 
 bool gfx::Engine::init_depth_image() {
-    return create_depth_image(renderer.vk.swap_chain_extent, renderer.main_pass.depth_image);
+    const uint32_t n = static_cast<uint32_t>(renderer.vk.swap_chain_image_views.size());
+    renderer.main_pass.depth_images.resize(n);
+    for (uint32_t i = 0; i < n; ++i) {
+        if (!create_depth_image(renderer.vk.swap_chain_extent, renderer.main_pass.depth_images[i])) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool gfx::Engine::init_descriptor_pool() {
-    // Descriptor pool and set layout for bindless rendering
+    // Descriptor pool sized for multiple per-frame bindless sets (one per MAX_FRAMES_IN_FLIGHT).
+    // Each set has its own copy of the variable-count texture array (binding 6, 10000 entries)
+    // plus the other static bindings. The large sampler pool size must account for all sets.
+    const uint32_t frames = Renderer::MAX_FRAMES_IN_FLIGHT;
     VkDescriptorPoolSize pool_sizes[] = {
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000},
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 10000},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 10000 * frames},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000}};
 
@@ -210,7 +240,7 @@ bool gfx::Engine::init_descriptor_pool() {
     pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     pool_info.poolSizeCount = 4;
     pool_info.pPoolSizes = pool_sizes;
-    pool_info.maxSets = 1000;
+    pool_info.maxSets = 1000 * frames;  // generous
     pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
 
     if (vkCreateDescriptorPool(renderer.vk.device, &pool_info, nullptr,
@@ -328,26 +358,33 @@ bool gfx::Engine::init_bindless_descriptor_set() {
         return false;
     }
 
-    VkDescriptorSetAllocateInfo alloc_info{};
-    alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    alloc_info.descriptorPool = renderer.vk.descriptor_pool;
-    alloc_info.descriptorSetCount = 1;
-    alloc_info.pSetLayouts = &renderer.vk.descriptor_set_layout;
+    const uint32_t num_sets = Renderer::MAX_FRAMES_IN_FLIGHT;
+    renderer.vk.bindless_descriptor_sets.resize(num_sets);
 
-    // Chain variable descriptor count for the large bindless texture array (binding 1)
-    VkDescriptorSetVariableDescriptorCountAllocateInfo var_info{};
-    var_info.sType =
-        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO;
-    var_info.descriptorSetCount = 1;
-    uint32_t counts[] = {10000}; // matches layout binding 1 descriptorCount
-    var_info.pDescriptorCounts = counts;
-    alloc_info.pNext = &var_info;
+    // Prepare one alloc info per set (or allocate in batch).
+    // For simplicity and to keep the variable count info per-set, we allocate one by one.
+    for (uint32_t i = 0; i < num_sets; ++i) {
+        VkDescriptorSetAllocateInfo alloc_info{};
+        alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        alloc_info.descriptorPool = renderer.vk.descriptor_pool;
+        alloc_info.descriptorSetCount = 1;
+        alloc_info.pSetLayouts = &renderer.vk.descriptor_set_layout;
 
-    if (vkAllocateDescriptorSets(renderer.vk.device, &alloc_info,
-                                 &renderer.vk.bindless_descriptor_set) !=
-        VK_SUCCESS) {
-        LOG_ERROR("Failed to allocate bindless descriptor set");
-        return false;
+        // Chain variable descriptor count for the large bindless texture array (binding 6)
+        VkDescriptorSetVariableDescriptorCountAllocateInfo var_info{};
+        var_info.sType =
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO;
+        var_info.descriptorSetCount = 1;
+        uint32_t counts[] = {10000}; // matches layout binding 6 descriptorCount
+        var_info.pDescriptorCounts = counts;
+        alloc_info.pNext = &var_info;
+
+        if (vkAllocateDescriptorSets(renderer.vk.device, &alloc_info,
+                                     &renderer.vk.bindless_descriptor_sets[i]) !=
+            VK_SUCCESS) {
+            LOG_ERROR("Failed to allocate bindless descriptor set " << i);
+            return false;
+        }
     }
 
     return true;
@@ -395,16 +432,15 @@ bool gfx::Engine::init_framebuffers() {
     // We need one framebuffer per swapchain image
     renderer.main_pass.framebuffers.resize(renderer.vk.swap_chain_image_views.size());
 
-    // Transient MSAA color and depth views are created once and shared across
-    // all framebuffers
-    VkImageView msaa_color_view =
-        renderer.main_pass.msaa_color_image.view; // 2D array, 2 layers
-    VkImageView depth_view =
-        renderer.main_pass.depth_image.view; // 2D array, 2 layers
-
+    // One set of transient MSAA + depth per swapchain image so concurrent
+    // in-flight frames (different acquired images) don't overlap on the same
+    // transient attachments.
     for (size_t i = 0; i < renderer.vk.swap_chain_image_views.size(); ++i) {
         VkImageView swapchain_view =
             renderer.vk.swap_chain_image_views[i];
+
+        VkImageView msaa_color_view = renderer.main_pass.msaa_color_images[i].view;
+        VkImageView depth_view      = renderer.main_pass.depth_images[i].view;
 
         // The three attachments must match the order defined in your
         // VkRenderPass

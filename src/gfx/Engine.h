@@ -55,6 +55,12 @@ class Engine {
     bool init_resource_managers();
     bool init_vulkan();
     bool init_vma();
+
+    // Helper to bind the per-frame globals UBO (binding 0) to every
+    // bindless descriptor set (one per MAX_FRAMES_IN_FLIGHT). This keeps
+    // the pairing of frame_globals_buffer[i] <-> bindless_descriptor_sets[i]
+    // consistent with how render() selects by current_frame.
+    void bind_frame_globals_to_all_sets();
     bool init_pipeline_layout();
     bool init_graphics_pipeline();
 

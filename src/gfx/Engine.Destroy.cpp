@@ -29,19 +29,25 @@ void gfx::Engine::destroy_buffers() {
 
 void gfx::Engine::destroy_images() {
 
-    vkDestroyImageView(renderer.vk.device,
-                       renderer.main_pass.msaa_color_image.view, nullptr);
+    for (auto &img : renderer.main_pass.msaa_color_images) {
+        if (img.view != VK_NULL_HANDLE) {
+            vkDestroyImageView(renderer.vk.device, img.view, nullptr);
+        }
+        if (img.handle != VK_NULL_HANDLE) {
+            vmaDestroyImage(renderer.allocator, img.handle, img.allocation);
+        }
+    }
+    renderer.main_pass.msaa_color_images.clear();
 
-    vkDestroyImageView(renderer.vk.device, renderer.main_pass.depth_image.view,
-                       nullptr);
-                       
-    vmaDestroyImage(renderer.allocator,
-                    renderer.main_pass.msaa_color_image.handle,
-                    renderer.main_pass.msaa_color_image.allocation);
-
-    vmaDestroyImage(renderer.allocator, renderer.main_pass.depth_image.handle,
-                    renderer.main_pass.depth_image.allocation);
-
+    for (auto &img : renderer.main_pass.depth_images) {
+        if (img.view != VK_NULL_HANDLE) {
+            vkDestroyImageView(renderer.vk.device, img.view, nullptr);
+        }
+        if (img.handle != VK_NULL_HANDLE) {
+            vmaDestroyImage(renderer.allocator, img.handle, img.allocation);
+        }
+    }
+    renderer.main_pass.depth_images.clear();
 
 }
 

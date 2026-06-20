@@ -17,7 +17,6 @@ class SceneManager {
   private:
     VkDevice device{VK_NULL_HANDLE};
     VmaAllocator allocator{VK_NULL_HANDLE};
-    VkDescriptorSet descriptor_set{VK_NULL_HANDLE};
 
     // Internal storage using AllocatedBuffer
     std::array<gfx::AllocatedBuffer, 2> instance_buffer{};
@@ -47,20 +46,16 @@ class SceneManager {
     // Common buffer management methods
     bool is_initialized();
     bool initialize(VkDevice device, VmaAllocator allocator,
-                    VkDescriptorSet descriptor_set, uint32_t initial_capacity);
+                    uint32_t initial_capacity);
 
     bool add_instance(const SceneInstance &instance);
     void remove_instance(uint32_t index);
     void update_buffers();
-    void bind_descriptor(uint32_t binding_index);
+    void bind_descriptor(uint32_t binding_index, VkDescriptorSet target_set);
     void toggle_buffers();  // exposed for Engine load-time commit (double-buffer swap)
     
     [[nodiscard]] gfx::AllocatedBuffer &get_buffer() {
         return get_render_buffer();
-    }
-    
-    [[nodiscard]] VkDescriptorSet get_descriptor_set() const {
-        return descriptor_set;
     }
 
     // Returns the world transform of the first loaded SceneInstance (identity if none)

@@ -11,15 +11,13 @@ bool gfx::TextureManager::initialize(VkDevice device, VmaAllocator allocator,
                                      VkQueue transfer_queue,
                                      VkQueue graphics_queue,
                                      uint32_t graphics_queue_family_index,
-                                     uint32_t transfer_queue_family_index,
-                                     VkDescriptorSet descriptor_set) {
+                                     uint32_t transfer_queue_family_index) {
     this->device = device;
     this->allocator = allocator;
     this->graphics_queue = graphics_queue;
     this->transfer_queue = transfer_queue;
     this->graphics_queue_index = graphics_queue_family_index;
     this->transfer_queue_index = transfer_queue_family_index;
-    this->descriptor_set = descriptor_set;
 
     // ADD: Validate allocator
     if (allocator == VK_NULL_HANDLE) {
@@ -64,12 +62,25 @@ bool gfx::TextureManager::initialize(VkDevice device, VmaAllocator allocator,
     sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     sampler_info.minLod = 0.0f;
-    sampler_info.maxLod = VK_LOD_CLAMP_NONE;
+    sampler_info.maxLod = 1.0f;  // All our textures are created with mipLevels=1
     sampler_info.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
     if (vkCreateSampler(device, &sampler_info, nullptr, &sampler_handle) !=
         VK_SUCCESS) {
-        // Non-fatal for desktop dev; textures will still upload but binding may
-        // be incomplete until sampler is valid.
+        std::cerr << "[TextureManager] Failed to create main sampler, creating fallback.\n";
+        // Create a minimal valid sampler so we never write VK_NULL_HANDLE into descriptors.
+        VkSamplerCreateInfo fb{};
+        fb.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        fb.magFilter = VK_FILTER_NEAREST;
+        fb.minFilter = VK_FILTER_NEAREST;
+        fb.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        fb.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        fb.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        fb.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        fb.minLod = 0.0f;
+        fb.maxLod = 0.0f;
+        if (vkCreateSampler(device, &fb, nullptr, &sampler_handle) != VK_SUCCESS) {
+            std::cerr << "[TextureManager] ERROR: even fallback sampler creation failed. Descriptors will be invalid.\n";
+        }
     }
 
     return true;
@@ -160,13 +171,21 @@ void gfx::TextureManager::upload_textures() {
     for (auto &tex_handle : pending_upload) {
         auto &tex_info = texture_cache[tex_handle.value];
 
-        // 1. Get pixel data and update size info
+        // 1. Get pixel data and update size info.
+        // load_pixel_data always produces at least a 1x1 magenta fallback, so every
+        // texture ID we handed out will get a real VkImage + VkImageView. This is
+        // critical for GPU-Assisted Validation and partially-bound bindless arrays:
+        // we must never put VK_NULL_HANDLE imageView or sampler into a descriptor.
         std::vector<uint8_t> pixels{};
         load_pixel_data(pixels, tex_info);
 
         if (tex_info.width == 0 || tex_info.height == 0 || pixels.empty()) {
-            std::cerr << "[TextureManager] Skipping texture with invalid dimensions after load.\n";
-            continue;
+            // Should be extremely rare now (load_pixel_data has fallback).
+            std::cerr << "[TextureManager] Texture had invalid size after load; forcing 1x1 placeholder.\n";
+            pixels = {255, 0, 255, 255};
+            tex_info.width = 1;
+            tex_info.height = 1;
+            tex_info.channels = 4;
         }
 
         // 2. Create VkImage via VMA
@@ -180,7 +199,7 @@ void gfx::TextureManager::upload_textures() {
         image_info.arrayLayers = 1;
         image_info.samples = VK_SAMPLE_COUNT_1_BIT;
         image_info.tiling = VK_IMAGE_TILING_OPTIMAL; // GPU-friendly
-        image_info.usage = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        image_info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
@@ -188,9 +207,12 @@ void gfx::TextureManager::upload_textures() {
         alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
         alloc_info.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
 
-        vmaCreateImage(
+        VkResult img_res = vmaCreateImage(
             allocator, &image_info, &alloc_info, &tex_info.gpu_image.handle,
             &tex_info.gpu_image.allocation, &tex_info.gpu_image.info);
+        if (img_res != VK_SUCCESS) {
+            std::cerr << "[TextureManager] vmaCreateImage failed for a texture (will use broken view).\n";
+        }
 
         // 3. Create ImageView
         VkImageViewCreateInfo view_info{};
@@ -202,8 +224,11 @@ void gfx::TextureManager::upload_textures() {
         view_info.subresourceRange.levelCount = 1;
         view_info.subresourceRange.layerCount = 1;
 
-        vkCreateImageView(device, &view_info, nullptr,
-                          &tex_info.gpu_image.view);
+        VkResult view_res = vkCreateImageView(device, &view_info, nullptr,
+                                              &tex_info.gpu_image.view);
+        if (view_res != VK_SUCCESS || tex_info.gpu_image.view == VK_NULL_HANDLE) {
+            std::cerr << "[TextureManager] vkCreateImageView failed for a texture.\n";
+        }
 
         image_views_created++;
 
@@ -330,20 +355,45 @@ void gfx::TextureManager::transfer_queue_ownership() {
     pending_queue_transition.clear();
 }
 
-void gfx::TextureManager::bind_descriptor(uint32_t index) {
-    if (uploaded_count == 0 || descriptor_set == VK_NULL_HANDLE)
+void gfx::TextureManager::bind_descriptor(uint32_t index, VkDescriptorSet target_set) {
+    if (target_set == VK_NULL_HANDLE)
         return;
 
-    std::vector<VkDescriptorImageInfo> image_infos;
-    image_infos.resize(uploaded_count);
-    for (size_t i = 0; i < uploaded_count; i++) {
+    // We allocated the variable-count binding for 10000 entries (see init_bindless_descriptor_set).
+    // With GPU-Assisted Validation + PARTIALLY_BOUND + runtime non-uniform indexing,
+    // it is much safer to explicitly write a valid descriptor for *every* slot in the
+    // declared range. Uninitialized / null slots in the tail of the array are a very
+    // common cause of internal crashes or false "corruption" inside the validation layer.
+    constexpr uint32_t kMaxBindlessTextures = 10000;
+
+    const uint32_t real_count = uploaded_count;
+    const uint32_t write_count = kMaxBindlessTextures;
+
+    std::vector<VkDescriptorImageInfo> image_infos(write_count);
+
+    // Choose a safe fallback for unused / tail slots (first real texture if available).
+    VkImageView safe_view = VK_NULL_HANDLE;
+    if (real_count > 0 && texture_cache[0].gpu_image.view != VK_NULL_HANDLE) {
+        safe_view = texture_cache[0].gpu_image.view;
+    }
+
+    for (uint32_t i = 0; i < write_count; ++i) {
         image_infos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        image_infos[i].imageView = texture_cache[i].gpu_image.view;
+        if (i < real_count && texture_cache[i].gpu_image.view != VK_NULL_HANDLE) {
+            image_infos[i].imageView = texture_cache[i].gpu_image.view;
+        } else {
+            image_infos[i].imageView = safe_view;   // tail or failed textures get a real (if any) view
+        }
         image_infos[i].sampler = sampler_handle;
     }
 
-    gfx::BufferUtils::update_descriptor(device, image_infos, descriptor_set,
-                                         index);
+    // Write the entire range in one go.
+    gfx::BufferUtils::update_descriptor(device, image_infos, target_set, index);
+
+    if (real_count > 0) {
+        std::cerr << "[TextureManager] Bound " << real_count << " real textures + tail filled to "
+                  << write_count << " total slots for bindless array (binding " << index << ").\n";
+    }
 }
 
 void gfx::TextureManager::shutdown() {

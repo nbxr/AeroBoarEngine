@@ -14,7 +14,6 @@ class TextureManager {
   private:
     VkDevice device{VK_NULL_HANDLE};
     VmaAllocator allocator{VK_NULL_HANDLE};
-    VkDescriptorSet descriptor_set{VK_NULL_HANDLE};
     VkSampler sampler_handle{VK_NULL_HANDLE};
     VkCommandPool upload_command_pool{VK_NULL_HANDLE};
     VkCommandPool transition_command_pool{VK_NULL_HANDLE};
@@ -48,16 +47,18 @@ class TextureManager {
     bool initialize(VkDevice device, VmaAllocator allocator,
                     VkQueue transfer_queue, VkQueue graphics_queue,
                     uint32_t graphics_queue_family_index,
-                    uint32_t transfer_queue_family_index,
-                    VkDescriptorSet descriptor_set);
+                    uint32_t transfer_queue_family_index);
     TextureID get_texture_handle(const std::string &name,
                                  const std::string &filepath,
                                  bool is_srgb = false);
     void remove_texture(const TextureID texture_id);
     void upload_textures();
     void transfer_queue_ownership();
-    void bind_descriptor(uint32_t index);
+    void bind_descriptor(uint32_t index, VkDescriptorSet target_set);
     void shutdown();
+
+    // Diagnostic accessors (safe to call after upload_textures / load).
+    [[nodiscard]] uint32_t get_uploaded_count() const { return uploaded_count; }
 
   private:
     static void load_pixel_data(std::vector<uint8_t> &pixels,

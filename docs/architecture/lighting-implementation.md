@@ -227,9 +227,10 @@ These were discovered during Phase 2 implementation and the subsequent shutdown 
 1. **VMA leak / assertion on shutdown** (critical, now fixed):
    - The `frame_globals_buffer` pair was not being destroyed. Fixed in `destroy_buffers()` + improved `cleanup_scene()`.
 
-2. **Globals double-buffering is incomplete**:
-   - We allocate two sides and have `globals_upload` / `globals_render` indices, but we do not perform a proper `toggle_buffers()` + descriptor rebind on scene load like the other managers.
-   - We currently write the descriptor every single frame in `render()` (works but not ideal).
+2. **Globals double-buffering** (partially addressed):
+   - Two `frame_globals_buffer` sides exist and are paired 1:1 with `bindless_descriptor_sets[]` by `current_frame`.
+   - A dedicated `bind_frame_globals_to_all_sets()` helper ensures every set gets a valid binding 0 at load time.
+   - Per-frame updates still happen every frame in `render()` (acceptable for the current temporary FrameGlobals design; full dynamic lighting is future work per the main roadmap).
 
 3. **No support for dynamic scene reload**:
    - Calling `load_scene()` multiple times without destroying the engine will accumulate or corrupt the globals buffers.

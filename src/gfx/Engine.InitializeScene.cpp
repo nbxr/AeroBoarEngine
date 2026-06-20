@@ -2,11 +2,10 @@
 #include "gfx/BufferUtils.h"
 #include "gfx/Renderer.h"
 #include "gfx/TextureManager.h"
-#include "nlohmann/json.hpp"
+#include "core/Configuration.h"
 #include "scene/GltfLoader.h"
 #include "scene/SceneManager.h"
 #include "tiny_gltf.h"
-#include <fstream>
 #include <functional>
 #include <iostream>
 #include <algorithm>
@@ -16,53 +15,39 @@
 #include <glm/gtc/quaternion.hpp>  // for mat3_cast in pointing debug
 
 bool gfx::Engine::load_default_scene() {
-    // get scene name from configuration.json
-    nlohmann::json config;
-    try {
-        std::ifstream config_file("assets/scenes/configuration.json");
-        if (!config_file.is_open()) {
-            throw std::runtime_error("Failed to open configuration.json");
-        }
-        config = nlohmann::json::parse(config_file);
-    } catch (const std::exception &e) {
-        std::cerr << "Error loading configuration: " << e.what() << std::endl;
+    const auto &config = core::Configuration::get_instance();
+    if (!config.is_loaded()) {
+        std::cerr << "Configuration has not been loaded" << std::endl;
         return false;
     }
 
-    if (!config.contains("defaultScene")) {
+    const std::string default_scene = config.find<std::string>("defaultScene");
+    if (default_scene.empty()) {
         std::cerr << "defaultScene not found in configuration.json"
                   << std::endl;
         return false;
     }
 
-    return load_scene(config["defaultScene"].get<std::string>());
+    return load_scene(default_scene);
 }
 
 bool gfx::Engine::load_scene(const std::string &scene_name) {
-    // get scene name from configuration.json
-    nlohmann::json config;
-    try {
-        std::ifstream config_file("assets/scenes/configuration.json");
-        if (!config_file.is_open()) {
-            throw std::runtime_error("Failed to open configuration.json");
-        }
-        config = nlohmann::json::parse(config_file);
-    } catch (const std::exception &e) {
-        std::cerr << "Error loading configuration: " << e.what() << std::endl;
+    const auto &config = core::Configuration::get_instance();
+    if (!config.is_loaded()) {
+        std::cerr << "Configuration has not been loaded" << std::endl;
         return false;
     }
 
-    // Resolve active home path from activeSystem + home[] array
-    std::string active_system;
-    if (config.contains("activeSystem")) {
-        active_system = config["activeSystem"].get<std::string>();
-    } else {
-        active_system = "Windows"; // legacy fallback
+    const nlohmann::json &root = core::Configuration::get_root();
+
+    std::string active_system = config.find<std::string>("activeSystem");
+    if (active_system.empty()) {
+        active_system = "Windows";
     }
 
     std::string home_path;
-    if (config.contains("home") && config["home"].is_array()) {
-        for (const auto &entry : config["home"]) {
+    if (root.contains("home") && root["home"].is_array()) {
+        for (const auto &entry : root["home"]) {
             if (entry.contains("system") && entry["system"] == active_system &&
                 entry.contains("path")) {
                 home_path = entry["path"].get<std::string>();
@@ -77,24 +62,19 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
         return false;
     }
 
-    // get the filename from the json config using the scene_name
-    if (!config.contains("scenes")) {
+    if (!root.contains("scenes") || !root["scenes"].is_array()) {
         std::cerr << "scenes array not found in configuration.json" << std::endl;
         return false;
     }
 
-    // get scenes array and find the entry where name == scene_name,
-    // then get the filename from that entry
-    const auto &scenes = config["scenes"];
     std::string filename;
     bool found_scene = false;
-    for (const auto &scene : scenes) {
-        if (scene.contains("name") && scene["name"] == scene_name) {
-            if (scene.contains("filename")) {
-                filename = scene["filename"].get<std::string>();
-                found_scene = true;
-                break;
-            }
+    for (const auto &scene : root["scenes"]) {
+        if (scene.contains("name") && scene["name"] == scene_name &&
+            scene.contains("filename")) {
+            filename = scene["filename"].get<std::string>();
+            found_scene = true;
+            break;
         }
     }
 
@@ -104,10 +84,8 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
         return false;
     }
 
-    // Concatenate home path for activeSystem with the scene's relative filename
-    std::filesystem::path resolved_path =
-        std::filesystem::path(home_path) / filename;
-    std::string resolved_filename = resolved_path.make_preferred().string();
+    const std::string resolved_filename =
+        (std::filesystem::path(home_path) / filename).make_preferred().string();
 
     // extract mesh data and create GPU buffers
     tinygltf::Model model{};
@@ -147,11 +125,13 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     // Phase 2: extract KHR_lights_punctual lights (if any)
     renderer.lights = scene::GltfLoader::extract_light_data(model);
 
-    // Populate initial FrameGlobals (lights + camera) into the upload side
-    {
-        uint32_t up = renderer.globals_upload;
+    // Populate initial FrameGlobals (camera + fallback lights) into *both*
+    // per-frame UBO buffers. This ensures that whichever current_frame slot
+    // is used on the first render() call already has valid data, matching how
+    // we pair frame_globals_buffer[i] with bindless_descriptor_sets[i].
+    for (uint32_t i = 0; i < Renderer::MAX_FRAMES_IN_FLIGHT; ++i) {
         auto *dst = static_cast<gfx::FrameGlobals *>(
-            renderer.frame_globals_buffer[up].mapped_data);
+            renderer.frame_globals_buffer[i].mapped_data);
         if (dst) {
             memset(dst, 0, sizeof(gfx::FrameGlobals));
 
@@ -163,7 +143,7 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
             // default. If the scene contained KHR_lights_punctual lights, they
             // will be world-transformed later in this function (after traversal)
             // and will overwrite the light slots below via the post-traversal
-            // sync block. This keeps the early init simple while making scene
+            // block. This keeps the early init simple while making scene
             // lights the active source when present.
             if (renderer.globalLight.type == gfx::LightType::Directional &&
                 glm::length(renderer.globalLight.positionOrDirection) <
@@ -183,34 +163,24 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
 
             dst->lightCount =
                 std::min<uint32_t>(activeLights.size(), gfx::MAX_LIGHTS);
-            for (uint32_t i = 0; i < dst->lightCount; ++i) {
-                const auto &L = activeLights[i];
-                dst->lightDirectionsOrPositions[i] =
+            for (uint32_t j = 0; j < dst->lightCount; ++j) {
+                const auto &L = activeLights[j];
+                dst->lightDirectionsOrPositions[j] =
                     glm::vec4(L.positionOrDirection, 0.0f);
-                dst->lightColors[i] = glm::vec4(L.color, L.intensity);
-                dst->lightParams[i] =
+                dst->lightColors[j] = glm::vec4(L.color, L.intensity);
+                dst->lightParams[j] =
                     glm::vec4(static_cast<float>(L.type), L.range,
                               L.innerConeAngle, L.outerConeAngle);
             }
 
             // Phase 3 IBL defaults (simple cool-ish ambient SH + no maps yet)
-            // These are very rough L0 + L1 coefficients for a slightly blue
-            // ambient
             dst->shCoefficients[0] = glm::vec4(0.15f, 0.18f, 0.22f, 0.0f); // L0
-            // Leave higher bands at zero for now (pure ambient)
             for (int i = 1; i < 9; ++i) {
                 dst->shCoefficients[i] = glm::vec4(0.0f);
             }
 
             dst->specularEnvMapIndex = gfx::NO_TEXTURE;
             dst->brdfLutIndex = gfx::NO_TEXTURE;
-        }
-
-        // Mirror to render side for first frame (simple for Phase 2)
-        auto *renderDst = static_cast<gfx::FrameGlobals *>(
-            renderer.frame_globals_buffer[renderer.globals_render].mapped_data);
-        if (renderDst && dst) {
-            memcpy(renderDst, dst, sizeof(gfx::FrameGlobals));
         }
     }
 
@@ -358,6 +328,18 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     renderer.mesh_manager.update_buffers();
     renderer.texture_manager.upload_textures();
 
+    // Diagnostics: log scale of the loaded scene. Very useful when a new asset
+    // (e.g. Sponza) triggers DEVICE_LOST while a tiny one (DamagedHelmet) works.
+    {
+        std::cerr << "[Scene] Loaded scene '" << scene_name << "':\n"
+                  << "        textures uploaded: " << renderer.texture_manager.get_uploaded_count() << "\n"
+                  << "        materials:         " << renderer.material_manager.get_material_count() << "\n"
+                  << "        mesh primitives:   " << renderer.mesh_manager.get_primitive_count() << "\n"
+                  << "        scene instances:   " << renderer.scene_manager.get_instance_count() << "\n"
+                  << "        total vertices:    " << renderer.mesh_manager.get_total_vertex_count() << "\n"
+                  << "        total indices:     " << renderer.mesh_manager.get_total_index_count() << "\n";
+    }
+
     // Commit: flip the buffers so the side we just wrote becomes the render
     // side, then write the actual VkBuffer handles + ranges into the bindless
     // descriptor set (which is now allocated). This makes scene data visible
@@ -369,21 +351,20 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     renderer.material_manager.toggle_buffers();
     renderer.mesh_manager.toggle_buffers();
 
-    renderer.scene_manager.bind_descriptor(1);    // SceneInstance (transforms)
-    renderer.material_manager.bind_descriptor(2); // Materials
-    renderer.mesh_manager.bind_descriptor(
-        3, 4, 5); // Mesh meta + vertex + index SSBOs
-    renderer.texture_manager.bind_descriptor(
-        6); // Bindless textures (must be last binding)
-
-    // Phase 2 lighting: bind per-frame globals UBO (binding 0)
-    {
-        uint32_t renderIdx = renderer.globals_render;
-        gfx::BufferUtils::update_descriptor(
-            renderer.vk.device.device, renderer.frame_globals_buffer[renderIdx],
-            renderer.vk.bindless_descriptor_set, sizeof(gfx::FrameGlobals), 0,
-            VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+    // Bind the just-loaded static data to *all* per-frame bindless sets so that
+    // each in-flight frame has a complete copy.
+    for (auto& set : renderer.vk.bindless_descriptor_sets) {
+        renderer.scene_manager.bind_descriptor(1, set);    // SceneInstance (transforms)
+        renderer.material_manager.bind_descriptor(2, set); // Materials
+        renderer.mesh_manager.bind_descriptor(
+            3, 4, 5, set); // Mesh meta + vertex + index SSBOs
+        renderer.texture_manager.bind_descriptor(
+            6, set); // Bindless textures (must be last binding)
     }
+
+    // Per-frame globals (binding 0) will be bound to all sets below, after we
+    // have the final light data. We pair frame_globals_buffer[i] with
+    // bindless_descriptor_sets[i] to match the current_frame logic in render().
 
     // glTF camera support: if the scene contains a camera node, use its
     // world transform + projection parameters for the initial view.
@@ -420,21 +401,21 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
                 memset(dst, 0, sizeof(gfx::FrameGlobals));
                 dst->lightCount = n;
                 float maxI = 0.0f;
-                for (uint32_t i = 0; i < gfx::MAX_LIGHTS; ++i) {
-                    if (i < n) {
-                        const auto &L = renderer.lights[i];
-                        dst->lightDirectionsOrPositions[i] =
+                for (uint32_t j = 0; j < gfx::MAX_LIGHTS; ++j) {
+                    if (j < n) {
+                        const auto &L = renderer.lights[j];
+                        dst->lightDirectionsOrPositions[j] =
                             glm::vec4(L.positionOrDirection, 0.0f);
-                        dst->lightColors[i] = glm::vec4(L.color, L.intensity);
-                        dst->lightParams[i] =
+                        dst->lightColors[j] = glm::vec4(L.color, L.intensity);
+                        dst->lightParams[j] =
                             glm::vec4(static_cast<float>(L.type), L.range,
                                       L.innerConeAngle, L.outerConeAngle);
                         if (L.intensity > maxI) maxI = L.intensity;
                     } else {
                         // Explicitly zero unused slots (see per-frame path for rationale).
-                        dst->lightDirectionsOrPositions[i] = glm::vec4(0.0f);
-                        dst->lightColors[i] = glm::vec4(0.0f);
-                        dst->lightParams[i] = glm::vec4(0.0f);
+                        dst->lightDirectionsOrPositions[j] = glm::vec4(0.0f);
+                        dst->lightColors[j] = glm::vec4(0.0f);
+                        dst->lightParams[j] = glm::vec4(0.0f);
                     }
                 }
                 // Choose a display exposure so the photometric intensities
@@ -446,22 +427,10 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
                 // Leave higher slots (if any) as they were; lightCount gates them.
             }
         }
-
-        // Re-bind the globals descriptor now that we have written the final
-        // scene light data + chosen exposure into the buffers. The initial
-        // bind happened earlier (with the temporary fallback); this ensures
-        // the descriptor sees the authoritative scene light values.
-        {
-            uint32_t renderIdx = renderer.globals_render;
-            gfx::BufferUtils::update_descriptor(
-                renderer.vk.device.device,
-                renderer.frame_globals_buffer[renderIdx],
-                renderer.vk.bindless_descriptor_set,
-                sizeof(gfx::FrameGlobals),
-                0,
-                VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-        }
     }
+
+    // Ensure binding 0 (globals) is set on every per-frame descriptor set.
+    bind_frame_globals_to_all_sets();
 
     // TODO: add proper memory barriers / vkFlushMappedMemoryRanges for the
     // buffer uploads if running on non-coherent memory (Quest 3). For desktop
@@ -471,14 +440,21 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     return true;
 }
 
-void gfx::Engine::cleanup_scene() {
-    // Phase 2 lighting: clear lights and reset globals indices so reloads are
-    // safe
-    renderer.lights.clear();
+void gfx::Engine::bind_frame_globals_to_all_sets() {
+    for (uint32_t i = 0; i < Renderer::MAX_FRAMES_IN_FLIGHT; ++i) {
+        gfx::BufferUtils::update_descriptor(
+            renderer.vk.device.device,
+            renderer.frame_globals_buffer[i],
+            renderer.vk.bindless_descriptor_sets[i],
+            sizeof(gfx::FrameGlobals),
+            0,
+            VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+    }
+}
 
-    // Reset globals double-buffer indices (simple safety)
-    renderer.globals_upload = 1;
-    renderer.globals_render = 0;
+void gfx::Engine::cleanup_scene() {
+    // Clear lights (they will be repopulated on next load_scene).
+    renderer.lights.clear();
 
     // TODO: In a fuller implementation we would also destroy/recreate the
     // globals buffers here if supporting multiple scene loads without full

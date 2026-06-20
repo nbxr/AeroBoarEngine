@@ -18,7 +18,6 @@ class MeshManager {
   private:
     VkDevice device{VK_NULL_HANDLE};
     VmaAllocator allocator{VK_NULL_HANDLE};
-    VkDescriptorSet descriptor_set{VK_NULL_HANDLE};
 
     // Internal storage using AllocatedBuffer
     std::array<AllocatedBuffer, 2> vertex_buffer{};
@@ -60,12 +59,12 @@ class MeshManager {
     // Common buffer management methods
     bool is_initialized();
     bool initialize(VkDevice device, VmaAllocator allocator,
-                    VkDescriptorSet descriptor_set, uint32_t initial_capacity);
+                    uint32_t initial_capacity);
 
     MeshPrimitiveID add_mesh(gfx::MeshData &mesh_data);
 
     void update_buffers();
-    void bind_descriptor(uint32_t ssbo, uint32_t vertex, uint32_t index);
+    void bind_descriptor(uint32_t ssbo, uint32_t vertex, uint32_t index, VkDescriptorSet target_set);
     void toggle_buffers();  // exposed for Engine load-time commit (double-buffer swap)
     void shutdown();
 
@@ -85,6 +84,8 @@ class MeshManager {
 
     // Per-primitive accessors for drawing all meshes in the scene (debug path)
     [[nodiscard]] uint32_t get_primitive_count() const;
+    [[nodiscard]] uint64_t get_total_vertex_count() const { return vertex_count; }
+    [[nodiscard]] uint64_t get_total_index_count() const { return index_count; }
     [[nodiscard]] uint32_t get_primitive_vertex_offset(uint32_t index) const;
     [[nodiscard]] uint32_t get_primitive_index_offset(uint32_t index) const;
     [[nodiscard]] uint32_t get_primitive_index_count(uint32_t index) const;
