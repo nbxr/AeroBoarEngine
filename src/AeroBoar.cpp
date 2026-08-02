@@ -172,7 +172,8 @@ int AeroBoar::fly() {
             bool shift = input.is_key_down(GLFW_KEY_LEFT_SHIFT) ||
                          input.is_key_down(GLFW_KEY_RIGHT_SHIFT);
             if (shift) {
-                auto [center, radius] = engine.renderer.scene_manager.get_first_instance_framing_sphere();
+                auto [center, radius] =
+                    engine.renderer.scene_manager.get_scene_framing_sphere();
                 engine.camera.frame(center, radius);
             } else {
                 engine.camera.restore_initial_pose();

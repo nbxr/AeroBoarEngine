@@ -4,9 +4,15 @@
 Lightweight, cache-friendly data structures designed for a C++ Vulkan engine using GPU-driven rendering on Meta Quest 3. Focuses on efficient GLTF loading, multi-mesh / multi-material support (e.g. characters), and direct feeding into compute-based culling and indirect draw pipelines.
 
 ## Status
-**Target architecture** (not yet fully implemented).  
+**Foundation landed (load path + draw source of truth).**  
 
-Basic PBR rendering currently works using the simpler flat `SceneInstance` model. A working PBR shader samples albedo, normal, metal/roughness, emissive, and AO textures. The current configured asset only has a single material. The higher-level `GameObject` / `RenderMesh` + `TransformManager` SOA design described below remains the planned evolution. See `docs/agents/current_state.md` for current rendering status.
+- `TransformManager` — dense world-matrix storage with allocate/free and parent slots (propagation still TODO).
+- `GameObject` — root transform + render-mesh range; one per glTF mesh node at load.
+- `RenderMesh` — mesh/material/transform indices + **mesh-local** AABB; one per primitive.
+- `SceneManager` — registry (`create_game_object`, `add_render_mesh`); framing and instanced draws read this model.
+- Legacy `SceneInstance` is dual-written for compatibility and optional GPU upload; new code should use RenderMesh.
+
+Still TODO: local TRS SOA + hierarchy propagate, dirty upload of transforms, GPU cull SSBO of RenderMeshes, skinning.
 
 ## Core Principles
 - Flat SOA-style layouts for high cache efficiency and low CPU overhead.

@@ -6,22 +6,31 @@ layout(push_constant) uniform PushConstants {
     mat4  model;   // per-draw model transform for this mesh primitive
 } pc;
 
-// Scene instances (binding 1) - array of all instances in the scene
-layout(set = 0, binding = 1) readonly buffer SceneInstances {
+// Scene instances (binding 1): single SSBO with a runtime array of instances.
+// Matches C++ packing (one STORAGE_BUFFER), not an array of buffer descriptors.
+struct SceneInstanceGPU {
     uint material_index;
     uint mesh_index;
     uint flags;
     mat4 transform;
-    // AABB follows (ignored for drawing)
-} scene_instances[];
+    // AABB follows in C++ SceneInstance; omitted here (debug path ignores it)
+};
 
-// Mesh primitive metadata (binding 3) - we can use this later for per-mesh drawing
-layout(set = 0, binding = 3) readonly buffer MeshPrimitives {
+layout(set = 0, binding = 1) readonly buffer SceneInstances {
+    SceneInstanceGPU scene_instances[];
+};
+
+// Mesh primitive metadata (binding 3): single SSBO, runtime array of primitives.
+struct MeshPrimitiveGPU {
     uint vertex_offset;
     uint vertex_count;
     uint index_offset;
     uint index_count;
-} meshes;
+};
+
+layout(set = 0, binding = 3) readonly buffer MeshPrimitives {
+    MeshPrimitiveGPU meshes[];
+};
 
 // Raw vertex buffer (positions only for debug)
 layout(set = 0, binding = 4) readonly buffer VertexBuffer {

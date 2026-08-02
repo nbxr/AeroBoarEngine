@@ -2,7 +2,9 @@
 #include "gfx/BufferUtils.h"
 #include "gfx/Renderer.h"
 #include "gfx/TextureManager.h"
+#include "gfx/DrawBatch.h"
 #include "core/Configuration.h"
+#include "core/Log.h"
 #include "scene/GltfLoader.h"
 #include "scene/SceneManager.h"
 #include "tiny_gltf.h"
@@ -11,6 +13,9 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <cstring>
+#include <unordered_map>
+#include <vector>
 
 #include <glm/gtc/quaternion.hpp>  // for mat3_cast in pointing debug
 
@@ -122,66 +127,19 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     std::vector<MeshPrimitiveID> mesh_lookup =
         scene::GltfLoader::extract_mesh_data(model, renderer);
 
-    // Phase 2: extract KHR_lights_punctual lights (if any)
+    // Extract KHR_lights_punctual lights (world transforms applied after traversal).
     renderer.lights = scene::GltfLoader::extract_light_data(model);
 
-    // Populate initial FrameGlobals (camera + fallback lights) into *both*
-    // per-frame UBO buffers. This ensures that whichever current_frame slot
-    // is used on the first render() call already has valid data, matching how
-    // we pair frame_globals_buffer[i] with bindless_descriptor_sets[i].
-    for (uint32_t i = 0; i < Renderer::MAX_FRAMES_IN_FLIGHT; ++i) {
-        auto *dst = static_cast<gfx::FrameGlobals *>(
-            renderer.frame_globals_buffer[i].mapped_data);
-        if (dst) {
-            memset(dst, 0, sizeof(gfx::FrameGlobals));
-
-            // Camera (will be updated every frame in render too)
-            dst->cameraPosition = glm::vec4(camera.get_position(), 1.0f);
-            dst->exposure = 1.0f;
-
-            // Initial FrameGlobals lights: prefer engine globalLight as a safe
-            // default. If the scene contained KHR_lights_punctual lights, they
-            // will be world-transformed later in this function (after traversal)
-            // and will overwrite the light slots below via the post-traversal
-            // block. This keeps the early init simple while making scene
-            // lights the active source when present.
-            if (renderer.globalLight.type == gfx::LightType::Directional &&
-                glm::length(renderer.globalLight.positionOrDirection) <
-                    0.001f) {
-                // Initialize a nice default global sun light if not yet
-                // configured
-                renderer.globalLight = {
-                    gfx::LightType::Directional,
-                    glm::vec3(0.0f, -1.0f, 0.0f),  // direction (overhead fallback)
-                    glm::vec3(1.0f, 0.98f, 0.95f), // warm sunlight color
-                    1.0f                           // intensity
-                };
-            }
-
-            std::vector<gfx::Light> activeLights;
-            activeLights.push_back(renderer.globalLight);
-
-            dst->lightCount =
-                std::min<uint32_t>(activeLights.size(), gfx::MAX_LIGHTS);
-            for (uint32_t j = 0; j < dst->lightCount; ++j) {
-                const auto &L = activeLights[j];
-                dst->lightDirectionsOrPositions[j] =
-                    glm::vec4(L.positionOrDirection, 0.0f);
-                dst->lightColors[j] = glm::vec4(L.color, L.intensity);
-                dst->lightParams[j] =
-                    glm::vec4(static_cast<float>(L.type), L.range,
-                              L.innerConeAngle, L.outerConeAngle);
-            }
-
-            // Phase 3 IBL defaults (simple cool-ish ambient SH + no maps yet)
-            dst->shCoefficients[0] = glm::vec4(0.15f, 0.18f, 0.22f, 0.0f); // L0
-            for (int i = 1; i < 9; ++i) {
-                dst->shCoefficients[i] = glm::vec4(0.0f);
-            }
-
-            dst->specularEnvMapIndex = gfx::NO_TEXTURE;
-            dst->brdfLutIndex = gfx::NO_TEXTURE;
-        }
+    // Engine fallback directional (used when the glTF has no KHR_lights_punctual).
+    // positionOrDirection is the *to-light* vector (shader L for NdotL).
+    // Prefer a slightly angled overhead sun so top surfaces light correctly.
+    if (renderer.globalLight.type == gfx::LightType::Directional &&
+        glm::length(renderer.globalLight.positionOrDirection) < 0.001f) {
+        renderer.globalLight = {
+            gfx::LightType::Directional,
+            glm::normalize(glm::vec3(0.35f, 1.0f, 0.25f)),
+            glm::vec3(1.0f, 0.98f, 0.95f),
+            3.0f};
     }
 
     // calculate offsets for material lookup based on primitives
@@ -211,7 +169,7 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     //   drive the view from the authored camera.
     // - Light nodes (KHR_lights_punctual) now have their world transforms captured
     //   here so we can drive lighting from the scene (see post-traversal apply below).
-    // - Only nodes with meshes produce SceneInstance entries.
+    // - Mesh nodes produce GameObject + RenderMesh entries (TransformManager).
     // - Respect the scene graph: start from the default scene roots and
     //   accumulate world transforms via children.
     // - Guard against prim.material == -1 (default material) and out-of-range
@@ -263,29 +221,28 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
                 size_t prim_i = 0;
                 size_t mat_offset = prim_material_offsets[mesh_idx];
 
+                // One GameObject per mesh node; all primitives share its root transform.
+                const uint32_t go_id = renderer.scene_manager.create_game_object(
+                    world_xform, static_cast<uint32_t>(node_idx));
+
                 for (const auto &prim : model.meshes[mesh_idx].primitives) {
                     if (prim_i + mat_offset >= mesh_lookup.size())
                         break;
 
-                    scene::SceneInstance instance{};
-                    instance.mesh_index = mesh_lookup[prim_i + mat_offset];
-
+                    const uint32_t mesh_prim_id =
+                        mesh_lookup[prim_i + mat_offset];
                     int mat_idx = prim.material;
                     if (mat_idx < 0 || mat_idx >= (int)material_lookup.size()) {
-                        mat_idx = 0; // fallback to first material (or default)
+                        mat_idx = 0;
                     }
-                    instance.material_index = material_lookup[mat_idx];
-                    instance.transform = world_xform;
-                    prim_i++;
-
-                    // Store world-space AABB for this primitive (used for
-                    // camera framing, future culling, etc.)
-                    core::AABB local =
+                    const uint32_t material_id = material_lookup[mat_idx];
+                    core::AABB local_aabb =
                         renderer.mesh_manager.get_primitive_local_aabb(
-                            instance.mesh_index);
-                    instance.local_aabb = local.transformed(world_xform);
+                            mesh_prim_id);
 
-                    renderer.scene_manager.add_instance(instance);
+                    renderer.scene_manager.add_render_mesh(
+                        go_id, mesh_prim_id, material_id, local_aabb);
+                    prim_i++;
                 }
             }
 
@@ -328,138 +285,267 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     renderer.mesh_manager.update_buffers();
     renderer.texture_manager.upload_textures();
 
-    // Diagnostics: log scale of the loaded scene. Very useful when a new asset
-    // (e.g. Sponza) triggers DEVICE_LOST while a tiny one (DamagedHelmet) works.
+    // Build instanced draw batches from RenderMesh + TransformManager
+    // (GameObject scene model). Group by mesh_index for multi-instance draws.
     {
-        std::cerr << "[Scene] Loaded scene '" << scene_name << "':\n"
-                  << "        textures uploaded: " << renderer.texture_manager.get_uploaded_count() << "\n"
-                  << "        materials:         " << renderer.material_manager.get_material_count() << "\n"
-                  << "        mesh primitives:   " << renderer.mesh_manager.get_primitive_count() << "\n"
-                  << "        scene instances:   " << renderer.scene_manager.get_instance_count() << "\n"
-                  << "        total vertices:    " << renderer.mesh_manager.get_total_vertex_count() << "\n"
-                  << "        total indices:     " << renderer.mesh_manager.get_total_index_count() << "\n";
+        renderer.draw_batches.clear();
+        renderer.draw_instances_cpu.clear();
+        gfx::BufferUtils::destroy_buffer(renderer.vk.device, renderer.allocator,
+                                         renderer.draw_instance_buffer);
+
+        const uint32_t n_rm = renderer.scene_manager.render_mesh_count();
+        std::unordered_map<uint32_t, std::vector<uint32_t>> by_mesh;
+        by_mesh.reserve(n_rm);
+        for (uint32_t i = 0; i < n_rm; ++i) {
+            const auto& rm = renderer.scene_manager.get_render_mesh(i);
+            by_mesh[rm.mesh_index].push_back(i);
+        }
+
+        std::vector<uint32_t> mesh_keys;
+        mesh_keys.reserve(by_mesh.size());
+        for (const auto& [mesh_idx, ids] : by_mesh) {
+            if (!ids.empty() &&
+                renderer.mesh_manager.get_primitive_index_count(mesh_idx) > 0) {
+                mesh_keys.push_back(mesh_idx);
+            }
+        }
+        std::sort(mesh_keys.begin(), mesh_keys.end());
+
+        renderer.draw_instances_cpu.reserve(n_rm);
+        for (uint32_t mesh_idx : mesh_keys) {
+            const auto& ids = by_mesh[mesh_idx];
+            DrawBatch batch{};
+            batch.mesh_index = mesh_idx;
+            batch.index_count =
+                renderer.mesh_manager.get_primitive_index_count(mesh_idx);
+            batch.index_offset =
+                renderer.mesh_manager.get_primitive_index_offset(mesh_idx);
+            batch.vertex_offset = static_cast<int32_t>(
+                renderer.mesh_manager.get_primitive_vertex_offset(mesh_idx));
+            batch.first_instance =
+                static_cast<uint32_t>(renderer.draw_instances_cpu.size());
+            batch.instance_count = static_cast<uint32_t>(ids.size());
+
+            for (uint32_t rm_id : ids) {
+                const auto& rm = renderer.scene_manager.get_render_mesh(rm_id);
+                DrawInstanceGPU di{};
+                di.model = renderer.scene_manager.transforms().get_world_matrix(
+                    rm.transform_index);
+                di.meta = glm::uvec4(rm.material_index, 0u, 0u, 0u);
+                renderer.draw_instances_cpu.push_back(di);
+            }
+            renderer.draw_batches.push_back(batch);
+        }
+
+        const VkDeviceSize bytes = std::max<size_t>(
+            renderer.draw_instances_cpu.size() * sizeof(DrawInstanceGPU),
+            sizeof(DrawInstanceGPU));
+        if (!gfx::BufferUtils::initialize_buffer(
+                renderer.vk.device.device, renderer.allocator, bytes,
+                renderer.draw_instance_buffer)) {
+            LOG_ERROR("[Draw] Failed to create draw_instance_buffer");
+            return false;
+        }
+        if (!renderer.draw_instances_cpu.empty() &&
+            renderer.draw_instance_buffer.mapped_data) {
+            memcpy(renderer.draw_instance_buffer.mapped_data,
+                   renderer.draw_instances_cpu.data(),
+                   renderer.draw_instances_cpu.size() * sizeof(DrawInstanceGPU));
+        }
+
+        LOG_INFO("[Draw] Instancing: " << n_rm << " renderMeshes / "
+                 << renderer.scene_manager.game_object_count() << " gameObjects → "
+                 << renderer.draw_batches.size() << " batches");
     }
 
-    // Commit: flip the buffers so the side we just wrote becomes the render
-    // side, then write the actual VkBuffer handles + ranges into the bindless
-    // descriptor set (which is now allocated). This makes scene data visible
-    // to shaders for the upcoming render pass work.
-    // Binding indices: 1=instances, 2=materials, 3=meshmeta, 4=verts,
-    // 5=indices, 6=textures (textures must be the highest binding number
-    // because of VARIABLE count).
+    {
+        LOG_INFO("[Scene] Loaded scene '" << scene_name << "':"
+                 << " textures=" << renderer.texture_manager.get_uploaded_count()
+                 << " materials=" << renderer.material_manager.get_material_count()
+                 << " meshPrims=" << renderer.mesh_manager.get_primitive_count()
+                 << " gameObjects=" << renderer.scene_manager.game_object_count()
+                 << " renderMeshes=" << renderer.scene_manager.render_mesh_count()
+                 << " transforms=" << renderer.scene_manager.transforms().count()
+                 << " verts=" << renderer.mesh_manager.get_total_vertex_count()
+                 << " indices=" << renderer.mesh_manager.get_total_index_count());
+    }
+
+    // Commit double-buffered managers + bind descriptors.
     renderer.scene_manager.toggle_buffers();
     renderer.material_manager.toggle_buffers();
     renderer.mesh_manager.toggle_buffers();
 
-    // Bind the just-loaded static data to *all* per-frame bindless sets so that
-    // each in-flight frame has a complete copy.
     for (auto& set : renderer.vk.bindless_descriptor_sets) {
-        renderer.scene_manager.bind_descriptor(1, set);    // SceneInstance (transforms)
-        renderer.material_manager.bind_descriptor(2, set); // Materials
-        renderer.mesh_manager.bind_descriptor(
-            3, 4, 5, set); // Mesh meta + vertex + index SSBOs
-        renderer.texture_manager.bind_descriptor(
-            6, set); // Bindless textures (must be last binding)
+        // Binding 1: compact DrawInstanceGPU[] for instanced draws (not full SceneInstance)
+        gfx::BufferUtils::update_descriptor(
+            renderer.vk.device.device, renderer.draw_instance_buffer, set,
+            std::max<VkDeviceSize>(
+                renderer.draw_instances_cpu.size() * sizeof(DrawInstanceGPU),
+                sizeof(DrawInstanceGPU)),
+            1);
+        renderer.material_manager.bind_descriptor(2, set);
+        renderer.mesh_manager.bind_descriptor(3, 4, 5, set);
+        renderer.texture_manager.bind_descriptor(Renderer::BINDING_TEXTURES, set);
     }
-
-    // Per-frame globals (binding 0) will be bound to all sets below, after we
-    // have the final light data. We pair frame_globals_buffer[i] with
-    // bindless_descriptor_sets[i] to match the current_frame logic in render().
 
     // glTF camera support: if the scene contains a camera node, use its
     // world transform + projection parameters for the initial view.
-    // Falls back to AABB framing when no camera is present.
-    if (loaded_camera.valid) {
-        camera.set_from_camera_node(loaded_camera.world_transform,
-                                    loaded_camera.yfov,
-                                    loaded_camera.znear,
-                                    loaded_camera.zfar,
-                                    loaded_camera.aspectRatio);
-    } else {
-        // Fallback: AABB-based framing
+    // Falls back to full-scene AABB framing when no camera is present.
+    {
         auto [center, radius] =
-            renderer.scene_manager.get_first_instance_framing_sphere();
-        camera.frame(center, radius);
-    }
+            renderer.scene_manager.get_scene_framing_sphere();
+        renderer.scene_center = center;
 
-    // Reset mouse input tracking after placing the camera at its final loaded pose.
-    // The delta guards in InputManager protect the initial view from being
-    // immediately disturbed by any pending OS cursor position.
-    camera.reset_mouse_state();
-
-    // Phase 2 lighting: if the scene had KHR_lights_punctual lights and we
-    // successfully applied their node world transforms above, push them into
-    // the FrameGlobals UBO buffers now (overwriting the globalLight fallback
-    // that was written in the early init block). This makes the scene's light(s)
-    // the active source seen by pbr.frag.
-    if (!renderer.lights.empty()) {
-        const uint32_t n = std::min<uint32_t>(renderer.lights.size(), gfx::MAX_LIGHTS);
-        for (uint32_t side = 0; side < 2; ++side) {
-            auto *dst = static_cast<gfx::FrameGlobals *>(
-                renderer.frame_globals_buffer[side].mapped_data);
-            if (dst) {
-                memset(dst, 0, sizeof(gfx::FrameGlobals));
-                dst->lightCount = n;
-                float maxI = 0.0f;
-                for (uint32_t j = 0; j < gfx::MAX_LIGHTS; ++j) {
-                    if (j < n) {
-                        const auto &L = renderer.lights[j];
-                        dst->lightDirectionsOrPositions[j] =
-                            glm::vec4(L.positionOrDirection, 0.0f);
-                        dst->lightColors[j] = glm::vec4(L.color, L.intensity);
-                        dst->lightParams[j] =
-                            glm::vec4(static_cast<float>(L.type), L.range,
-                                      L.innerConeAngle, L.outerConeAngle);
-                        if (L.intensity > maxI) maxI = L.intensity;
-                    } else {
-                        // Explicitly zero unused slots (see per-frame path for rationale).
-                        dst->lightDirectionsOrPositions[j] = glm::vec4(0.0f);
-                        dst->lightColors[j] = glm::vec4(0.0f);
-                        dst->lightParams[j] = glm::vec4(0.0f);
-                    }
-                }
-                // Choose a display exposure so the photometric intensities
-                // (e.g. 54k from Blender Power=1000 export via KHR_lights_punctual)
-                // produce visible contributions on the model. The shader multiplies
-                // the direct (diff+spec) term by this value; a cheap compressor in
-                // the frag prevents hard clipping.
-                dst->exposure = (maxI > 10.0f) ? (20.0f / maxI) : 1.0f;
-                // Leave higher slots (if any) as they were; lightCount gates them.
-            }
+        if (loaded_camera.valid) {
+            camera.set_from_camera_node(loaded_camera.world_transform,
+                                        loaded_camera.yfov,
+                                        loaded_camera.znear,
+                                        loaded_camera.zfar,
+                                        loaded_camera.aspectRatio);
+            LOG_INFO("[Camera] Initial view from glTF camera node index "
+                     << loaded_camera.gltf_camera_index);
+        } else {
+            camera.frame(center, radius);
+            LOG_INFO("[Camera] Initial view from scene AABB frame: center=("
+                     << center.x << ", " << center.y << ", " << center.z
+                     << ") radius=" << radius);
         }
     }
 
-    // Ensure binding 0 (globals) is set on every per-frame descriptor set.
-    bind_frame_globals_to_all_sets();
+    {
+        const glm::vec3 pos = camera.get_position();
+        const glm::vec3 fwd = camera.get_forward();
+        LOG_INFO("[Camera] pose after load: pos=(" << pos.x << ", " << pos.y
+                 << ", " << pos.z << ") forward=(" << fwd.x << ", " << fwd.y
+                 << ", " << fwd.z << ")");
+    }
 
-    // TODO: add proper memory barriers / vkFlushMappedMemoryRanges for the
-    // buffer uploads if running on non-coherent memory (Quest 3). For desktop
-    // dev with persistently mapped + sequential write the data is usually
-    // visible after the next submit that uses the descriptors.
+    // Log scene lights (after world transforms) for import / exposure debugging.
+    if (!renderer.lights.empty()) {
+        LOG_INFO("[Lights] scene lights=" << renderer.lights.size()
+                 << " scene_center=(" << renderer.scene_center.x << ", "
+                 << renderer.scene_center.y << ", " << renderer.scene_center.z
+                 << ")");
+        for (size_t i = 0; i < renderer.lights.size(); ++i) {
+            const auto& L = renderer.lights[i];
+            LOG_INFO("[Lights]   [" << i << "] type=" << static_cast<uint32_t>(L.type)
+                     << " pos/dir=(" << L.positionOrDirection.x << ", "
+                     << L.positionOrDirection.y << ", " << L.positionOrDirection.z
+                     << ") intensity=" << L.intensity << " range=" << L.range
+                     << " contrib~"
+                     << gfx::estimate_light_contribution(L, renderer.scene_center));
+        }
+        LOG_INFO("[Lights] auto exposure="
+                 << gfx::compute_auto_exposure(renderer.lights, renderer.scene_center));
+    } else {
+        LOG_INFO("[Lights] no KHR_lights_punctual — using engine global directional");
+    }
+
+    camera.reset_mouse_state();
+
+    // Seed both frame slots with lighting, then bind descriptors.
+    for (uint32_t i = 0; i < Renderer::MAX_FRAMES_IN_FLIGHT; ++i) {
+        write_frame_lighting(i);
+    }
+    bind_frame_lighting_to_all_sets();
 
     return true;
 }
 
-void gfx::Engine::bind_frame_globals_to_all_sets() {
+void gfx::Engine::write_frame_lighting(uint32_t frame_index) {
+    if (frame_index >= Renderer::MAX_FRAMES_IN_FLIGHT)
+        return;
+
+    auto* constants = static_cast<gfx::FrameConstants*>(
+        renderer.frame_constants_buffer[frame_index].mapped_data);
+    auto* gpu_lights = static_cast<gfx::GpuLight*>(
+        renderer.frame_lights_buffer[frame_index].mapped_data);
+    if (!constants || !gpu_lights)
+        return;
+
+    memset(constants, 0, sizeof(gfx::FrameConstants));
+    memset(gpu_lights, 0, sizeof(gfx::GpuLight) * gfx::MAX_LIGHTS);
+
+    // Diffuse IBL: SH from procedural environment (or modest fallback).
+    if (renderer.ibl.ready) {
+        for (int i = 0; i < 9; ++i)
+            constants->shCoefficients[i] = renderer.ibl.sh_coefficients[i];
+        // Indices reserved for bindless path; cube/LUT use dedicated bindings 7/8.
+        constants->iblIndices = glm::uvec4(1u, 1u, 0u, 0u); // non-zero = specular IBL enabled
+    } else {
+        constants->shCoefficients[0] = glm::vec4(0.03f, 0.032f, 0.038f, 0.0f);
+        constants->iblIndices = glm::uvec4(0u, 0u, 0u, 0u);
+    }
+
+    std::vector<gfx::Light> active;
+    active.reserve(gfx::MAX_LIGHTS);
+    if (!renderer.lights.empty()) {
+        for (size_t i = 0; i < renderer.lights.size() && active.size() < gfx::MAX_LIGHTS; ++i) {
+            active.push_back(renderer.lights[i]);
+        }
+    } else {
+        active.push_back(renderer.globalLight);
+    }
+
+    const uint32_t n = static_cast<uint32_t>(active.size());
+    constants->lightMeta = glm::uvec4(n, 0u, 0u, 0u);
+
+    for (uint32_t i = 0; i < n; ++i) {
+        gpu_lights[i] = gfx::to_gpu_light(active[i]);
+    }
+
+    const float exposure =
+        gfx::compute_auto_exposure(active, renderer.scene_center);
+    constants->cameraPosition = glm::vec4(camera.get_position(), exposure);
+
+    // Descriptors may already point at these buffers; update ranges for safety.
+    gfx::BufferUtils::update_descriptor(
+        renderer.vk.device.device,
+        renderer.frame_constants_buffer[frame_index],
+        renderer.vk.bindless_descriptor_sets[frame_index],
+        sizeof(gfx::FrameConstants),
+        Renderer::BINDING_FRAME_CONSTANTS,
+        VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+    gfx::BufferUtils::update_descriptor(
+        renderer.vk.device.device,
+        renderer.frame_lights_buffer[frame_index],
+        renderer.vk.bindless_descriptor_sets[frame_index],
+        static_cast<VkDeviceSize>(gfx::MAX_LIGHTS) * sizeof(gfx::GpuLight),
+        Renderer::BINDING_LIGHTS,
+        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+}
+
+void gfx::Engine::bind_frame_lighting_to_all_sets() {
     for (uint32_t i = 0; i < Renderer::MAX_FRAMES_IN_FLIGHT; ++i) {
         gfx::BufferUtils::update_descriptor(
             renderer.vk.device.device,
-            renderer.frame_globals_buffer[i],
+            renderer.frame_constants_buffer[i],
             renderer.vk.bindless_descriptor_sets[i],
-            sizeof(gfx::FrameGlobals),
-            0,
+            sizeof(gfx::FrameConstants),
+            Renderer::BINDING_FRAME_CONSTANTS,
             VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+        gfx::BufferUtils::update_descriptor(
+            renderer.vk.device.device,
+            renderer.frame_lights_buffer[i],
+            renderer.vk.bindless_descriptor_sets[i],
+            static_cast<VkDeviceSize>(gfx::MAX_LIGHTS) * sizeof(gfx::GpuLight),
+            Renderer::BINDING_LIGHTS,
+            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+        if (renderer.ibl.ready) {
+            renderer.ibl.bind_descriptors(renderer.vk.device.device,
+                                          renderer.vk.bindless_descriptor_sets[i],
+                                          Renderer::BINDING_IBL_SPECULAR,
+                                          Renderer::BINDING_IBL_BRDF_LUT);
+        }
     }
 }
 
 void gfx::Engine::cleanup_scene() {
-    // Clear lights (they will be repopulated on next load_scene).
     renderer.lights.clear();
-
-    // TODO: In a fuller implementation we would also destroy/recreate the
-    // globals buffers here if supporting multiple scene loads without full
-    // engine restart. For now the buffers live for the lifetime of the Engine.
-
-    // finally, clean up the scene manager
-    renderer.scene_manager.shutdown(); // existing (mostly empty) call
+    renderer.draw_batches.clear();
+    renderer.draw_instances_cpu.clear();
+    gfx::BufferUtils::destroy_buffer(renderer.vk.device, renderer.allocator,
+                                     renderer.draw_instance_buffer);
+    renderer.scene_manager.clear_scene_data();
+    renderer.scene_manager.shutdown();
 }

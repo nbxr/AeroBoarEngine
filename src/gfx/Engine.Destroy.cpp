@@ -22,9 +22,12 @@ void gfx::Engine::destroy() {
 }
 
 void gfx::Engine::destroy_buffers() {
-    // Phase 2 lighting globals UBOs
-    gfx::BufferUtils::destroy_buffer(renderer.vk.device, renderer.allocator, renderer.frame_globals_buffer[0]);
-    gfx::BufferUtils::destroy_buffer(renderer.vk.device, renderer.allocator, renderer.frame_globals_buffer[1]);
+    renderer.ibl.destroy(renderer.vk.device, renderer.allocator);
+    gfx::BufferUtils::destroy_buffer(renderer.vk.device, renderer.allocator, renderer.draw_instance_buffer);
+    gfx::BufferUtils::destroy_buffer(renderer.vk.device, renderer.allocator, renderer.frame_constants_buffer[0]);
+    gfx::BufferUtils::destroy_buffer(renderer.vk.device, renderer.allocator, renderer.frame_constants_buffer[1]);
+    gfx::BufferUtils::destroy_buffer(renderer.vk.device, renderer.allocator, renderer.frame_lights_buffer[0]);
+    gfx::BufferUtils::destroy_buffer(renderer.vk.device, renderer.allocator, renderer.frame_lights_buffer[1]);
 }
 
 void gfx::Engine::destroy_images() {

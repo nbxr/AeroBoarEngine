@@ -1,15 +1,22 @@
 # Lighting Implementation Guide
 
 **Current Lighting Model**:  
-Scene-driven lights via glTF `KHR_lights_punctual` (directional/point/spot, world transforms from node hierarchy) + correct GGX BRDF (via temporary `FrameGlobals` UBO at binding 0). Engine global directional is the fallback when no scene lights are present. Textured IBL etc. still deferred.
+Scene-driven lights via glTF `KHR_lights_punctual` (directional/point/spot, world transforms from node hierarchy) + correct GGX BRDF. Engine global directional is the fallback when no scene lights are present. Textured IBL still deferred.
 
-**Status of current implementation**: The `FrameGlobals` UBO + `gfx::FrameGlobals` / `gfx::Light` structs, fixed `MAX_LIGHTS` arrays, per-frame direct mapped writes, and any std140 padding accommodations (oversized `padding0`/`padding1` arrays in C++ to match GLSL uniform block layout rules for scalar arrays) is **temporary scaffolding**. It was built to quickly enable scene lights + GGX during early development. It has known layout, update, and scalability issues.
+**Status of current implementation** (architecture landed):
+- **Binding 0** — `gfx::FrameConstants` UBO: `cameraPosition.xyz` + `exposure` in `.w`, `lightMeta.x` = count, SH coeffs, IBL indices. Only `vec4`/`uvec4` members (std140 matches C++ with no padding hacks).
+- **Binding 6** — `gfx::GpuLight[]` SSBO (std430, `MAX_LIGHTS=8`): position/direction, color+intensity, type/range/cone params.
+- **Binding 7** — bindless textures (variable count; must remain highest binding).
+- Double-buffered per `MAX_FRAMES_IN_FLIGHT`; `write_frame_lighting()` + `bind_frame_lighting_to_all_sets()`.
+- **Auto-exposure** uses scene-center contribution (`intensity / dist²` for point lights) so photometric KHR intensities (e.g. ~54k cd on DamagedHelmetScene) are visible.
+- Point lights: KHR inverse-square when `range == 0`.
 
-**Next step**: The explicit next phase of the project is to implement a **proper lighting solution**. Recommended direction (based on recent analysis of the std140 pain and double-buffering limitations):
-- Small, clean per-frame constants UBO (camera, exposure, light count, IBL indices, flags).
-- Dedicated lights buffer (SSBO preferred for `std430` / flexible arrays / no padding hacks, easy dynamic updates, and larger light counts).
-- Proper support for dynamic lights, many lights (clustered/tiled later), full production IBL, and integration with the future scene/GameObject model.
-- See "Phased Roadmap" and "Known Rough Edges" below for context.
+**IBL (landed)**: Procedural outdoor environment baked at engine init (`IblEnvironment`):
+- Diffuse: SH coefficients written into `FrameConstants` each frame
+- Specular: split-sum with prefiltered cube (binding 7) + BRDF LUT (binding 8)
+- No external HDR required; loading real equirect maps is a future enhancement
+
+**Next lighting steps**: HDR env load path, complete spot direction packing, dynamic light mutation, larger light counts / clustering, GameObject integration.
 
 **Long-term Target**: High-quality, Quest 3 friendly PBR with IBL and efficient multi-light support.
 

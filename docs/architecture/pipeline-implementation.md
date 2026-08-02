@@ -16,7 +16,7 @@ As of late May 2026:
 - Single-subpass render pass with transient MSAA + `DONT_CARE` is in place.
 - The current active asset only contains a single material.
 - Multi-subpass structure, multiview, compute culling, indirect draws, and advanced lighting (full IBL + multi-light from scenes) are **not yet implemented**. We currently have a correct GGX BRDF + one reliable engine-provided global directional light via the binding 0 UBO. See `docs/architecture/lighting-implementation.md` for the exact current simplified model.
-- Drawing is still CPU-driven (one `vkCmdDrawIndexed` per primitive) with raw SSBO vertex pulling.
+- Drawing is still CPU-driven (one `vkCmdDrawIndexed` per primitive). Vertex input uses proper attributes (`gfx::Vertex`); materials are a single SSBO with a runtime array (not a descriptor array of buffers).
 
 See `docs/agents/current_state.md` for the latest implementation status.
 

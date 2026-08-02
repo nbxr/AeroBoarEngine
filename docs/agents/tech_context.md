@@ -68,13 +68,16 @@ The single bindless descriptor set (allocated once, UPDATE_AFTER_BIND) uses thes
 
 | Binding | Type                          | Count  | Purpose / Consumers                  | Notes |
 |---------|-------------------------------|--------|--------------------------------------|-------|
-| 0       | UNIFORM_BUFFER                | 1      | Per-frame globals (temporary `FrameGlobals` UBO) — camera position + exposure + lights (KHR_lights_punctual from scene when present, else engine global fallback). IBL data is future work. | See lighting-implementation.md. Note: this entire UBO + fixed light array design (including std140 padding workarounds) is temporary scaffolding. The next step is a proper lighting solution (small constants UBO + dedicated lights SSBO). |
-| 1       | STORAGE_BUFFER                | 1      | SceneInstance (transform + mat/mesh indices) | `scene::SceneManager` |
-| 2       | STORAGE_BUFFER                | 1      | Materials (PBR + texture indices)    | `gfx::MaterialManager` |
+| 0       | UNIFORM_BUFFER                | 1      | `FrameConstants` — camera xyz + exposure (w), lightCount, SH, IBL indices. std140-safe (vec4/uvec4 only). | `gfx::FrameConstants`; double-buffered per frame |
+| 1       | STORAGE_BUFFER                | 1      | `DrawInstanceGPU[]` for instancing (model + material index) | Built at load; one range per mesh batch |
+| 2       | STORAGE_BUFFER                | 1      | Materials (PBR + texture indices); single packed SSBO, runtime array in shader. `gfx::Material` is 80 bytes / align 16 (std430). | `gfx::MaterialManager` |
 | 3       | STORAGE_BUFFER                | 1      | MeshPrimitiveSSBO metadata (v/i offsets) | `gfx::MeshManager` |
-| 4       | STORAGE_BUFFER                | 1      | Vertex buffer (legacy SSBO view; primary path now uses vertex attributes) | `gfx::MeshManager` |
+| 4       | STORAGE_BUFFER                | 1      | Vertex buffer (legacy SSBO view; primary path uses vertex attributes) | `gfx::MeshManager` |
 | 5       | STORAGE_BUFFER                | 1      | Index buffer                         | `gfx::MeshManager` |
-| 6       | COMBINED_IMAGE_SAMPLER        | 10000 (variable) | Bindless textures | `gfx::TextureManager`; must be last binding |
+| 6       | STORAGE_BUFFER                | 1      | Lights (`GpuLight` array, std430, up to `MAX_LIGHTS`) | Scene KHR_lights_punctual or engine global fallback |
+| 7       | COMBINED_IMAGE_SAMPLER        | 1      | Prefiltered specular env cubemap | `gfx::IblEnvironment` |
+| 8       | COMBINED_IMAGE_SAMPLER        | 1      | BRDF integration LUT (2D) | `gfx::IblEnvironment` |
+| 9       | COMBINED_IMAGE_SAMPLER        | 10000 (variable) | Bindless textures | `gfx::TextureManager`; **must** be last binding |
 
 These are written once at scene load (after `update_buffers` + `toggle` + `bind_descriptor`). Shaders will access via the indices stored in the instance/material data.
 

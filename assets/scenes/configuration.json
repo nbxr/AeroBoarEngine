@@ -1,5 +1,5 @@
 {
-  "defaultScene": "DamagedHelmetScene",
+  "defaultScene": "ABeautifulGame",
   "activeSystem": "Windows",
   "home": [
     {
@@ -31,12 +31,16 @@
     {
       "name": "Cameras",
       "filename": "glTF-Sample-Assets/Models/Cameras/glTF/Cameras.gltf"
+    },
+    {
+      "name": "ABeautifulGame",
+      "filename": "glTF-Sample-Assets/Models/ABeautifulGame/glTF/ABeautifulGame.gltf"
     }
   ],
   "validationFeatures" : [
     {
       "name": "gpuAssistedValidation",
-      "enabled": false
+      "enabled": true
     }
   ]
 }

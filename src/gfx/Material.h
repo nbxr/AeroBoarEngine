@@ -6,10 +6,11 @@
 
 namespace gfx {
 
-// Material structure for PBR rendering
-// This struct is designed to be compact and cache-friendly
-// All data is uploaded to GPU in one go for maximum performance
-struct Material {
+// Material structure for PBR rendering.
+// Uploaded as a packed SSBO array; must match shaders/pbr.frag Material under std430.
+// std430 base alignment is 16 (vec4) so array stride is 80 even though fields end at 76.
+// alignas(16) forces C++ sizeof/stride to match that GPU layout (unaligned was 76).
+struct alignas(16) Material {
     static constexpr uint32_t NO_TEXTURE = UINT32_MAX;
 
     // Base color (albedo)
@@ -42,9 +43,13 @@ struct Material {
     // Bit 6: NormalMapFlipY (invert green channel - useful for some authored normal maps)
     uint32_t flags; // Material flags for shader branching
 
-    // Padding to ensure 16-byte alignment for SSBO (80 bytes total)
+    // Explicit pad to end of logical fields (offset 60..75); trailing alignas pad → 80.
     uint32_t padding[4];
 };
+
+// Must match shaders/pbr.frag Material + std430 array stride (base align 16 → 80).
+static_assert(sizeof(Material) == 80, "Material must be 80 bytes for GPU SSBO layout");
+static_assert(alignof(Material) == 16, "Material must be 16-byte aligned for SSBO array stride");
 
 } // namespace gfx
 

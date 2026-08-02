@@ -56,11 +56,11 @@ class Engine {
     bool init_vulkan();
     bool init_vma();
 
-    // Helper to bind the per-frame globals UBO (binding 0) to every
-    // bindless descriptor set (one per MAX_FRAMES_IN_FLIGHT). This keeps
-    // the pairing of frame_globals_buffer[i] <-> bindless_descriptor_sets[i]
-    // consistent with how render() selects by current_frame.
-    void bind_frame_globals_to_all_sets();
+    // Bind FrameConstants UBO + lights SSBO for every per-frame descriptor set.
+    void bind_frame_lighting_to_all_sets();
+
+    // Write active lights + constants into the mapped buffers for one frame slot.
+    void write_frame_lighting(uint32_t frame_index);
     bool init_pipeline_layout();
     bool init_graphics_pipeline();
 

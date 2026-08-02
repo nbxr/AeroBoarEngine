@@ -50,7 +50,7 @@ struct VulkanContext {
     VkPushConstantRange push_constant_range{
         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, // stageFlags
         0, // offset
-        160 // Phase 1 lighting: 2x mat4 (128) + uvec4 (16) + vec4 cameraPos (16) = 160
+        80 // Instanced PBR: mat4 viewProj (64) + uvec4 extra (16) = 80
     };
 
     // Semaphores are sized to the number of swapchain images (not MAX_FRAMES_IN_FLIGHT)

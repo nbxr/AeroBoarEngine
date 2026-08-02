@@ -1,8 +1,13 @@
 #version 450
 #extension GL_EXT_nonuniform_qualifier : require
 
-// Bindless resources
-layout(set = 0, binding = 2) readonly buffer Materials {
+// Materials SSBO (binding 2): single buffer containing a runtime array of Material.
+// C++ binds one STORAGE_BUFFER with material_count * sizeof(Material) packed contiguously.
+// Do NOT use "} materials[];" — that is an array of buffer descriptors (descriptorCount > 1),
+// not an array of elements inside one buffer. Accessing materials[i] for i >= 1 with only one
+// descriptor bound is invalid and commonly causes AMD DEVICE_LOST when fragments run.
+// Layout must match gfx::Material (std430, 80-byte stride with vec4 alignment).
+struct Material {
     vec4  albedo;
     float roughness;
     float metallic;
@@ -16,53 +21,59 @@ layout(set = 0, binding = 2) readonly buffer Materials {
     uint  sampler_index;
     uint  flags;
     uint  padding[4];
-} materials[];
+};
 
-layout(set = 0, binding = 6) uniform sampler2D bindlessTextures[];  // Variable count
+layout(set = 0, binding = 2) readonly buffer Materials {
+    Material materials[];
+};
+
+// IBL: prefiltered specular env + BRDF LUT (engine-owned, not bindless array)
+layout(set = 0, binding = 7) uniform samplerCube prefilteredEnv;
+layout(set = 0, binding = 8) uniform sampler2D brdfLut;
+
+// Bindless textures — must be highest binding (VARIABLE_DESCRIPTOR_COUNT).
+layout(set = 0, binding = 9) uniform sampler2D bindlessTextures[];
 
 layout(location = 0) in vec3 inWorldPos;
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec4 inTangent;
 layout(location = 3) in vec2 inUV;
+layout(location = 4) flat in uint inMaterialIndex;
 
-// Push constants (must match pbr.vert)
+// Push constants (must match pbr.vert) — only viewProj + debug/base used here
 layout(push_constant) uniform PushConstants {
     mat4   viewProj;
-    mat4   model;
-    uvec4  extra;      // x = materialIndex
-    vec4   cameraPos;  // legacy (camera position now lives in FrameGlobals UBO)
+    uvec4  extra; // y = debugMode
 } pc;
 
 layout(location = 0) out vec4 outColor;
 
 // -----------------------------------------------------------------------------
-// Lighting (Phase 2+ model)
-// The engine populates FrameGlobals (binding 0) with 0..MAX_LIGHTS lights.
-// When the loaded glTF contains KHR_lights_punctual lights they are the active
-// source (world-transformed on CPU during load). Otherwise the engine global
-// directional fallback is used. Full IBL (textured) is still future work.
-// See docs/architecture/lighting-implementation.md for status and roadmap.
+// Lighting: FrameConstants UBO (binding 0) + Lights SSBO (binding 6).
+// Scene KHR_lights_punctual when present, else engine global directional.
+// See docs/architecture/lighting-implementation.md
 // -----------------------------------------------------------------------------
 
-const uint MAX_LIGHTS = 8;   // Must match gfx::MAX_LIGHTS in Light.h for UBO std140 layout
+const uint MAX_LIGHTS = 8; // matches gfx::MAX_LIGHTS
 
-layout(set = 0, binding = 0) uniform FrameGlobals {
-    vec4  cameraPosition;     // xyz = camera world position
-    float exposure;
-    uint  lightCount;
-    uint  padding0[2];
-
-    // Packed lights (see gfx::FrameGlobals)
-    vec4 lightDirectionsOrPositions[MAX_LIGHTS];
-    vec4 lightColors[MAX_LIGHTS];      // rgb + intensity in .a
-    vec4 lightParams[MAX_LIGHTS];      // x=type, y=range, zw=spot angles
-
-    // Phase 3 IBL
-    vec4 shCoefficients[9];   // Diffuse SH (3-band)
-    uint specularEnvMapIndex;
-    uint brdfLutIndex;
-    uint padding1[2];
+// std140-friendly: only vec4/uvec4 members (matches gfx::FrameConstants)
+layout(set = 0, binding = 0) uniform FrameConstants {
+    vec4  cameraPosition;   // xyz = world camera, w = exposure
+    uvec4 lightMeta;        // x = lightCount
+    vec4  shCoefficients[9];
+    uvec4 iblIndices;       // x = specularEnvMapIndex, y = brdfLutIndex
 } globals;
+
+// Single SSBO + runtime array (std430). Matches gfx::GpuLight.
+struct GpuLight {
+    vec4 positionOrDirection;
+    vec4 colorIntensity; // rgb + intensity
+    vec4 params;         // x=type, y=range, z=innerCone, w=outerCone
+};
+
+layout(set = 0, binding = 6) readonly buffer Lights {
+    GpuLight lights[];
+};
 
 const float PI = 3.14159265359;
 
@@ -110,10 +121,8 @@ vec3 getNormalFromMap(vec3 N, vec3 T, vec3 B, vec2 uv, uint normalTexIdx, float 
 }
 
 void main() {
-    // Use material index pushed per draw (Phase 1)
-    uint matIdx = pc.extra.x;
-    // Note: Runtime .length() on unsized SSBO array not supported in this GLSL version without extra setup.
-    // Relying on CPU-side validation for now.
+    // Per-instance material (flat interpolated from VS)
+    uint matIdx = inMaterialIndex;
 
     vec4  baseColor   = materials[matIdx].albedo;
     float roughness   = materials[matIdx].roughness;
@@ -151,45 +160,48 @@ void main() {
     // engine global fallback) + proper GGX BRDF.
     // See docs/architecture/lighting-implementation.md
     // -----------------------------------------------------------------
+    float exposure = globals.cameraPosition.w;
     vec3 V = normalize(globals.cameraPosition.xyz - inWorldPos);
     vec3 F0 = mix(vec3(0.04), albedo.rgb, sampledMetal);
 
     vec3 color = vec3(0.0);
 
-    uint numLights = min(globals.lightCount, 8u);
+    uint numLights = min(globals.lightMeta.x, MAX_LIGHTS);
 
     for (uint i = 0u; i < numLights; ++i) {
-        uint lightType = uint(globals.lightParams[i].x + 0.5); // 0=dir, 1=point, 2=spot
+        GpuLight light = lights[i];
+        uint lightType = uint(light.params.x + 0.5); // 0=dir, 1=point, 2=spot
 
         vec3 L;
         float attenuation = 1.0;
 
         if (lightType == 0u) {
-            // Directional
-            L = normalize(globals.lightDirectionsOrPositions[i].xyz);
+            // Directional: positionOrDirection is to-light vector
+            L = normalize(light.positionOrDirection.xyz);
         } else {
             // Point or Spot
-            vec3 lightPos = globals.lightDirectionsOrPositions[i].xyz;
+            vec3 lightPos = light.positionOrDirection.xyz;
             vec3 toLight = lightPos - inWorldPos;
             float dist = length(toLight);
-            L = normalize(toLight);
+            L = toLight / max(dist, 1e-4);
 
-            float range = globals.lightParams[i].y;
+            float range = light.params.y;
             if (range > 0.0) {
-                attenuation = max(0.0, 1.0 - (dist / range));
-                attenuation *= attenuation; // simple quadratic falloff (used when range specified)
+                // Soft cutoff when range is authored
+                float x = max(0.0, 1.0 - (dist / range));
+                attenuation = x * x;
             } else {
-                // range == 0 per KHR_lights_punctual: infinite range, inverse-square falloff
-                attenuation = 1.0 / (dist * dist + 1.0);
+                // KHR_lights_punctual: infinite range, inverse-square (candela)
+                attenuation = 1.0 / max(dist * dist, 1e-4);
             }
 
             if (lightType == 2u) {
-                // Spot light
-                vec3 spotDir = normalize(globals.lightDirectionsOrPositions[i].xyz); // reuse for direction in this packing (simplified for Phase 2)
-                // Note: for real spot we would store direction separately. For now treat as point with cone.
-                float theta = dot(L, -spotDir); // simplified
-                float outer = globals.lightParams[i].w;
-                float inner = globals.lightParams[i].z;
+                // Spot: direction packing incomplete (uses same field as position).
+                // Treat cone against -L until a dedicated direction is stored.
+                vec3 spotDir = normalize(light.positionOrDirection.xyz);
+                float theta = dot(L, -spotDir);
+                float outer = light.params.w;
+                float inner = light.params.z;
                 float epsilon = inner - outer;
                 float spotAtten = clamp((theta - outer) / max(epsilon, 0.0001), 0.0, 1.0);
                 attenuation *= spotAtten;
@@ -212,22 +224,20 @@ void main() {
         vec3 kD = (1.0 - F) * (1.0 - sampledMetal);
         vec3 diff = kD * albedo.rgb / PI * NdotL;
 
-        vec3 lightColor = globals.lightColors[i].rgb;
-        float intensity = globals.lightColors[i].a;
+        vec3 lightColor = light.colorIntensity.rgb;
+        float intensity = light.colorIntensity.a;
 
-        color += (diff + spec) * lightColor * intensity * attenuation * globals.exposure;
+        color += (diff + spec) * lightColor * intensity * attenuation * exposure;
     }
 
     // -----------------------------------------------------------------
-    // Phase 3: IBL contribution (diffuse SH + stub for specular)
     // -----------------------------------------------------------------
-    // Diffuse irradiance from spherical harmonics (3-band)
-    // (N was already computed and normal-mapped earlier in the function)
-    vec3 diffuseIBL = vec3(0.0);
-
-    if (globals.shCoefficients[0].x > 0.0 || globals.shCoefficients[0].y > 0.0 || globals.shCoefficients[0].z > 0.0) {
-        // Standard 9-coefficient SH evaluation (L0 + L1 + L2)
-        diffuseIBL =
+    // Diffuse IBL: SH irradiance * albedo (Lambertian)
+    // -----------------------------------------------------------------
+    vec3 irradiance = vec3(0.0);
+    if (globals.shCoefficients[0].x != 0.0 || globals.shCoefficients[0].y != 0.0 ||
+        globals.shCoefficients[0].z != 0.0) {
+        irradiance =
             globals.shCoefficients[0].rgb +
             globals.shCoefficients[1].rgb * N.y +
             globals.shCoefficients[2].rgb * N.z +
@@ -237,21 +247,28 @@ void main() {
             globals.shCoefficients[6].rgb * (3.0 * N.z * N.z - 1.0) * 0.5 +
             globals.shCoefficients[7].rgb * N.z * N.x +
             globals.shCoefficients[8].rgb * (N.x * N.x - N.y * N.y);
+        irradiance = max(irradiance, vec3(0.0));
     } else {
-        // Fallback simple ambient when no SH is provided
-        diffuseIBL = albedo.rgb * vec3(0.02) * vec3(0.95, 0.98, 1.05);
+        irradiance = vec3(0.03) * vec3(0.95, 0.98, 1.05);
     }
+    color += albedo.rgb * irradiance * (1.0 - sampledMetal);
 
-    color += diffuseIBL * (1.0 - sampledMetal) * (1.0 - 0.3); // rough energy conservation hack
-
-    // Specular IBL stub (real split-sum requires prefiltered map + BRDF LUT)
-    // For now we leave it as future work. When maps are bound this can be expanded.
-    if (globals.specularEnvMapIndex != NO_TEXTURE && globals.brdfLutIndex != NO_TEXTURE) {
-        // Placeholder: in a full implementation you would sample the prefiltered cubemap
-        // using the reflection vector + roughness, then combine with BRDF LUT.
-        // For Phase 3 we at least have the plumbing ready.
+    // -----------------------------------------------------------------
+    // Specular IBL: split-sum (prefiltered env * (F0*brdf.x + brdf.y))
+    // Enabled when iblIndices.x/y are non-zero (set when IblEnvironment is ready).
+    // -----------------------------------------------------------------
+    if (globals.iblIndices.x != 0u && globals.iblIndices.y != 0u) {
         vec3 R = reflect(-V, N);
-        // (left as exercise / next increment)
+        float NdotV_ibl = max(dot(N, V), 0.001);
+        // Mip count is fixed by the baker (face 32 → ~4 mips). Keep in sync with
+        // IblEnvironment::kCubeSize / mip generation.
+        const float maxMip = 3.0;
+        float mip = sampledRough * maxMip;
+        vec3 prefiltered = textureLod(prefilteredEnv, R, mip).rgb;
+        vec2 brdf = texture(brdfLut, vec2(NdotV_ibl, sampledRough)).rg;
+        vec3 specularIBL = prefiltered * (F0 * brdf.x + brdf.y);
+        // Rough metals keep more env; dielectrics get a smaller Fresnel-weighted share.
+        color += specularIBL * exposure * mix(0.35, 1.0, sampledMetal);
     }
 
     // Emissive
@@ -274,37 +291,15 @@ void main() {
 
     outColor = vec4(color, albedo.a);
 
-    // === TEMP DIAGNOSTIC ===
-    // Color the surface based on material_index to verify per-part materials are different.
-    // If all parts are the same color, then material_index is not varying per draw.
-    int mid = int(matIdx) % 6;
-    vec3 debugCol;
-    if (mid == 0) debugCol = vec3(1, 0, 0);
-    else if (mid == 1) debugCol = vec3(0, 1, 0);
-    else if (mid == 2) debugCol = vec3(0, 0, 1);
-    else if (mid == 3) debugCol = vec3(1, 1, 0);
-    else if (mid == 4) debugCol = vec3(1, 0, 1);
-    else debugCol = vec3(0, 1, 1);
-
-    // DIAGNOSTIC (commented out for normal rendering)
-    // outColor = vec4(debugCol, 1.0);
-
-    // === DEBUG VISUALIZATION (controlled via push constant extra.y) ===
-    // Change the value in Engine.Render.cpp (look for "debugMode")
-    // 0 = Normal rendering
-    // 1 = UV visualization (Red = U, Green = V)
-    // 2+ = Per-primitive/section color (each draw call gets a different color)
+    // Optional visualization via push constant extra.y (default 0 = normal PBR).
+    // Set only from Engine.Render.cpp intentionally — do not encode draw indices here.
+    //   1 = UV (R=U, G=V)
+    //   2 = flat gray by material index (sanity-check multi-material)
     uint debugMode = pc.extra.y;
-
-    if (debugMode == 1) {
-        // UV debug
+    if (debugMode == 1u) {
         outColor = vec4(inUV, 0.0, 1.0);
-    } else if (debugMode >= 2) {
-        // Per-primitive color using the value in extra.y as an ID
-        // This helps see if each draw call / primitive has constant UVs
-        float id = float(debugMode % 8);
-        vec3 col = vec3(id / 7.0);
-        outColor = vec4(col, 1.0);
+    } else if (debugMode == 2u) {
+        float id = float(matIdx % 8u);
+        outColor = vec4(vec3(id / 7.0), 1.0);
     }
-    // else: normal rendering (debugMode == 0)
 }

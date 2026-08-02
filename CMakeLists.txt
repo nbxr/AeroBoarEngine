@@ -239,6 +239,7 @@ add_executable(Aero_Boar_Engine
     src/gfx/Engine.Render.cpp
     src/scene/GltfLoader.cpp
     src/scene/SceneManager.cpp
+    src/scene/TransformManager.cpp
     src/scene/Camera.cpp
     src/core/InputManager.cpp
     src/core/Configuration.cpp
@@ -246,6 +247,7 @@ add_executable(Aero_Boar_Engine
     src/gfx/MaterialManager.cpp
     src/gfx/MeshManager.cpp
     src/gfx/TextureManager.cpp
+    src/gfx/IblEnvironment.cpp
 )
 
 # Make sure configuration + (optionally) shaders are available during build.

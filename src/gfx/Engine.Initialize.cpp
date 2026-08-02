@@ -162,21 +162,35 @@ bool gfx::Engine::init_resource_managers() {
             renderer.vk.transfer_family_index))
         return false;
 
-    // Phase 2: small UBO for per-frame globals (binding 0) - camera + lights
-    // Using two small persistently-mapped buffers (double buffer pattern)
-    VkDeviceSize globalsSize = sizeof(gfx::FrameGlobals);
-    VkBufferUsageFlags globalsUsage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+    // FrameConstants UBO (binding 0) + lights SSBO (binding 6), double-buffered.
+    VkDeviceSize constantsSize = sizeof(gfx::FrameConstants);
+    VkBufferUsageFlags uboUsage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+    VkDeviceSize lightsSize =
+        static_cast<VkDeviceSize>(gfx::MAX_LIGHTS) * sizeof(gfx::GpuLight);
 
-    bool g0 = gfx::BufferUtils::initialize_buffer(
-        renderer.vk.device.device, renderer.allocator, globalsSize,
-        renderer.frame_globals_buffer[0], globalsUsage);
-    bool g1 = gfx::BufferUtils::initialize_buffer(
-        renderer.vk.device.device, renderer.allocator, globalsSize,
-        renderer.frame_globals_buffer[1], globalsUsage);
+    bool c0 = gfx::BufferUtils::initialize_buffer(
+        renderer.vk.device.device, renderer.allocator, constantsSize,
+        renderer.frame_constants_buffer[0], uboUsage);
+    bool c1 = gfx::BufferUtils::initialize_buffer(
+        renderer.vk.device.device, renderer.allocator, constantsSize,
+        renderer.frame_constants_buffer[1], uboUsage);
+    bool l0 = gfx::BufferUtils::initialize_buffer(
+        renderer.vk.device.device, renderer.allocator, lightsSize,
+        renderer.frame_lights_buffer[0]);
+    bool l1 = gfx::BufferUtils::initialize_buffer(
+        renderer.vk.device.device, renderer.allocator, lightsSize,
+        renderer.frame_lights_buffer[1]);
 
-    if (!g0 || !g1) {
-        LOG_ERROR("Failed to create per-frame globals UBO for lighting (binding 0)");
+    if (!c0 || !c1 || !l0 || !l1) {
+        LOG_ERROR("Failed to create per-frame lighting buffers (constants UBO + lights SSBO)");
         return false;
+    }
+
+    // Procedural IBL (SH + prefiltered cube + BRDF LUT). Non-fatal if bake fails.
+    if (!renderer.ibl.initialize(renderer.vk.device.device, renderer.allocator,
+                                 renderer.vk.graphics_queue,
+                                 renderer.vk.graphics_family_index)) {
+        LOG_ERROR("[IBL] initialize failed — continuing without specular IBL");
     }
 
     return true;
