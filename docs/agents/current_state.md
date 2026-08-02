@@ -52,6 +52,7 @@ Desktop foundation is solid and past “first triangle.” The engine loads glTF
 - Spot light direction packing, dynamic lights, HDR env loading
 - **Future tooling:** migrate shader compile from `glslc` → **glslang** when cross-platform (Quest/Android) work starts — see `tech_context.md`
 - **VR depth / cull quality (roadmap):** reverse-Z + replace HZB hysteresis with same-frame / reprojected Hi-Z — see `tech_context.md`
+- **Physics (roadmap):** Jolt runtime + **glTF Khronos physics extensions** for model physics properties (`KHR_physics_rigid_bodies`, `KHR_implicit_shapes`) — see `tech_context.md` § Physics assets
 
 ## Known Gaps / Not Yet Implemented
 
@@ -82,7 +83,8 @@ Desktop foundation is solid and past “first triangle.” The engine loads glTF
 - **Depth model:** standard Z today (0=near, 1=far, `LESS`). **Planned:** reverse-Z with VR/multiview depth work (`GREATER`/`GREATER_OR_EQUAL`, clear 0, max-depth Hi-Z) — official roadmap item in `tech_context.md`
 - No OpenXR / VR input layer (desktop GLFW only)
 - **Scene model (hierarchy landed)**: `GameObject` + `RenderMesh` + `TransformManager` with **local matrices + parent links + `propagate()`** at load. glTF load walks the node tree (`set_local` + `set_parent`), then `propagate()`, then `refresh_instance_worlds()` + `GpuCulling::build_scene` (world matrices). Legacy `SceneInstance` dual-written and re-synced after propagate.
-- No physics, audio, or higher-level input abstraction (desktop input layer is now complete via `core::InputManager`)
+- **No physics yet** (runtime or asset). **Planned:** Jolt for simulation; physics properties on models via **Khronos glTF extensions** (`KHR_physics_rigid_bodies`, `KHR_implicit_shapes` and related as ratified) loaded through the glTF pipeline — see `docs/agents/tech_context.md` § Physics assets and `docs/project-plan.md`.
+- No audio, or higher-level input abstraction beyond the desktop layer (desktop input is complete via `core::InputManager`)
 
 ## Next Immediate Priorities
 
@@ -103,6 +105,7 @@ Desktop foundation is solid and past “first triangle.” The engine loads glTF
 - [done] Single multi-draw indirect: `build_indirect` writes `firstInstance = batch.base`; `pbr.vert` uses `gl_InstanceIndex` only (includes base on Vulkan); one `vkCmdDrawIndexedIndirect` for all batches
 - **Next immediate:** dirty-flag per-frame `propagate()` when animated transforms land; lighting polish (spot packing, HDR env)
 - **Roadmap (VR / Quest depth phase):** reverse-Z; same-frame or reprojected Hi-Z (drop desktop hysteresis); multiview stereo depth — see `tech_context.md` § Depth buffer model
+- **Roadmap (physics):** Jolt integration + load physics from glTF Khronos extensions (`KHR_physics_rigid_bodies`, `KHR_implicit_shapes`) — see `tech_context.md` § Physics assets
 - Future tooling: glslang shader toolchain when cross-platform (Quest/Android) work starts — keep `glslc` until then (see `tech_context.md`)
 - [done] Desktop input layer: `core::InputManager` (callback-driven deltas + EWMA + acceleration + capture state) + full decoupling from `scene::Camera` (see `docs/architecture/desktop-inputs.md` and the implementation plan). Pitch sign convention restored to original comfortable default.
 - glTF loader robustness: `extract_mesh_data` now accepts primitives that provide only POSITION (common in minimal test assets). Missing NORMAL defaults to (0,0,1); missing TEXCOORD_0 defaults to (0,0). This allows the Cameras.gltf pure-camera test scene (and similar) to load and render its proxy geometry. Also injects a default white material when the glTF contains no materials array (primitives may still reference default material via -1).

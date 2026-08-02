@@ -51,14 +51,20 @@ This project aims to develop a cross-platform game engine targeting VR via OpenX
    - HRTF (Head-Related Transfer Function) support for realistic VR audio
 
 4. **Physics Engine**
-   - Integration with Jolt Physics library
-   - VR-specific collision handling
+   - Integration with **Jolt Physics** for rigid-body simulation (runtime)
+   - **glTF physics authoring via Khronos extensions** (asset source of truth for collision shapes, rigid-body params, materials, filters/joints as the extensions stabilize)
+   - Primary extensions to track / consume:
+     - **`KHR_physics_rigid_bodies`** (also discussed as `KHR_rigid_bodies` during development) — rigid bodies, motion, mass properties, collision filters
+     - **`KHR_implicit_shapes`** — analytic collision volumes (box, sphere, capsule, etc.) alongside mesh-based colliders when needed
+   - Loader (`tinygltf` + engine extensions) maps glTF physics nodes into engine physics components that feed Jolt
+   - VR-specific collision handling (controllers, world, locomotion) built on the same data path
 
 5. **Asset Pipeline**
    - Import/export formats
    - Resource management
    - Streaming support
    - glTF parsing using tinygltf
+   - **Physics properties on models** authored in glTF via the Khronos physics extensions above (not ad-hoc engine-only sidecar formats for production assets)
 
 ## Development Roadmap
 
@@ -77,6 +83,10 @@ This project aims to develop a cross-platform game engine targeting VR via OpenX
 - Develop debugging tools
 - Integrate with development workflow
 - Implement GLM for math operations
+- **Physics foundation (when rendering path is stable enough):**
+  - Jolt integration (world step, rigid bodies, collision layers)
+  - glTF load path for Khronos physics extensions (`KHR_physics_rigid_bodies`, `KHR_implicit_shapes` / successors as ratified)
+  - Map authored shapes + body properties → Jolt colliders / bodies
 
 ### Phase 3: VR Features (Weeks 9-12)
 - Full OpenXR integration
@@ -97,7 +107,8 @@ This project aims to develop a cross-platform game engine targeting VR via OpenX
 - Graphics API: Vulkan
 - Windowing: GLFW
 - Math Library: GLM
-- Physics Engine: Jolt Physics
+- Physics Engine: Jolt Physics (runtime simulation)
+- Physics assets: Khronos glTF physics extensions (`KHR_physics_rigid_bodies`, `KHR_implicit_shapes` and related as finalized)
 - VR Runtime: OpenXR
 - glTF Parsing: tinygltf
 - Vulkan Setup: VK-Bootstrap

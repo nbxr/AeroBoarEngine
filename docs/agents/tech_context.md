@@ -14,6 +14,24 @@
 - **Build System**: CMake
 - **Shader Compilation**: `glslc` → SPIR-V (current desktop path)
 - **GLTF**: tinygltf
+- **Physics (planned runtime)**: Jolt Physics
+- **Physics (planned asset authoring)**: Khronos glTF extensions — see § Physics assets below
+
+### Physics assets (glTF Khronos extensions) — planned
+
+**Decision:** Model physics properties (collision shapes, rigid-body parameters, materials/filters, joints as supported) are **authored in glTF** using Khronos physics extensions, not inventing a parallel proprietary asset format for production content.
+
+**Primary extensions to track / implement against:**
+
+| Extension | Role |
+|-----------|------|
+| **`KHR_physics_rigid_bodies`** | Rigid bodies, motion type, mass / inertia related data, collision filtering (name during draft may appear as `KHR_rigid_bodies` in discussions) |
+| **`KHR_implicit_shapes`** | Analytic colliders (box, sphere, capsule, …) so not every body needs a mesh collider |
+
+- Spec work and samples live in the Khronos 3D Formats / glTF physics efforts (e.g. public drafts and samples under the community physics glTF repos; watch [KhronosGroup/glTF](https://github.com/KhronosGroup/glTF) extension registry for ratification).
+- **Runtime:** Jolt remains the simulation backend (project plan). The loader maps extension data → engine physics components → Jolt shapes/bodies.
+- **Not yet implemented** — no physics step or extension parse in the current desktop renderer. Track in `current_state.md` when work starts.
+- Prefer following ratified / widely agreed KHR schemas; avoid baking MSFT-only or one-off vendor physics into the long-term pipeline unless needed for interim tooling.
 
 ### Shader tooling (future)
 Today shaders are compiled with **`glslc`** via the CMake `compile_shaders` target. That is intentional while development is desktop-first.

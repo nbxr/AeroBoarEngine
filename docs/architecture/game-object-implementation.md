@@ -14,6 +14,8 @@ Lightweight, cache-friendly data structures designed for a C++ Vulkan engine usi
 
 Still TODO: dirty upload of transforms per frame, skinning, full TRS SOA if needed.
 
+**Physics (planned, not implemented):** Collision and rigid-body properties for models will be **authored in glTF** using Khronos extensions (`KHR_physics_rigid_bodies`, `KHR_implicit_shapes`, and related as they finalize). Runtime simulation is **Jolt**. Extension data should map into engine physics components associated with `GameObject` / nodes (not a parallel proprietary physics asset format for production content). See `docs/agents/tech_context.md` § Physics assets.
+
 ## Core Principles
 - Flat SOA-style layouts for high cache efficiency and low CPU overhead.
 - One `RenderMesh` entry maps 1:1 to a draw / mesh-shader task.
