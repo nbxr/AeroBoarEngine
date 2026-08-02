@@ -4,18 +4,17 @@ Lightweight snapshot of the AeroBoarEngine project status. Intended to be read q
 
 ## Overall Status
 
-Early foundation phase. A basic PBR forward renderer is implemented and active. The engine can load glTF scenes (including emissive and separate AO textures), upload everything into bindless resources, and render using a simple PBR shader with per-primitive draw calls. Default scene selection is via `assets/scenes/configuration.json` (currently often multi-material sample assets such as ABeautifulGame).
+Desktop foundation is solid and past “first triangle.” The engine loads glTF scenes (multi-material, hierarchy, punctual lights), uploads bindless resources, and renders with **GPU frustum + Hi-Z cull**, **mesh-grouped instancing**, and **one multi-draw indirect** call path plus procedural IBL. Default scene selection is via `assets/scenes/configuration.json` (often multi-material assets such as ABeautifulGame). OpenXR / Quest / reverse-Z remain roadmap items.
 
 ## Major Completed Areas
 
 - Project structure and build system (CMake + FetchContent dependencies)
 - Vulkan instance, device, swapchain, and basic pipeline scaffolding
 - VMA integration for memory management
-- glTF loading via tinygltf (`GltfLoader`)
-- Staged resource managers (Mesh, Texture, Material)
-- Double-buffered buffer patterns for upload vs render
+- glTF loading via tinygltf (`GltfLoader`) including hierarchy, cameras, `KHR_lights_punctual`
+- Resource managers: Mesh, Texture, Material, Scene + shared `gfx::DoubleBufferedBuffer` helper
 - Complete bindless GPU upload path at load time (all data visible in shaders)
-- Basic but functional render loop (`Engine::render()`): acquire, record, bind bindless set, multiple indexed draws, submit, present
+- Render loop: acquire → GPU cull/HZB build → bindless draw → present
 - Basic PBR forward shader (`pbr.vert` / `pbr.frag`) that samples:
   - Albedo (baseColor)
   - Normal map
@@ -24,6 +23,8 @@ Early foundation phase. A basic PBR forward renderer is implemented and active. 
   - Ambient Occlusion (separate texture)
 - Proper vertex attribute input (`gfx::Vertex`, pipeline vertex state, `pbr.vert`) — legacy SSBO vertex pulling is no longer the active path
 - Materials SSBO correctly declared as a **single buffer + runtime array** in `pbr.frag` (not a descriptor array); `gfx::Material` is `alignas(16)` / 80-byte stride to match std430
+- Scene model: `GameObject` / `RenderMesh` / `TransformManager` (local + parent + `propagate()` at load)
+- GPU cull + Hi-Z + multi-draw indirect (`GpuCulling`, `HzbPyramid`; desktop HZB hysteresis — see tech_context)
 - Desktop `scene::Camera` system (fully documented in `src/scene/Camera.h`):
   - Quaternion-based 6DOF orientation (full roll support).
   - WASD: Move forward/back + strafe relative to current orientation.
@@ -76,7 +77,7 @@ Early foundation phase. A basic PBR forward renderer is implemented and active. 
   - Compute runs before the render pass; graphics uses binding 1 instance SSBO + **one** `vkCmdDrawIndexedIndirect` (multi-draw; `firstInstance = batch.base`)
   - **Instance index (Vulkan):** VS uses `gl_InstanceIndex` only — it already includes `firstInstance`. Never also add `gl_BaseInstance` or push base (double-count → wrong materials / missing draws).
   - `[Cull]` log from host-visible counts after frame fence
-  - HZB occlusion uses **desktop hysteresis** (see `tech_context.md` § Hi-Z occlusion hysteresis): off on any camera motion, on only after ~20 still frames + capture-camera match. **Interim only** — replace/improve for VR head-tracking (same-frame HZB or reprojection), not hysteresis.
+  - HZB occlusion uses **desktop hysteresis** (see `tech_context.md` § Hi-Z occlusion hysteresis): off on any camera motion; on after ~24 still frames + capture match + bias warmup; far objects largely exempt from hard HZB cull. Log tag `[hzb=on|off]`. **Interim only** for VR (same-frame / reprojected HZB + reverse-Z).
   - Still TODO for cull quality: same-frame two-phase occlusion / reprojected HZB while the camera (or HMD) moves
 - **Depth model:** standard Z today (0=near, 1=far, `LESS`). **Planned:** reverse-Z with VR/multiview depth work (`GREATER`/`GREATER_OR_EQUAL`, clear 0, max-depth Hi-Z) — official roadmap item in `tech_context.md`
 - No OpenXR / VR input layer (desktop GLFW only)
@@ -111,25 +112,22 @@ Early foundation phase. A basic PBR forward renderer is implemented and active. 
 The one-time scene upload at load is now fully wired:
 - Bindless descriptor set is allocated with correct variable-count + update-after-bind flags.
 - Layout declares the global tables (see tech_context.md for the exact binding numbers).
-- Double-buffered managers (Scene, Material, Mesh) flip + bind their data after GltfLoader populates CPU side.
+- Double-buffered managers (Scene, Material, Mesh via `gfx::DoubleBufferedBuffer`) flip + bind after GltfLoader populates CPU side.
 - Textures create images + upload via transfer queue + bind into the array.
-- Minor bugs (ssbo accumulation, image_infos indexing, missing sampler, missing features) fixed as part of making the path executable.
 
-The data is now in descriptors and ready for the render pass / shader work. Future dynamic updates will need per-frame-in-flight fencing + dirty tracking.
+Future dynamic updates will need per-frame-in-flight fencing + dirty tracking (transforms, lights).
 
-Per-frame bindless descriptor sets (one per `MAX_FRAMES_IN_FLIGHT`) are now used for everything, including binding 0 (the per-frame `FrameGlobals` UBO). Static resources are bound to all sets at load time; per-frame data (globals) is updated only on the matching set using `current_frame`. A small helper `bind_frame_globals_to_all_sets()` encapsulates the initial binding. Legacy `globals_upload`/`globals_render` fields were removed.
+Per-frame bindless descriptor sets (one per `MAX_FRAMES_IN_FLIGHT`) cover all bindings including binding 0 (`FrameConstants` UBO). Static resources are bound to all sets at load; per-frame data is updated on the matching set for `current_frame` (`bind_frame_lighting_to_all_sets` / `write_frame_lighting`).
 
 ## Rendering Milestone (Achieved)
 
-A basic PBR forward renderer is now active:
+Active path:
 
-- The pipeline uses `pbr.vert` + `pbr.frag`.
-- Supports albedo, normal, metal/roughness, emissive, and separate AO textures via bindless sampling.
-- Per-primitive material selection works via push constants (`extra.x` = material index into the materials SSBO).
-- The render loop successfully draws the loaded scene with correct transforms.
-- Multi-material scenes work once materials are indexed as elements of a single SSBO (see Materials SSBO note below).
-
-GPU frustum/Hi-Z cull + mesh-grouped instancing + single multi-draw indirect is the active path (see Known Gaps for remaining work).
+- `pbr.vert` / `pbr.frag` — bindless PBR (albedo, normal, metal/rough, emissive, AO)
+- Material index from **instance SSBO** (`DrawInstanceGPU.meta.x`), not push constants
+- Push constants: `viewProj` (+ reserved `extra`)
+- Multi-material scenes: materials as elements of a **single** SSBO (see below)
+- GPU frustum + Hi-Z cull → one `vkCmdDrawIndexedIndirect` multi-draw
 
 ### Materials SSBO (important)
 

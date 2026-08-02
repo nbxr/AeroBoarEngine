@@ -127,7 +127,7 @@ The single bindless descriptor set (allocated once, UPDATE_AFTER_BIND) uses thes
 | Binding | Type                          | Count  | Purpose / Consumers                  | Notes |
 |---------|-------------------------------|--------|--------------------------------------|-------|
 | 0       | UNIFORM_BUFFER                | 1      | `FrameConstants` — camera xyz + exposure (w), lightCount, SH, IBL indices. std140-safe (vec4/uvec4 only). | `gfx::FrameConstants`; double-buffered per frame |
-| 1       | STORAGE_BUFFER                | 1      | `DrawInstanceGPU[]` for instancing (model + material index) | Built at load; one range per mesh batch |
+| 1       | STORAGE_BUFFER                | 1      | `DrawInstanceGPU[]` for instancing (model + material index) | Per-frame GPU cull output; multi-draw uses `firstInstance` = batch base (Vulkan `gl_InstanceIndex` already includes base) |
 | 2       | STORAGE_BUFFER                | 1      | Materials (PBR + texture indices); single packed SSBO, runtime array in shader. `gfx::Material` is 80 bytes / align 16 (std430). | `gfx::MaterialManager` |
 | 3       | STORAGE_BUFFER                | 1      | MeshPrimitiveSSBO metadata (v/i offsets) | `gfx::MeshManager` |
 | 4       | STORAGE_BUFFER                | 1      | Vertex buffer (legacy SSBO view; primary path uses vertex attributes) | `gfx::MeshManager` |
@@ -145,8 +145,12 @@ These are written once at scene load (after `update_buffers` + `toggle` + `bind_
 - Double buffering (`MAX_FRAMES_IN_FLIGHT = 2`) is the baseline for avoiding CPU/GPU hazards.
 - Use deferred destruction for resources that may still be in use by the GPU.
 
+## Resource managers
+- **CPU→GPU buffer managers** (`MaterialManager`, `SceneManager` instance SSBO, `MeshManager` vertex/index/meta): shared `gfx::DoubleBufferedBuffer` (upload/render pair, growth, memcpy, bind).
+- **TextureManager** / **IblEnvironment**: image + sampler paths (not the buffer-pair helper).
+
 ## Build & Deployment
-- Primary development target: Linux desktop (for rapid iteration)
+- Primary development target: desktop (Windows/Linux) for rapid iteration
 - Target hardware: Meta Quest 3 (Android / aarch64)
-- Shaders are compiled with `glslc` during the build
+- Shaders are compiled with `glslc` during the build (`--target-env=vulkan1.1` for graphics, `vulkan1.3` for compute); **glslang** planned for cross-platform — see above
 - Optimization focus is on Adreno GMEM / tile-based rendering characteristics
