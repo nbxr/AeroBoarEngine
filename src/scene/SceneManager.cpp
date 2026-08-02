@@ -32,14 +32,15 @@ bool scene::SceneManager::initialize(VkDevice device, VmaAllocator allocator,
     return render_initialized && upload_initialized;
 }
 
-uint32_t scene::SceneManager::create_game_object(const glm::mat4& world,
+uint32_t scene::SceneManager::create_game_object(uint32_t root_transform_index,
                                                  uint32_t gltf_node_index) {
     std::scoped_lock lock(instance_mutex);
-    uint32_t xform = transforms_.allocate();
-    transforms_.set_world_matrix(xform, world);
+    if (!transforms_.is_alive(root_transform_index)) {
+        return ~0u;
+    }
 
     GameObject go{};
-    go.root_transform_index = xform;
+    go.root_transform_index = root_transform_index;
     go.first_render_mesh = ~0u;
     go.render_mesh_count = 0;
     go.gltf_node_index = gltf_node_index;
@@ -78,6 +79,7 @@ uint32_t scene::SceneManager::add_render_mesh(uint32_t game_object_index,
     render_meshes_.push_back(rm);
 
     // Dual-write legacy SceneInstance (world AABB) so older helpers still work.
+    // World may be stale until propagate() + refresh_instance_worlds().
     SceneInstance inst{};
     inst.material_index = material_index;
     inst.mesh_index = mesh_index;
@@ -88,6 +90,21 @@ uint32_t scene::SceneManager::add_render_mesh(uint32_t game_object_index,
     instance_count = static_cast<uint32_t>(cpu_instances.size());
 
     return rm_id;
+}
+
+void scene::SceneManager::refresh_instance_worlds() {
+    std::scoped_lock lock(instance_mutex);
+    const size_t n = render_meshes_.size() < cpu_instances.size()
+                         ? render_meshes_.size()
+                         : cpu_instances.size();
+    for (size_t i = 0; i < n; ++i) {
+        const RenderMesh& rm = render_meshes_[i];
+        SceneInstance& inst = cpu_instances[i];
+        const glm::mat4& world = transforms_.get_world_matrix(rm.transform_index);
+        inst.transform = world;
+        if (rm.local_aabb.is_valid())
+            inst.local_aabb = rm.local_aabb.transformed(world);
+    }
 }
 
 bool scene::SceneManager::add_instance(const SceneInstance& instance) {

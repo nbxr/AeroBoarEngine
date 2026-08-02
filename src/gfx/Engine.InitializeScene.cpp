@@ -181,27 +181,37 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
         light_world_transforms.assign(renderer.lights.size(), glm::mat4(1.0f));
     }
 
-    std::function<void(int, const glm::mat4 &, int)> add_mesh_node =
-        [&](int node_idx, const glm::mat4 &parent_xform, int depth) {
+    // Build TransformManager hierarchy (local + parent), then propagate() once.
+    // node_to_xform[gltf_node] → TransformManager index.
+    auto& xforms = renderer.scene_manager.transforms();
+    std::vector<uint32_t> node_to_xform(model.nodes.size(),
+                                        scene::TransformManager::kInvalid);
+
+    // Light/camera nodes capture transform indices; world applied after propagate.
+    std::vector<int> light_node_for_light(renderer.lights.size(), -1);
+    int camera_node_index = -1;
+
+    std::function<void(int, uint32_t)> add_mesh_node =
+        [&](int node_idx, uint32_t parent_xform) {
             if (node_idx < 0 || node_idx >= (int)model.nodes.size())
                 return;
             const auto &node = model.nodes[node_idx];
-            glm::mat4 local = scene::GltfLoader::extract_node_transform(node);
-            glm::mat4 world_xform = parent_xform * local;
+            const glm::mat4 local = scene::GltfLoader::extract_node_transform(node);
 
-            // Capture world transform for any light nodes so we can apply
-            // position / direction from the authored node hierarchy (KHR_lights_punctual).
-            if (node.light >= 0 && node.light < (int)light_world_transforms.size()) {
-                light_world_transforms[node.light] = world_xform;
+            const uint32_t xform = xforms.allocate();
+            xforms.set_local_matrix(xform, local);
+            xforms.set_parent(xform, parent_xform);
+            node_to_xform[static_cast<size_t>(node_idx)] = xform;
+
+            if (node.light >= 0 && node.light < (int)light_node_for_light.size()) {
+                light_node_for_light[static_cast<size_t>(node.light)] = node_idx;
             }
 
-            // Capture the first camera we encounter (minimal implementation)
             if (!loaded_camera.valid && node.camera >= 0 &&
                 node.camera < (int)model.cameras.size()) {
                 const auto &cam = model.cameras[node.camera];
                 if (cam.type == "perspective") {
                     const auto &p = cam.perspective;
-                    loaded_camera.world_transform = world_xform;
                     loaded_camera.yfov = (p.yfov > 0.0)
                                              ? static_cast<float>(p.yfov)
                                              : glm::radians(60.0f);
@@ -214,8 +224,8 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
                         (p.zfar > 0.0) ? static_cast<float>(p.zfar) : 100.0f;
                     loaded_camera.gltf_camera_index = node.camera;
                     loaded_camera.valid = true;
+                    camera_node_index = node_idx;
                 }
-                // Orthographic cameras are ignored in this minimal version
             }
 
             if (node.mesh >= 0 && node.mesh < (int)model.meshes.size()) {
@@ -223,9 +233,9 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
                 size_t prim_i = 0;
                 size_t mat_offset = prim_material_offsets[mesh_idx];
 
-                // One GameObject per mesh node; all primitives share its root transform.
+                // One GameObject per mesh node; share the node's transform.
                 const uint32_t go_id = renderer.scene_manager.create_game_object(
-                    world_xform, static_cast<uint32_t>(node_idx));
+                    xform, static_cast<uint32_t>(node_idx));
 
                 for (const auto &prim : model.meshes[mesh_idx].primitives) {
                     if (prim_i + mat_offset >= mesh_lookup.size())
@@ -243,42 +253,55 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
                             mesh_prim_id);
 
                     renderer.scene_manager.add_render_mesh(
-                        go_id, mesh_prim_id, material_id, local_aabb);
+                        go_id, mesh_prim_id, material_id, local_aabb, xform);
                     prim_i++;
                 }
             }
 
-            // Recurse into children with accumulated transform
             for (int child : node.children) {
-                add_mesh_node(child, world_xform, depth + 1);
+                add_mesh_node(child, xform);
             }
         };
 
-    // Choose the active scene and walk from its root nodes
     int active_scene = (model.defaultScene >= 0) ? model.defaultScene : 0;
     if (!model.scenes.empty() && active_scene < (int)model.scenes.size()) {
         for (int root_node : model.scenes[active_scene].nodes) {
-            add_mesh_node(root_node, glm::mat4(1.0f), 0);
+            add_mesh_node(root_node, scene::TransformManager::kInvalid);
         }
     } else {
-        // Fallback for malformed files: walk any node that has a mesh (still
-        // safe)
         for (size_t i = 0; i < model.nodes.size(); ++i) {
             if (model.nodes[i].mesh >= 0) {
-                add_mesh_node(static_cast<int>(i), glm::mat4(1.0f), 0);
+                add_mesh_node(static_cast<int>(i), scene::TransformManager::kInvalid);
             }
         }
     }
 
-    // Phase 2 lighting: apply collected world transforms to the extracted lights.
-    // This makes KHR_lights_punctual lights appear in the correct world-space
-    // locations/orientations authored in the DCC tool. Directional lights store
-    // the engine's L vector (to-light) = node's local +Z in world (opposite the
-    // emission direction per KHR spec: "emit light in the direction of the local -z axis").
-    for (size_t i = 0; i < renderer.lights.size() && i < light_world_transforms.size(); ++i) {
-        const glm::mat4& w = light_world_transforms[i];
-        scene::GltfLoader::apply_world_transform_to_light(renderer.lights[i], w);
+    // Compose world = parent_world * local for every node.
+    xforms.propagate();
+    LOG_INFO("[Transform] Propagated hierarchy (" << xforms.count()
+             << " transform slots)");
+
+    // Apply world transforms to lights / camera from the hierarchy.
+    for (size_t i = 0; i < renderer.lights.size(); ++i) {
+        const int nidx = light_node_for_light[i];
+        if (nidx < 0 || static_cast<size_t>(nidx) >= node_to_xform.size())
+            continue;
+        const uint32_t xi = node_to_xform[static_cast<size_t>(nidx)];
+        if (xi == scene::TransformManager::kInvalid)
+            continue;
+        scene::GltfLoader::apply_world_transform_to_light(
+            renderer.lights[i], xforms.get_world_matrix(xi));
     }
+    if (loaded_camera.valid && camera_node_index >= 0 &&
+        static_cast<size_t>(camera_node_index) < node_to_xform.size()) {
+        const uint32_t xi =
+            node_to_xform[static_cast<size_t>(camera_node_index)];
+        if (xi != scene::TransformManager::kInvalid)
+            loaded_camera.world_transform = xforms.get_world_matrix(xi);
+    }
+
+    // Refresh dual-written SceneInstance worlds (were written before propagate).
+    renderer.scene_manager.refresh_instance_worlds();
 
     // Upload CPU data (populated by GltfLoader) into the persistently-mapped
     // GPU buffers on the "upload" side of each double-buffered manager.

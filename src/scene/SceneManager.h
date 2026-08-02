@@ -55,13 +55,20 @@ class SceneManager {
     TransformManager& transforms() { return transforms_; }
     const TransformManager& transforms() const { return transforms_; }
 
-    // Create a GameObject with a root transform set to `world`. Returns index.
-    uint32_t create_game_object(const glm::mat4& world, uint32_t gltf_node_index = ~0u);
+    // Create a GameObject that owns `root_transform_index` (already allocated in
+    // TransformManager with local + parent). Call transforms().propagate() after
+    // the full hierarchy is built.
+    uint32_t create_game_object(uint32_t root_transform_index,
+                                uint32_t gltf_node_index = ~0u);
 
     // Append a RenderMesh owned by game_object_index (shares GO root transform by default).
     uint32_t add_render_mesh(uint32_t game_object_index, uint32_t mesh_index,
                              uint32_t material_index, const core::AABB& local_aabb,
                              uint32_t transform_index = ~0u);
+
+    // Re-sync dual-written SceneInstance worlds from TransformManager after
+    // propagate(). Call before update_buffers() / GpuCulling::build_scene.
+    void refresh_instance_worlds();
 
     [[nodiscard]] uint32_t game_object_count() const {
         return static_cast<uint32_t>(game_objects_.size());

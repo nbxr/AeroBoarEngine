@@ -51,7 +51,7 @@ int AeroBoar::fly() {
     engine.camera = scene::Camera(engine.renderer.window.glfw_handle);
     engine.camera.set_mode(scene::CameraMode::Desktop);
     engine.camera.mouse_sensitivity = 0.05f;
-    engine.camera.movement_speed = 3.0f;
+    engine.camera.movement_speed = 0.30f;
     engine.camera.roll_speed = 15.0f;
     core::InputManager::get_instance().initialize(engine.renderer.window.glfw_handle);
     // NOTE: We start with capture off (see post-load code). The mouse can be

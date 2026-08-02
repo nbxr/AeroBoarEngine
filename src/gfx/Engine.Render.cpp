@@ -31,22 +31,31 @@ void gfx::Engine::render() {
 
     // Previous GPU cull results for this frame slot are still in counts[] until
     // the next record() zeros them — log cull stats on change.
+    // Skip the first read after load (fence starts signaled → counts still zero).
     if (renderer.gpu_culling.is_ready()) {
         const uint32_t visible =
             renderer.gpu_culling.read_visible_count(renderer.current_frame);
         const uint32_t total = renderer.last_total_render_meshes;
-        // First frames after load may read zeros before any dispatch completed.
+        static uint32_t frames_with_cull = 0;
         if (total > 0) {
-            const uint32_t culled = (total > visible) ? (total - visible) : 0u;
-            static uint32_t prev_culled = ~0u;
-            static uint32_t prev_total = ~0u;
-            if (culled != prev_culled || total != prev_total) {
-                prev_culled = culled;
-                prev_total = total;
-                LOG_INFO("[Cull] " << culled << " of " << total
-                         << " objects culled (" << visible << " drawn)");
+            ++frames_with_cull;
+            if (frames_with_cull > Renderer::MAX_FRAMES_IN_FLIGHT) {
+                const uint32_t culled = (total > visible) ? (total - visible) : 0u;
+                static uint32_t prev_culled = ~0u;
+                static uint32_t prev_total = ~0u;
+                const bool hzb =
+                    renderer.last_cull_used_hzb[renderer.current_frame];
+                static bool prev_hzb = false;
+                if (culled != prev_culled || total != prev_total || hzb != prev_hzb) {
+                    prev_culled = culled;
+                    prev_total = total;
+                    prev_hzb = hzb;
+                    LOG_INFO("[Cull] " << culled << " of " << total
+                             << " objects culled (" << visible << " drawn)"
+                             << (hzb ? " [hzb=on]" : " [hzb=off]"));
+                }
+                renderer.last_visible_instances = visible;
             }
-            renderer.last_visible_instances = visible;
         }
     }
 
@@ -91,10 +100,25 @@ void gfx::Engine::render() {
     proj[1][1] *= -1.0f;
     glm::mat4 viewProj = proj * view;
 
-    // GPU frustum cull + build indirect (before the graphics render pass).
+    // GPU frustum + previous-frame Hi-Z cull, then build indirect (before graphics).
+    // HZB is gated with hysteresis: off on any camera motion, back on only after
+    // the view has been still long enough (avoids mid-look occlusion flicker/pop).
     if (renderer.gpu_culling.is_ready()) {
-        renderer.gpu_culling.record(frame.command_buffer, renderer.current_frame,
-                                    viewProj);
+        const uint32_t fi = renderer.current_frame;
+        const glm::vec3 cam_pos = camera.get_position();
+        const glm::vec3 cam_fwd = camera.get_forward();
+        float hzb_bias_scale = 1.0f;
+        if (renderer.hzb.should_use_occlusion(fi, cam_pos, cam_fwd, &hzb_bias_scale)) {
+            const glm::mat4& hzb_vp = renderer.hzb.view_proj_for(fi);
+            renderer.gpu_culling.record(
+                frame.command_buffer, fi, viewProj, renderer.hzb.full_view(fi),
+                renderer.hzb.sampler(), renderer.hzb.width(), renderer.hzb.height(),
+                renderer.hzb.mip_count(), &hzb_vp, hzb_bias_scale);
+            renderer.last_cull_used_hzb[fi] = true;
+        } else {
+            renderer.gpu_culling.record(frame.command_buffer, fi, viewProj);
+            renderer.last_cull_used_hzb[fi] = false;
+        }
     }
 
     write_frame_lighting(renderer.current_frame);
@@ -115,11 +139,18 @@ void gfx::Engine::render() {
     render_pass_info.renderArea.offset = {0, 0};
     render_pass_info.renderArea.extent = vk.swap_chain_extent;
 
-    std::array<VkClearValue, 3> clear_values{};
-    clear_values[0].color = {{0.02f, 0.02f, 0.03f, 1.0f}};
-    clear_values[1].color = {{0.02f, 0.02f, 0.03f, 1.0f}};
-    clear_values[2].depthStencil = {1.0f, 0};
-    render_pass_info.clearValueCount = static_cast<uint32_t>(clear_values.size());
+    std::array<VkClearValue, 4> clear_values{};
+    if (renderer.main_pass.uses_depth_resolve) {
+        clear_values[0].color = {{0.02f, 0.02f, 0.03f, 1.0f}}; // MSAA color
+        clear_values[1].color = {{0.02f, 0.02f, 0.03f, 1.0f}}; // swapchain (unused)
+        clear_values[2].depthStencil = {1.0f, 0};              // MSAA depth
+        clear_values[3].depthStencil = {1.0f, 0};              // resolve depth (unused)
+        render_pass_info.clearValueCount = 4;
+    } else {
+        clear_values[0].color = {{0.02f, 0.02f, 0.03f, 1.0f}};
+        clear_values[1].depthStencil = {1.0f, 0};
+        render_pass_info.clearValueCount = 2;
+    }
     render_pass_info.pClearValues = clear_values.data();
 
     vkCmdBeginRenderPass(frame.command_buffer, &render_pass_info, VK_SUBPASS_CONTENTS_INLINE);
@@ -158,34 +189,55 @@ void gfx::Engine::render() {
 
     gfx::PbrPush pushData{};
     pushData.viewProj = viewProj;
+    pushData.extra = glm::uvec4{0u, 0u, 0u, 0u};
 
     if (renderer.gpu_culling.is_ready()) {
         const uint32_t batches = renderer.gpu_culling.batch_count();
-        const auto& bases = renderer.gpu_culling.batch_bases();
         auto& indirect = renderer.gpu_culling.indirect_cmds(renderer.current_frame);
 
-        for (uint32_t i = 0; i < batches; ++i) {
-            const uint32_t base = (i < bases.size()) ? bases[i] : 0u;
-            pushData.extra = glm::uvec4{base, 0u, 0u, 0u};
-            vkCmdPushConstants(
-                frame.command_buffer,
-                vk.pipeline_layout,
-                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                0,
-                sizeof(PbrPush),
-                &pushData);
+        // One push for the whole multi-draw; per-batch base is firstInstance
+        // (folded into gl_InstanceIndex on Vulkan — see pbr.vert).
+        vkCmdPushConstants(
+            frame.command_buffer,
+            vk.pipeline_layout,
+            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+            0,
+            sizeof(PbrPush),
+            &pushData);
 
-            // 5 uints = 20 bytes per VkDrawIndexedIndirectCommand
+        // multiDrawIndirect + drawIndirectFirstInstance (required at device select).
+        // Stride 20 = sizeof(VkDrawIndexedIndirectCommand); empty batches have instanceCount=0.
+        if (batches > 0) {
             vkCmdDrawIndexedIndirect(
                 frame.command_buffer,
                 indirect.buffer,
-                VkDeviceSize(i) * 20ull,
-                1,
+                0,
+                batches,
                 20);
         }
     }
 
     vkCmdEndRenderPass(frame.command_buffer);
+
+    // Build previous-frame Hi-Z from resolved (or single-sample) depth.
+    {
+        VkImageView depth_view = VK_NULL_HANDLE;
+        VkImage depth_image = VK_NULL_HANDLE;
+        if (renderer.main_pass.uses_depth_resolve &&
+            image_index < renderer.main_pass.resolved_depth_images.size()) {
+            depth_view = renderer.main_pass.resolved_depth_images[image_index].view;
+            depth_image = renderer.main_pass.resolved_depth_images[image_index].handle;
+        } else if (image_index < renderer.main_pass.depth_images.size()) {
+            depth_view = renderer.main_pass.depth_images[image_index].view;
+            depth_image = renderer.main_pass.depth_images[image_index].handle;
+        }
+        if (depth_view != VK_NULL_HANDLE) {
+            renderer.hzb.record_build(frame.command_buffer, renderer.current_frame,
+                                      depth_view, depth_image,
+                                      renderer.vk.swap_chain_extent, viewProj,
+                                      camera.get_position(), camera.get_forward());
+        }
+    }
 
     if (vkEndCommandBuffer(frame.command_buffer) != VK_SUCCESS) {
         LOG_ERROR("Failed to end command buffer");

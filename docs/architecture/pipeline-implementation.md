@@ -32,6 +32,8 @@ GPU-driven everywhere. Perform compute culling and occlusion, write indirect dra
 
 Compute-based culling: Before the rasterization pass, GPU compute shaders perform culling to reduce geometry throughput. This includes both view frustum culling and HZB (Hierarchical Z-Buffer) occlusion culling based on the previous frame depth buffer.
 
+**Depth (roadmap):** desktop currently uses standard Z (0=near, 1=far, `LESS`). The Quest/VR target path should use **reverse-Z** for better far-field precision under large far/near ratios, with Hi-Z and occlusion compares updated accordingly. See `docs/agents/tech_context.md` § Depth buffer model (current vs planned reverse-Z).
+
 Bindless heap approach. Use one giant descriptor set bound once per frame today, or a true descriptor heap when the extension becomes available.
 
 Transient attachments. MSAA color and depth should almost never leave on-chip memory.

@@ -42,6 +42,7 @@ cmake --build build -j$(nproc)
 - Requires Vulkan SDK (headers + `glslc`).
 - Dependencies are fetched automatically via `FetchContent` on first configure.
 - Shaders in `shaders/` are compiled via custom CMake target when `glslc` is found.
+- **Future:** switch shader compilation to **glslang** when cross-platform (Quest/Android) development starts; see `docs/agents/tech_context.md`.
 - The binary is `Aero_Boar_Engine`.
 
 ### Running

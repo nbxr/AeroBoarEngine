@@ -1,12 +1,16 @@
-#version 450
+#version 460
 
-// Instanced PBR: viewProj + base instance index in push constants.
+// Instanced PBR: viewProj in push constants.
 // Per-instance model + material from DrawInstanceGPU SSBO (binding 1).
-// (gl_BaseInstance requires draw-parameter extensions not available with our
-// glslc path; first_instance is supplied via push.extra.x per indirect draw.)
+//
+// Multi-draw: each indirect command sets firstInstance = batch region base.
+// On Vulkan, gl_InstanceIndex ALREADY includes firstInstance
+// (SPIR-V InstanceIndex = BaseInstance + InstanceId). Do NOT also add
+// gl_BaseInstance or push.extra.x — that double-counts and pulls wrong
+// instances/materials (and can index past packed regions → missing meshes).
 layout(push_constant) uniform PushConstants {
     mat4   viewProj;
-    uvec4  extra; // x = first_instance into draw_instances[]
+    uvec4  extra; // reserved
 } pc;
 
 struct DrawInstance {
@@ -35,7 +39,7 @@ void main() {
     uv.x = float((uvPacked >> 0) & 0xFFFFu) / 65535.0;
     uv.y = float((uvPacked >> 16) & 0xFFFFu) / 65535.0;
 
-    uint inst_id = pc.extra.x + uint(gl_InstanceIndex);
+    uint inst_id = uint(gl_InstanceIndex);
     DrawInstance inst = draw_instances[inst_id];
     mat4 modelMat = inst.model;
     outMaterialIndex = inst.meta.x;

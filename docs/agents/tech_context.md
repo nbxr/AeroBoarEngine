@@ -12,8 +12,46 @@
   - `VK_EXT_descriptor_indexing` (for bindless rendering)
 - **Math**: GLM
 - **Build System**: CMake
-- **Shader Compilation**: `glslc` → SPIR-V
+- **Shader Compilation**: `glslc` → SPIR-V (current desktop path)
 - **GLTF**: tinygltf
+
+### Shader tooling (future)
+Today shaders are compiled with **`glslc`** via the CMake `compile_shaders` target. That is intentional while development is desktop-first.
+
+**Planned change:** migrate to **`glslangValidator` / glslang** when cross-platform work begins in earnest (especially Meta Quest / Android and multi-target SPIR-V variants). Reasons to switch at that point:
+- Stronger control over `--target-env` / SPIR-V version per platform
+- Shared GLSL includes across many shaders
+- Cleaner path for features like `gl_BaseInstance` and newer LocalSize modes
+- One recipe for desktop vs mobile builds
+
+Until then, prefer keeping `glslc` and avoiding a mid-feature toolchain swap.
+
+### Depth buffer model (current vs planned reverse-Z)
+
+**Today (desktop):** standard Vulkan Z.
+
+- Clip depth **0 = near, 1 = far** (`GLM_FORCE_DEPTH_ZERO_TO_ONE` + normal `glm::perspective(near, far)`)
+- Depth clear **1.0**, compare **`VK_COMPARE_OP_LESS`**
+- Hi-Z is a **min-depth** pyramid; occlusion uses `z_near > hzb_sample + bias`
+
+**Planned (official roadmap):** adopt **reverse-Z** when VR / multiview / Quest depth work begins (same window as HZB quality upgrades and stereo).
+
+| Change | Reverse-Z target |
+|--------|------------------|
+| Projection | Infinite or large far plane; depth mapping so **near → 1, far → 0** (or equivalent swap of near/far in the Z row) |
+| Clear | **0.0** |
+| Compare | **`VK_COMPARE_OP_GREATER`** (or `GREATER_OR_EQUAL`) |
+| Hi-Z | **Max-depth** pyramid (farthest occluder in the min-Z sense of reverse range); invert occlusion compare |
+| Frustum / cull | Re-validate plane extraction and any NDC z assumptions in `core::Frustum` + compute cull |
+| Resolve / MSAA depth | Keep working with the new clear/compare; re-check depth stencil resolve |
+
+**Why schedule it with VR, not mid-desktop feature churn**
+
+- Largest win is **depth precision at large far/near ratios** (world scale, HMD, outdoor scenes).
+- Touches camera, pipeline, clear values, Hi-Z, and cull shaders in one coherent change.
+- Stereo multiview benefits from one consistent depth convention from day one of OpenXR integration.
+
+**Not planned as a drive-by desktop change** while the current standard-Z path is stable for inspection scenes. Desktop can migrate first as a prep PR for Quest if desired, but the **committed slot on the roadmap is Phase 3 VR / depth depth** (see `project-plan.md` and `current_state.md`).
 
 ## Coding Conventions
 - Prefer **C-style structs** and static functions over class hierarchies (data-oriented design).
@@ -23,6 +61,26 @@
 - Keep CPU-side data (transforms, instances, etc.) lightweight and cache-friendly.
 - Namespaces: `core` (tiny universal utilities), `gfx` (all rendering/RHI/resources), `scene` (game object model + loading). See AGENTS.md for the current mapping.
 - **Include Guards:** always use `#pragma once` instead of `#ifndef` and `#define`
+
+### Hi-Z occlusion hysteresis (desktop interim)
+
+Previous-frame Hi-Z (`gfx::HzbPyramid` + `cull_frustum.comp`) is gated by **camera motion hysteresis** in `HzbPyramid::should_use_occlusion()`:
+
+- **Any** inter-frame camera move/rotate (above small noise thresholds) → hard occlusion **off** immediately (frustum-only). This is what prevents mouse-look pop from stale depth.
+- Occlusion turns **back on** only after ~24 still frames **and** capture-camera match (~0.75° / 5 mm). After re-enable, depth bias is inflated for ~30 frames (warmup) so borderline culls do not flash.
+- Prefer false-negatives (draw extra) over false-positives (pop). Cull log: `[hzb=on]` / `[hzb=off]`.
+- Rationale: comparing current visibility to a 1–2 frame-old depth buffer false-culls under mouse-look; toggling HZB every frame without hysteresis caused visible pop-in/out.
+
+**This is an intentional desktop compromise**, not the long-term Quest/VR design.
+
+**When VR / multiview work starts**, revisit and improve (do not ship hysteresis as the VR solution):
+
+- Same-frame depth prepass → HZB → occlude → color (no temporal lag; preferred on TBDR if it stays on-tile).
+- Or reproject previous-eye / previous-frame HZB into the current view (and per-eye for stereo).
+- Multiview: one HZB strategy per eye or a shared conservative proxy; hysteresis is a poor fit for continuous head tracking.
+- **Migrate to reverse-Z** in the same depth/HZB redesign (see § Depth buffer model above).
+
+Code anchors: `src/gfx/HzbPyramid.h` (`kMinStableFrames`, `should_use_occlusion`), `Engine.Render.cpp` (gate before `GpuCulling::record`), `docs/agents/current_state.md`.
 
 ### Input & Camera
 The desktop `scene::Camera` is a quaternion-driven 6DOF camera intended for model/scene inspection during development.  

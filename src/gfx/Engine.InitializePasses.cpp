@@ -4,44 +4,25 @@
 #include "gfx/Renderer.h"
 
 bool gfx::Engine::init_render_pass() {
-    // Multiview render pass for Quest 3
-    VkAttachmentDescription color_attachment = {};
+    // Attachments (MSAA path — default on desktop):
+    // 0 MSAA color (transient) | 1 swapchain resolve | 2 MSAA depth (transient)
+    // 3 resolved single-sample depth (STORE → Hi-Z source)
+    const bool msaa = renderer.vk.msaa_color != VK_SAMPLE_COUNT_1_BIT;
+    renderer.main_pass.uses_depth_resolve = msaa;
+
+    VkAttachmentDescription2 color_attachment{};
+    color_attachment.sType = VK_STRUCTURE_TYPE_ATTACHMENT_DESCRIPTION_2;
     color_attachment.format = renderer.vk.swap_chain_image_format;
     color_attachment.samples = renderer.vk.msaa_color;
     color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE; // Transient MSAA
+    color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     color_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     color_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     color_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     color_attachment.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
-    VkAttachmentDescription depth_attachment = {};
-    depth_attachment.format = renderer.vk.depth_format;
-    depth_attachment.samples = renderer.vk.msaa_depth;
-    depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    depth_attachment.storeOp =
-        VK_ATTACHMENT_STORE_OP_DONT_CARE; // Optimization: Don't write back to
-                                          // DRAM
-    depth_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    depth_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    depth_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    depth_attachment.finalLayout =
-        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
-    VkAttachmentReference color_attachment_ref = {};
-    color_attachment_ref.attachment = 0;
-    color_attachment_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
-    // Resolve target (swapchain)
-    VkAttachmentReference resolve_attachment_ref = {};
-    resolve_attachment_ref.attachment = 1;
-    resolve_attachment_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
-    VkAttachmentReference depth_attachment_ref = {};
-    depth_attachment_ref.attachment = 2;
-    depth_attachment_ref.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
-    VkAttachmentDescription swapchain_attachment = {};
+    VkAttachmentDescription2 swapchain_attachment{};
+    swapchain_attachment.sType = VK_STRUCTURE_TYPE_ATTACHMENT_DESCRIPTION_2;
     swapchain_attachment.format = renderer.vk.swap_chain_image_format;
     swapchain_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
     swapchain_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
@@ -51,54 +32,141 @@ bool gfx::Engine::init_render_pass() {
     swapchain_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     swapchain_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
-    VkSubpassDescription subpass = {};
+    VkAttachmentDescription2 depth_attachment{};
+    depth_attachment.sType = VK_STRUCTURE_TYPE_ATTACHMENT_DESCRIPTION_2;
+    depth_attachment.format = renderer.vk.depth_format;
+    depth_attachment.samples = renderer.vk.msaa_depth;
+    depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depth_attachment.storeOp =
+        msaa ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_STORE;
+    depth_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    depth_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depth_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    depth_attachment.finalLayout =
+        msaa ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+             : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    VkAttachmentDescription2 depth_resolve_attachment{};
+    depth_resolve_attachment.sType = VK_STRUCTURE_TYPE_ATTACHMENT_DESCRIPTION_2;
+    depth_resolve_attachment.format = renderer.vk.depth_format;
+    depth_resolve_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    depth_resolve_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    depth_resolve_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    depth_resolve_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    depth_resolve_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depth_resolve_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    depth_resolve_attachment.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    VkAttachmentReference2 color_ref{};
+    color_ref.sType = VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2;
+    color_ref.attachment = 0;
+    color_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    color_ref.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+
+    VkAttachmentReference2 resolve_ref{};
+    resolve_ref.sType = VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2;
+    resolve_ref.attachment = 1;
+    resolve_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    resolve_ref.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+
+    VkAttachmentReference2 depth_ref{};
+    depth_ref.sType = VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2;
+    depth_ref.attachment = 2;
+    depth_ref.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    depth_ref.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+
+    VkAttachmentReference2 depth_resolve_ref{};
+    depth_resolve_ref.sType = VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2;
+    depth_resolve_ref.attachment = 3;
+    depth_resolve_ref.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    depth_resolve_ref.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+
+    VkSubpassDescriptionDepthStencilResolve depth_resolve{};
+    depth_resolve.sType = VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_DEPTH_STENCIL_RESOLVE;
+    depth_resolve.depthResolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;
+    depth_resolve.stencilResolveMode = VK_RESOLVE_MODE_NONE;
+    depth_resolve.pDepthStencilResolveAttachment = &depth_resolve_ref;
+
+    VkSubpassDescription2 subpass{};
+    subpass.sType = VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_2;
     subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
     subpass.colorAttachmentCount = 1;
-    subpass.pColorAttachments = &color_attachment_ref;
-    subpass.pResolveAttachments = &resolve_attachment_ref;  // MSAA resolve to swapchain
-    subpass.pDepthStencilAttachment = &depth_attachment_ref;
+    subpass.pColorAttachments = &color_ref;
+    subpass.pDepthStencilAttachment = &depth_ref;
+    if (msaa) {
+        subpass.pResolveAttachments = &resolve_ref;
+        subpass.pNext = &depth_resolve;
+    }
 
-    // External subpass dependency.
-    // This tells Vulkan (and sync validation) what previous work must complete
-    // before this render pass can begin its implicit layout transitions and
-    // loadOp clears (including the depth clear on attachment 2).
-    //
-    // The previous version only covered color. That was the source of the
-    // SYNC-HAZARD-WRITE-AFTER-WRITE errors on the depth attachment and the
-    // cross-frame hazard between EndRenderPass and the next BeginRenderPass.
-    VkSubpassDependency dependency = {};
-    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
-    dependency.dstSubpass = 0;
-    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
-                              VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
-                              VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-    dependency.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
-                               VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
-                              VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
-                               VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    // Non-MSAA: swapchain color + depth only (depth is HZB source).
+    VkAttachmentDescription2 color_1x = swapchain_attachment;
+    color_1x.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    color_1x.samples = VK_SAMPLE_COUNT_1_BIT;
+    VkAttachmentReference2 color_1x_ref = color_ref;
+    color_1x_ref.attachment = 0;
+    VkAttachmentReference2 depth_1x_ref = depth_ref;
+    depth_1x_ref.attachment = 1;
+    depth_attachment.samples = renderer.vk.msaa_depth; // 1 when !msaa
+    VkAttachmentDescription2 attachments_ss[2] = {color_1x, depth_attachment};
+    VkSubpassDescription2 subpass_ss{};
+    subpass_ss.sType = VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_2;
+    subpass_ss.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass_ss.colorAttachmentCount = 1;
+    subpass_ss.pColorAttachments = &color_1x_ref;
+    subpass_ss.pDepthStencilAttachment = &depth_1x_ref;
 
-    // The three attachments must match the order used in
-    // VkFramebuffers
-    VkAttachmentDescription attachments[3] = {
-        color_attachment,     // 0: Transient MSAA Color
-        swapchain_attachment, // 1: Resolved Color (swapchain image)
-        depth_attachment      // 2: Transient Depth
-    };
+    VkSubpassDependency2 dep_in{};
+    dep_in.sType = VK_STRUCTURE_TYPE_SUBPASS_DEPENDENCY_2;
+    dep_in.srcSubpass = VK_SUBPASS_EXTERNAL;
+    dep_in.dstSubpass = 0;
+    dep_in.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                          VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                          VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
+                          VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+    dep_in.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                           VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+                           VK_ACCESS_SHADER_READ_BIT;
+    dep_in.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                          VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    dep_in.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                           VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
-    VkRenderPassCreateInfo render_pass_info = {};
-    render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    render_pass_info.attachmentCount = 3;
-    render_pass_info.pAttachments = attachments;
-    render_pass_info.subpassCount = 1;
-    render_pass_info.pSubpasses = &subpass;
-    render_pass_info.dependencyCount = 1;
-    render_pass_info.pDependencies = &dependency;
+    VkSubpassDependency2 dep_out{};
+    dep_out.sType = VK_STRUCTURE_TYPE_SUBPASS_DEPENDENCY_2;
+    dep_out.srcSubpass = 0;
+    dep_out.dstSubpass = VK_SUBPASS_EXTERNAL;
+    dep_out.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                           VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    dep_out.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    dep_out.dstStageMask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+    dep_out.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 
-    if (vkCreateRenderPass(renderer.vk.device, &render_pass_info, nullptr,
-                           &renderer.main_pass.render_pass) != VK_SUCCESS) {
-        LOG_ERROR("Failed to create render pass");
+    VkSubpassDependency2 deps[] = {dep_in, dep_out};
+
+    VkAttachmentDescription2 attachments_msaa[4] = {
+        color_attachment, swapchain_attachment, depth_attachment,
+        depth_resolve_attachment};
+
+    VkRenderPassCreateInfo2 rpci{};
+    rpci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO_2;
+    rpci.dependencyCount = 2;
+    rpci.pDependencies = deps;
+    if (msaa) {
+        rpci.attachmentCount = 4;
+        rpci.pAttachments = attachments_msaa;
+        rpci.subpassCount = 1;
+        rpci.pSubpasses = &subpass;
+    } else {
+        rpci.attachmentCount = 2;
+        rpci.pAttachments = attachments_ss;
+        rpci.subpassCount = 1;
+        rpci.pSubpasses = &subpass_ss;
+    }
+
+    if (vkCreateRenderPass2(renderer.vk.device, &rpci, nullptr,
+                            &renderer.main_pass.render_pass) != VK_SUCCESS) {
+        LOG_ERROR("Failed to create render pass (vkCreateRenderPass2)");
         return false;
     }
     return true;
@@ -166,7 +234,8 @@ bool gfx::Engine::init_msaa_color_image() {
 }
 
 bool gfx::Engine::create_depth_image(VkExtent2D extent, AllocatedImage& out_image) {
-    // Create transient depth image (no DRAM writes, DONT_CARE store)
+    // MSAA: transient. Single-sample: storeable + sampled (Hi-Z source).
+    const bool msaa = renderer.vk.msaa_depth != VK_SAMPLE_COUNT_1_BIT;
     VkImageCreateInfo depth_image_info = {};
     depth_image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     depth_image_info.imageType = VK_IMAGE_TYPE_2D;
@@ -176,8 +245,11 @@ bool gfx::Engine::create_depth_image(VkExtent2D extent, AllocatedImage& out_imag
     depth_image_info.arrayLayers = 1;
     depth_image_info.samples = renderer.vk.msaa_depth;
     depth_image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
-    depth_image_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
-                             VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
+    depth_image_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    if (msaa)
+        depth_image_info.usage |= VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
+    else
+        depth_image_info.usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
     depth_image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     depth_image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
@@ -214,6 +286,53 @@ bool gfx::Engine::create_depth_image(VkExtent2D extent, AllocatedImage& out_imag
     return true;
 }
 
+bool gfx::Engine::create_resolved_depth_image(VkExtent2D extent,
+                                              AllocatedImage& out_image) {
+    VkImageCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    info.imageType = VK_IMAGE_TYPE_2D;
+    info.format = renderer.vk.depth_format;
+    info.extent = {extent.width, extent.height, 1};
+    info.mipLevels = 1;
+    info.arrayLayers = 1;
+    info.samples = VK_SAMPLE_COUNT_1_BIT;
+    info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    info.usage =
+        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    VmaAllocationCreateInfo alloc_info{};
+    alloc_info.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+    alloc_info.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+
+    if (vmaCreateImage(renderer.allocator, &info, &alloc_info, &out_image.handle,
+                       &out_image.allocation, &out_image.info) != VK_SUCCESS) {
+        LOG_ERROR("Failed to create resolved depth image");
+        return false;
+    }
+
+    VkImageViewCreateInfo view_info{};
+    view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    view_info.image = out_image.handle;
+    view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view_info.format = renderer.vk.depth_format;
+    view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    view_info.subresourceRange.baseMipLevel = 0;
+    view_info.subresourceRange.levelCount = 1;
+    view_info.subresourceRange.baseArrayLayer = 0;
+    view_info.subresourceRange.layerCount = 1;
+
+    if (vkCreateImageView(renderer.vk.device, &view_info, nullptr, &out_image.view) !=
+        VK_SUCCESS) {
+        LOG_ERROR("Failed to create resolved depth image view");
+        vmaDestroyImage(renderer.allocator, out_image.handle, out_image.allocation);
+        out_image = {};
+        return false;
+    }
+    return true;
+}
+
 bool gfx::Engine::init_depth_image() {
     const uint32_t n = static_cast<uint32_t>(renderer.vk.swap_chain_image_views.size());
     renderer.main_pass.depth_images.resize(n);
@@ -221,6 +340,19 @@ bool gfx::Engine::init_depth_image() {
         if (!create_depth_image(renderer.vk.swap_chain_extent, renderer.main_pass.depth_images[i])) {
             return false;
         }
+    }
+
+    if (renderer.main_pass.uses_depth_resolve) {
+        renderer.main_pass.resolved_depth_images.resize(n);
+        for (uint32_t i = 0; i < n; ++i) {
+            if (!create_resolved_depth_image(
+                    renderer.vk.swap_chain_extent,
+                    renderer.main_pass.resolved_depth_images[i])) {
+                return false;
+            }
+        }
+    } else {
+        renderer.main_pass.resolved_depth_images.clear();
     }
     return true;
 }
@@ -448,35 +580,35 @@ bool gfx::Engine::init_command_buffers() {
 }
 
 bool gfx::Engine::init_framebuffers() {
-    // We need one framebuffer per swapchain image
     renderer.main_pass.framebuffers.resize(renderer.vk.swap_chain_image_views.size());
 
-    // One set of transient MSAA + depth per swapchain image so concurrent
-    // in-flight frames (different acquired images) don't overlap on the same
-    // transient attachments.
     for (size_t i = 0; i < renderer.vk.swap_chain_image_views.size(); ++i) {
-        VkImageView swapchain_view =
-            renderer.vk.swap_chain_image_views[i];
+        VkImageView swapchain_view = renderer.vk.swap_chain_image_views[i];
+        VkImageView depth_view = renderer.main_pass.depth_images[i].view;
 
-        VkImageView msaa_color_view = renderer.main_pass.msaa_color_images[i].view;
-        VkImageView depth_view      = renderer.main_pass.depth_images[i].view;
+        VkImageView attachments[4]{};
+        uint32_t attachment_count = 0;
 
-        // The three attachments must match the order defined in your
-        // VkRenderPass
-        VkImageView attachments[3] = {
-            msaa_color_view, // 0: Transient MSAA Color
-            swapchain_view,  // 1: Resolved Color (swapchain image)
-            depth_view       // 2: Transient Depth
-        };
+        if (renderer.main_pass.uses_depth_resolve) {
+            attachments[0] = renderer.main_pass.msaa_color_images[i].view;
+            attachments[1] = swapchain_view;
+            attachments[2] = depth_view;
+            attachments[3] = renderer.main_pass.resolved_depth_images[i].view;
+            attachment_count = 4;
+        } else {
+            attachments[0] = swapchain_view;
+            attachments[1] = depth_view;
+            attachment_count = 2;
+        }
 
         VkFramebufferCreateInfo framebuffer_info = {};
         framebuffer_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
         framebuffer_info.renderPass = renderer.main_pass.render_pass;
-        framebuffer_info.attachmentCount = 3;
+        framebuffer_info.attachmentCount = attachment_count;
         framebuffer_info.pAttachments = attachments;
         framebuffer_info.width = renderer.vk.swap_chain_extent.width;
         framebuffer_info.height = renderer.vk.swap_chain_extent.height;
-        framebuffer_info.layers = 1; // Must be 1 with multiview
+        framebuffer_info.layers = 1;
 
         if (vkCreateFramebuffer(renderer.vk.device.device, &framebuffer_info,
                                 nullptr, &renderer.main_pass.framebuffers[i]) !=

@@ -63,6 +63,8 @@ set(SHADER_FILES
     pbr.frag
     cull_frustum.comp
     build_indirect.comp
+    hzb_copy.comp
+    hzb_reduce.comp
 )
 
 # Create shader compilation rules
@@ -74,10 +76,11 @@ if(GLSLC_AVAILABLE)
         set(SHADER_SOURCE ${SHADER_SOURCE_DIR}/${SHADER_FILE})
         # Compute shaders: target Vulkan 1.3 so LocalSize is valid under current
         # maintenance4 / SPIR-V expectations (reduces BestPractices WorkgroupSize noise).
+        # vulkan1.1+ for gl_BaseInstance (shaderDrawParameters); compute uses 1.3.
         if(SHADER_EXT STREQUAL ".comp")
             set(SHADER_GLSLC_FLAGS -g --target-env=vulkan1.3)
         else()
-            set(SHADER_GLSLC_FLAGS -g)
+            set(SHADER_GLSLC_FLAGS -g --target-env=vulkan1.1)
         endif()
         add_custom_command(
             OUTPUT ${SHADER_SPIRV_OUTPUT}
@@ -258,6 +261,7 @@ add_executable(Aero_Boar_Engine
     src/gfx/TextureManager.cpp
     src/gfx/IblEnvironment.cpp
     src/gfx/GpuCulling.cpp
+    src/gfx/HzbPyramid.cpp
 )
 
 # Make sure configuration + (optionally) shaders are available during build.

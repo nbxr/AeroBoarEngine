@@ -46,6 +46,7 @@ class Engine {
     // Reusable creation helpers (used by both initial init and resize recovery)
     bool create_msaa_color_image(VkExtent2D extent, AllocatedImage& out_image);
     bool create_depth_image(VkExtent2D extent, AllocatedImage& out_image);
+    bool create_resolved_depth_image(VkExtent2D extent, AllocatedImage& out_image);
     bool init_descriptor_pool();
     bool init_descriptor_set_layout();
     bool init_bindless_descriptor_set();

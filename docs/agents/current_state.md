@@ -47,10 +47,11 @@ Early foundation phase. A basic PBR forward renderer is implemented and active. 
 
 ## Current Focus Areas
 
-- Transform hierarchy propagate (local TRS SOA → world)
-- Occlusion culling / Hi-Z; `gl_BaseInstance` single multi-draw
+- Dirty-flag per-frame `propagate()` when animated transforms land
 - Spot light direction packing, dynamic lights, HDR env loading
 - Optional: remove or archive unused `debug_draw.*` path
+- **Future tooling:** migrate shader compile from `glslc` → **glslang** when cross-platform (Quest/Android) work starts — see `tech_context.md`
+- **VR depth / cull quality (roadmap):** reverse-Z + replace HZB hysteresis with same-frame / reprojected Hi-Z — see `tech_context.md`
 
 ## Known Gaps / Not Yet Implemented
 
@@ -69,14 +70,19 @@ Early foundation phase. A basic PBR forward renderer is implemented and active. 
   - BRDF integration LUT (128²) → binding 8 `sampler2D`
   - Split-sum specular in `pbr.frag` when IBL is ready
   Still deferred: load HDR equirect env assets, dynamic lights, clustered many-lights, complete spot packing.
-- **GPU frustum cull + instancing + indirect (landed)**:
-  - `gfx::GpuCulling`: `cull_frustum.comp` packs visible instances into fixed per-batch regions; `build_indirect.comp` writes draw commands
-  - Compute runs before the render pass; graphics uses binding 1 instance SSBO + `vkCmdDrawIndexedIndirect`
-  - Push `pc.extra.x` = batch base; `[Cull]` log from host-visible counts after frame fence
-  - Still TODO: occlusion/Hi-Z; single multi-draw with `gl_BaseInstance`
+- **GPU frustum + Hi-Z occlusion cull + instancing + indirect (landed)**:
+  - `gfx::GpuCulling`: `cull_frustum.comp` frustum + previous-frame Hi-Z test; packs visible instances into fixed per-batch regions; `build_indirect.comp` writes draw commands
+  - `gfx::HzbPyramid`: half-res min-Z pyramid (double-buffered); built after the main pass from resolved depth
+  - MSAA path uses **depth stencil resolve** (attachment 3) so single-sample depth is available for HZB; MSAA depth stays transient/`DONT_CARE`
+  - Compute runs before the render pass; graphics uses binding 1 instance SSBO + **one** `vkCmdDrawIndexedIndirect` (multi-draw; `firstInstance = batch.base`)
+  - **Instance index (Vulkan):** VS uses `gl_InstanceIndex` only — it already includes `firstInstance`. Never also add `gl_BaseInstance` or push base (double-count → wrong materials / missing draws).
+  - `[Cull]` log from host-visible counts after frame fence
+  - HZB occlusion uses **desktop hysteresis** (see `tech_context.md` § Hi-Z occlusion hysteresis): off on any camera motion, on only after ~20 still frames + capture-camera match. **Interim only** — replace/improve for VR head-tracking (same-frame HZB or reprojection), not hysteresis.
+  - Still TODO for cull quality: same-frame two-phase occlusion / reprojected HZB while the camera (or HMD) moves
+- **Depth model:** standard Z today (0=near, 1=far, `LESS`). **Planned:** reverse-Z with VR/multiview depth work (`GREATER`/`GREATER_OR_EQUAL`, clear 0, max-depth Hi-Z) — official roadmap item in `tech_context.md`
 - The old debug shader (`debug_draw.*`) still exists but is not the active pipeline
 - No OpenXR / VR input layer (desktop GLFW only)
-- **Scene model (foundation landed)**: `GameObject` + `RenderMesh` + `TransformManager`; draws/cull feed from this path. Legacy `SceneInstance` dual-written. Still TODO: hierarchy propagate, full SOA TRS.
+- **Scene model (hierarchy landed)**: `GameObject` + `RenderMesh` + `TransformManager` with **local matrices + parent links + `propagate()`** at load. glTF load walks the node tree (`set_local` + `set_parent`), then `propagate()`, then `refresh_instance_worlds()` + `GpuCulling::build_scene` (world matrices). Legacy `SceneInstance` dual-written and re-synced after propagate.
 - No physics, audio, or higher-level input abstraction (desktop input layer is now complete via `core::InputManager`)
 
 ## Next Immediate Priorities
@@ -93,7 +99,12 @@ Early foundation phase. A basic PBR forward renderer is implemented and active. 
 - [done] GameObject + RenderMesh + TransformManager foundation
 - [done] Frustum culling + multi-draw indirect
 - [done] GPU frustum cull compute (`GpuCulling`)
-- Next: transform hierarchy propagate; occlusion culling
+- [done] Transform hierarchy: local matrix + parent + `propagate()` at load; dual-write refresh + GPU cull after propagate
+- [done] Occlusion culling / Hi-Z: depth resolve + `HzbPyramid` + cull shader test (previous-frame, double-buffered; desktop hysteresis documented)
+- [done] Single multi-draw indirect: `build_indirect` writes `firstInstance = batch.base`; `pbr.vert` uses `gl_InstanceIndex` only (includes base on Vulkan); one `vkCmdDrawIndexedIndirect` for all batches
+- **Next immediate:** dirty-flag per-frame `propagate()` when animated transforms land; lighting polish (spot packing, HDR env)
+- **Roadmap (VR / Quest depth phase):** reverse-Z; same-frame or reprojected Hi-Z (drop desktop hysteresis); multiview stereo depth — see `tech_context.md` § Depth buffer model
+- Future tooling: glslang shader toolchain when cross-platform (Quest/Android) work starts — keep `glslc` until then (see `tech_context.md`)
 - [done] Desktop input layer: `core::InputManager` (callback-driven deltas + EWMA + acceleration + capture state) + full decoupling from `scene::Camera` (see `docs/architecture/desktop-inputs.md` and the implementation plan). Pitch sign convention restored to original comfortable default.
 - glTF loader robustness: `extract_mesh_data` now accepts primitives that provide only POSITION (common in minimal test assets). Missing NORMAL defaults to (0,0,1); missing TEXCOORD_0 defaults to (0,0). This allows the Cameras.gltf pure-camera test scene (and similar) to load and render its proxy geometry. Also injects a default white material when the glTF contains no materials array (primitives may still reference default material via -1).
 - Node transform extraction (`extract_node_transform`): now correctly defaults absent translation (0,0,0), rotation (identity quat), and scale (1,1,1) per glTF spec. Previous `value_or_ident` always supplied 1.0 which placed nodes incorrectly for assets like Cameras.gltf that omit TRS keys on some nodes (e.g. camera nodes with only translation, mesh nodes with only rotation). The helper was removed as dead after the fix. Quat component order also corrected for glTF [x,y,z,w] layout.

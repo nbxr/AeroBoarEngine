@@ -13,6 +13,7 @@
 #include "gfx/IblEnvironment.h"
 #include "gfx/DrawBatch.h"
 #include "gfx/GpuCulling.h"
+#include "gfx/HzbPyramid.h"
 #include "gfx/AllocatedBuffer.h"
 #include "vk_mem_alloc.h"
 #include <GLFW/glfw3.h>
@@ -54,12 +55,15 @@ struct Renderer {
 
     IblEnvironment ibl{};
 
-    // Static mesh draw templates (built at load) + GPU frustum cull system.
+    // Static mesh draw templates (built at load) + GPU frustum/occlusion cull.
     std::vector<MeshDrawInfo> mesh_draw_infos{};
     GpuCulling gpu_culling{};
+    HzbPyramid hzb{};
 
     uint32_t last_visible_instances = 0;
     uint32_t last_total_render_meshes = 0;
+    // Per frame-in-flight: whether that slot's last cull pass used Hi-Z (for [Cull] log).
+    std::array<bool, MAX_FRAMES_IN_FLIGHT> last_cull_used_hzb{};
 
     uint32_t current_frame = 0;
 

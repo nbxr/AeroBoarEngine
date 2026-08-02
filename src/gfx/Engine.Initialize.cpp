@@ -197,5 +197,12 @@ bool gfx::Engine::init_resource_managers() {
         LOG_ERROR("[GpuCulling] initialize failed — will fall back if scene has no cull data");
     }
 
+    if (!renderer.hzb.initialize(renderer.vk.device.device, renderer.allocator)) {
+        LOG_ERROR("[Hzb] initialize failed — occlusion culling disabled");
+    } else if (!renderer.hzb.resize(renderer.vk.device.device, renderer.allocator,
+                                    renderer.vk.swap_chain_extent)) {
+        LOG_ERROR("[Hzb] resize failed — occlusion culling disabled");
+    }
+
     return true;
 }

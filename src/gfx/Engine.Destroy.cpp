@@ -22,6 +22,7 @@ void gfx::Engine::destroy() {
 }
 
 void gfx::Engine::destroy_buffers() {
+    renderer.hzb.destroy(renderer.vk.device, renderer.allocator);
     renderer.gpu_culling.destroy(renderer.vk.device, renderer.allocator);
     renderer.ibl.destroy(renderer.vk.device, renderer.allocator);
     gfx::BufferUtils::destroy_buffer(renderer.vk.device, renderer.allocator, renderer.frame_constants_buffer[0]);
@@ -52,6 +53,15 @@ void gfx::Engine::destroy_images() {
     }
     renderer.main_pass.depth_images.clear();
 
+    for (auto &img : renderer.main_pass.resolved_depth_images) {
+        if (img.view != VK_NULL_HANDLE) {
+            vkDestroyImageView(renderer.vk.device, img.view, nullptr);
+        }
+        if (img.handle != VK_NULL_HANDLE) {
+            vmaDestroyImage(renderer.allocator, img.handle, img.allocation);
+        }
+    }
+    renderer.main_pass.resolved_depth_images.clear();
 }
 
 void gfx::Engine::destroy_command_buffers() {

@@ -32,6 +32,9 @@ struct PassContext {
     // color and depth (both use the same views in their framebuffers).
     std::vector<AllocatedImage> msaa_color_images{};
     std::vector<AllocatedImage> depth_images{};
+    // Single-sample depth resolve target (MSAA path) — source for Hi-Z.
+    std::vector<AllocatedImage> resolved_depth_images{};
+    bool uses_depth_resolve{false};
 
     // Optional: fixed foveated density map
     AllocatedImage fdm_image{};

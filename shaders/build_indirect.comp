@@ -53,5 +53,6 @@ void main() {
     cmds[o + 1u] = visible;
     cmds[o + 2u] = b.first_index;
     cmds[o + 3u] = uint(b.vertex_offset); // bit-identical for non-negative offsets
-    cmds[o + 4u] = 0u; // firstInstance — base is push.extra.x
+    // firstInstance → gl_BaseInstance (batch region base into draw_instances[]).
+    cmds[o + 4u] = b.base;
 }

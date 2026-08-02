@@ -81,11 +81,13 @@ This project aims to develop a cross-platform game engine targeting VR via OpenX
 ### Phase 3: VR Features (Weeks 9-12)
 - Full OpenXR integration
 - VR-specific features
+- **Reverse-Z depth** (near→1 / far→0, `GREATER` compare, clear 0) coordinated with stereo/multiview
+- Hi-Z / occlusion upgrade for head tracking (same-frame or reprojected HZB; not desktop camera hysteresis)
 - Performance optimization
 - Testing and debugging
 
 ### Phase 4: Meta Quest Support (Weeks 13-16)
-- Quest-specific optimizations
+- Quest-specific optimizations (TBDR, GMEM, reverse-Z + multiview depth path validated on device)
 - App packaging and deployment
 - Testing on Quest hardware
 - Final integration

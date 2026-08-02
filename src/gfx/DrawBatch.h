@@ -33,10 +33,11 @@ struct DrawBatch {
     uint32_t instance_count = 0;
 };
 
-// Push constants: viewProj only (base instance comes from gl_BaseInstance).
+// Push constants: viewProj only. Batch base is indirect firstInstance;
+// VS reads gl_InstanceIndex (Vulkan already adds firstInstance — do not add again).
 struct PbrPushInstanced {
     glm::mat4 viewProj{1.0f};
-    glm::uvec4 extra{0}; // y = debugMode (reserved)
+    glm::uvec4 extra{0}; // reserved
 };
 static_assert(sizeof(PbrPushInstanced) == 80, "PbrPushInstanced size");
 

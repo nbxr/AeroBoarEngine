@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gfx/AllocatedBuffer.h"
+#include "gfx/AllocatedImage.h"
 #include "gfx/DrawBatch.h"
 #include <array>
 #include <cstdint>
@@ -40,12 +41,15 @@ struct GpuCullGlobals {
     glm::vec4 planes[6]{};
     uint32_t item_count = 0;
     uint32_t batch_count = 0;
-    uint32_t pad0 = 0;
-    uint32_t pad1 = 0;
+    uint32_t hzb_enabled = 0;
+    uint32_t hzb_mips = 0;
+    glm::mat4 view_proj{1.0f};
+    glm::vec4 hzb_info{0.0f}; // xy = HZB mip0 size, z = depth bias
 };
-static_assert(sizeof(GpuCullGlobals) == 112, "GpuCullGlobals std140 size");
+// std140: planes 96 + 4 uints 16 + mat4 64 + vec4 16 = 192
+static_assert(sizeof(GpuCullGlobals) == 192, "GpuCullGlobals std140 size");
 
-// Fixed-region GPU frustum cull + indirect command build.
+// Fixed-region GPU frustum + Hi-Z occlusion cull + indirect command build.
 class GpuCulling {
   public:
     bool initialize(VkDevice device, VmaAllocator allocator);
@@ -59,9 +63,14 @@ class GpuCulling {
 
     void clear_scene(VkDevice device, VmaAllocator allocator);
 
-    // Record: fill counts=0, cull dispatch, build indirect, barriers.
-    // Writes into frame slot outputs; graphics binding 1 must use out_instances[frame].
-    void record(VkCommandBuffer cmd, uint32_t frame_index, const glm::mat4& view_proj);
+    // Record: zero counts, frustum (+ optional HZB) cull, build indirect.
+    // view_proj: current camera (frustum planes).
+    // hzb_view_proj: camera that wrote the HZB depth (must match pyramid slot).
+    // hzb_view/sampler may be null → frustum only.
+    void record(VkCommandBuffer cmd, uint32_t frame_index, const glm::mat4& view_proj,
+                VkImageView hzb_view = VK_NULL_HANDLE, VkSampler hzb_sampler = VK_NULL_HANDLE,
+                uint32_t hzb_width = 0, uint32_t hzb_height = 0, uint32_t hzb_mips = 0,
+                const glm::mat4* hzb_view_proj = nullptr, float hzb_bias_scale = 1.0f);
 
     [[nodiscard]] bool is_ready() const { return ready_; }
     [[nodiscard]] uint32_t batch_count() const { return batch_count_; }
@@ -95,6 +104,10 @@ class GpuCulling {
     VkPipeline build_pipeline_ = VK_NULL_HANDLE;
     VkDescriptorPool pool_ = VK_NULL_HANDLE;
     std::array<VkDescriptorSet, kMaxFrames> sets_{};
+    // Dummy 1x1 for when HZB is disabled (descriptor must be valid).
+    AllocatedImage dummy_hzb_{};
+    VkSampler dummy_sampler_ = VK_NULL_HANDLE;
+    bool dummy_layout_ready_ = false;
 
     AllocatedBuffer cull_items_{};
     AllocatedBuffer batch_metas_{};

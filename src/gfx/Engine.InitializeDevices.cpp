@@ -370,6 +370,7 @@ void gfx::Engine::recreate_swapchain() {
     std::vector<VkImageView>       new_swapchain_views;
     std::vector<AllocatedImage>    new_msaa_images;
     std::vector<AllocatedImage>    new_depth_images;
+    std::vector<AllocatedImage>    new_resolved_depth_images;
     std::vector<VkSemaphore>       new_render_finished;
     std::vector<VkFramebuffer>     new_framebuffers;
 
@@ -414,16 +415,29 @@ void gfx::Engine::recreate_swapchain() {
         const uint32_t new_image_count = static_cast<uint32_t>(new_swapchain_views.size());
         new_msaa_images.resize(new_image_count);
         new_depth_images.resize(new_image_count);
+        if (renderer.main_pass.uses_depth_resolve)
+            new_resolved_depth_images.resize(new_image_count);
         for (uint32_t i = 0; i < new_image_count; ++i) {
-            if (!create_msaa_color_image(renderer.vk.swap_chain_extent, new_msaa_images[i])) {
-                LOG_ERROR("Failed to create new MSAA color image during recreation");
-                success = false;
-                break;
+            if (renderer.main_pass.uses_depth_resolve) {
+                if (!create_msaa_color_image(renderer.vk.swap_chain_extent,
+                                            new_msaa_images[i])) {
+                    LOG_ERROR("Failed to create new MSAA color image during recreation");
+                    success = false;
+                    break;
+                }
             }
             if (!create_depth_image(renderer.vk.swap_chain_extent, new_depth_images[i])) {
                 LOG_ERROR("Failed to create new depth image during recreation");
                 success = false;
                 break;
+            }
+            if (renderer.main_pass.uses_depth_resolve) {
+                if (!create_resolved_depth_image(renderer.vk.swap_chain_extent,
+                                                 new_resolved_depth_images[i])) {
+                    LOG_ERROR("Failed to create resolved depth during recreation");
+                    success = false;
+                    break;
+                }
             }
         }
     }
@@ -456,16 +470,24 @@ void gfx::Engine::recreate_swapchain() {
         new_framebuffers.resize(new_image_count);
 
         for (uint32_t i = 0; i < new_image_count; ++i) {
-            VkImageView attachments[3] = {
-                new_msaa_images[i].view,
-                new_swapchain_views[i],
-                new_depth_images[i].view
-            };
+            VkImageView attachments[4]{};
+            uint32_t attachment_count = 0;
+            if (renderer.main_pass.uses_depth_resolve) {
+                attachments[0] = new_msaa_images[i].view;
+                attachments[1] = new_swapchain_views[i];
+                attachments[2] = new_depth_images[i].view;
+                attachments[3] = new_resolved_depth_images[i].view;
+                attachment_count = 4;
+            } else {
+                attachments[0] = new_swapchain_views[i];
+                attachments[1] = new_depth_images[i].view;
+                attachment_count = 2;
+            }
 
             VkFramebufferCreateInfo fb_info{};
             fb_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
             fb_info.renderPass = renderer.main_pass.render_pass;
-            fb_info.attachmentCount = 3;
+            fb_info.attachmentCount = attachment_count;
             fb_info.pAttachments = attachments;
             fb_info.width = renderer.vk.swap_chain_extent.width;
             fb_info.height = renderer.vk.swap_chain_extent.height;
@@ -529,18 +551,31 @@ void gfx::Engine::recreate_swapchain() {
         }
         renderer.main_pass.depth_images.clear();
 
+        for (auto &img : renderer.main_pass.resolved_depth_images) {
+            if (img.view != VK_NULL_HANDLE)
+                vkDestroyImageView(renderer.vk.device, img.view, nullptr);
+            if (img.handle != VK_NULL_HANDLE)
+                vmaDestroyImage(renderer.allocator, img.handle, img.allocation);
+        }
+        renderer.main_pass.resolved_depth_images.clear();
+
         // Adopt new resources
         renderer.vk.swapchain = new_swapchain;
         renderer.vk.swap_chain_image_views = std::move(new_swapchain_views);
         renderer.vk.swap_chain_image_count = static_cast<uint32_t>(renderer.vk.swap_chain_image_views.size());
         renderer.main_pass.msaa_color_images = std::move(new_msaa_images);
         renderer.main_pass.depth_images = std::move(new_depth_images);
+        renderer.main_pass.resolved_depth_images = std::move(new_resolved_depth_images);
         renderer.vk.render_finished_semaphores = std::move(new_render_finished);
         renderer.main_pass.framebuffers = std::move(new_framebuffers);
 
         // Update window size tracking
         renderer.window.width = renderer.vk.swap_chain_extent.width;
         renderer.window.height = renderer.vk.swap_chain_extent.height;
+
+        // Rebuild Hi-Z pyramids for the new extent (history discarded).
+        renderer.hzb.resize(renderer.vk.device.device, renderer.allocator,
+                            renderer.vk.swap_chain_extent);
 
         // Restart frame index after swapchain recreation. The per-frame fences
         // and image_available semaphores were not recreated here (they are
@@ -583,6 +618,12 @@ void gfx::Engine::recreate_swapchain() {
             if (img.handle != VK_NULL_HANDLE) {
                 vmaDestroyImage(renderer.allocator, img.handle, img.allocation);
             }
+        }
+        for (auto &img : new_resolved_depth_images) {
+            if (img.view != VK_NULL_HANDLE)
+                vkDestroyImageView(renderer.vk.device, img.view, nullptr);
+            if (img.handle != VK_NULL_HANDLE)
+                vmaDestroyImage(renderer.allocator, img.handle, img.allocation);
         }
 
         // Cleanup new swapchain views

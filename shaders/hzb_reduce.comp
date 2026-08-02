@@ -1,0 +1,31 @@
+#version 450
+
+// Hierarchical Z reduce: each output texel = min of a 2x2 block in the source mip.
+// Depth is 0=near, 1=far; min keeps the closest surface for conservative occlusion.
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2D src_mip;
+layout(set = 0, binding = 1, r32f) writeonly uniform image2D dst_mip;
+
+layout(push_constant) uniform PC {
+    uvec2 src_extent;
+    uvec2 dst_extent;
+} pc;
+
+void main() {
+    uvec2 p = gl_GlobalInvocationID.xy;
+    if (p.x >= pc.dst_extent.x || p.y >= pc.dst_extent.y)
+        return;
+
+    // Sample centers of the 2x2 block in the source mip.
+    vec2 inv = 1.0 / vec2(pc.src_extent);
+    vec2 base = (vec2(p) * 2.0 + vec2(0.5)) * inv;
+
+    float d00 = texture(src_mip, base).r;
+    float d10 = texture(src_mip, base + vec2(inv.x, 0.0)).r;
+    float d01 = texture(src_mip, base + vec2(0.0, inv.y)).r;
+    float d11 = texture(src_mip, base + vec2(inv.x, inv.y)).r;
+
+    float m = min(min(d00, d10), min(d01, d11));
+    imageStore(dst_mip, ivec2(p), vec4(m, 0.0, 0.0, 0.0));
+}
