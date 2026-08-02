@@ -226,19 +226,32 @@ bool gfx::Engine::init_depth_image() {
 }
 
 bool gfx::Engine::init_descriptor_pool() {
-    // Per-frame bindless sets: textures (binding 7, 10000) + other bindings.
+    // Per-frame bindless sets. Each set needs:
+    //   - kMaxBindlessTextures (variable array on binding 9)
+    //   - 2 fixed IBL samplers (env cube + BRDF LUT on bindings 7–8)
+    // Previously the pool was sized only for the texture array, so allocating
+    // the second set failed BestPractices-EmptyDescriptorPoolType (10002 needed,
+    // ~9998 remaining after the first set).
     const uint32_t frames = Renderer::MAX_FRAMES_IN_FLIGHT;
+    constexpr uint32_t kMaxBindlessTextures = 10000;
+    constexpr uint32_t kFixedImageSamplersPerSet = 2; // IBL cube + BRDF LUT
+    const uint32_t image_samplers_per_set =
+        kMaxBindlessTextures + kFixedImageSamplersPerSet;
+    // Storage: FrameConstants not counted here; lights + scene tables + extras
+    const uint32_t storage_per_set = 8;
+
     VkDescriptorPoolSize pool_sizes[] = {
-        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000},
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 10000 * frames},
-        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000}};
+        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 4 * frames},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+         image_samplers_per_set * frames + 16},
+        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 4 * frames},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, storage_per_set * frames + 16}};
 
     VkDescriptorPoolCreateInfo pool_info = {};
     pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     pool_info.poolSizeCount = 4;
     pool_info.pPoolSizes = pool_sizes;
-    pool_info.maxSets = 1000 * frames;  // generous
+    pool_info.maxSets = frames + 4;
     pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
 
     if (vkCreateDescriptorPool(renderer.vk.device, &pool_info, nullptr,

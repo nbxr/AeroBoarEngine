@@ -138,6 +138,13 @@ void Camera::frame(const glm::vec3& center, float radius) {
     glm::vec3 offset = glm::normalize(glm::vec3(0.7f, 0.9f, 1.3f)) * distance;
     position = center + offset;
 
+    // Clip planes scale with the scene so small models (chess, props) are not
+    // sliced by a fixed near of 0.1, and large scenes keep a usable far plane.
+    // near ≈ 0.1% of view distance, floored for numerical stability.
+    const float r = std::max(radius, 0.01f);
+    near_plane = std::clamp(distance * 0.001f, 0.001f, 0.05f);
+    far_plane = std::max(distance + r * 20.0f, near_plane * 1000.0f);
+
     // Desired world-space look direction (camera forward).
     // Convention: get_forward() == orientation * vec3(0,0,-1)  (local -Z).
     // Camera-to-world basis columns must therefore be (right, up, -look).
@@ -209,13 +216,17 @@ void Camera::set_from_camera_node(const glm::mat4& world_transform,
         // or build a projection that respects the authored aspect + sensor fit.
     }
 
+    // Honor authored clip planes, but never keep a near so large that desktop
+    // inspection clips the subject when moving in close.
     if (znear > 0.0f)
-        near_plane = znear;
+        near_plane = std::min(znear, 0.05f);
+    if (near_plane < 0.001f)
+        near_plane = 0.001f;
 
     if (zfar > 0.0f)
-        far_plane = zfar;
+        far_plane = std::max(zfar, near_plane * 1000.0f);
     else
-        far_plane = 100000.0f;   // glTF zfar == 0 means "infinite"
+        far_plane = 100000.0f; // glTF zfar == 0 means "infinite"
 }
 
 void Camera::save_initial_pose() {

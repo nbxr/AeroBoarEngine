@@ -111,8 +111,10 @@ public:
     float mouse_sensitivity = 0.35f;
     float roll_speed = 90.0f;     // Q/E roll rate in degrees per second
     float fov_degrees = 60.0f;
-    float near_plane = 0.1f;
-    float far_plane = 100.0f;
+    // Defaults suit small glTF assets (e.g. ABeautifulGame). frame() retunes
+    // near/far from the framing sphere so large scenes stay stable too.
+    float near_plane = 0.01f;
+    float far_plane = 1000.0f;
 
     // When true, moving the mouse down will make the camera look up (inverted).
     // Default is false (normal behavior: mouse down = look down).
@@ -140,8 +142,8 @@ private:
     glm::vec3 initial_position_{0.0f};
     glm::quat initial_orientation_{1.0f, 0.0f, 0.0f, 0.0f};
     float initial_fov_degrees_ = 60.0f;
-    float initial_near_plane_ = 0.1f;
-    float initial_far_plane_ = 100.0f;
+    float initial_near_plane_ = 0.01f;
+    float initial_far_plane_ = 1000.0f;
 };
 
 } // namespace scene

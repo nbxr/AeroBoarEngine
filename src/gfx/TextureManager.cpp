@@ -203,9 +203,15 @@ void gfx::TextureManager::upload_textures() {
         image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
+        // Prefer VMA suballocation for typical texture sizes. Dedicated allocs
+        // under ~1 MiB trigger BestPractices-small-dedicated-allocation.
         VmaAllocationCreateInfo alloc_info{};
         alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
-        alloc_info.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+        const VkDeviceSize approx_bytes =
+            VkDeviceSize(tex_info.width) * tex_info.height * 4u;
+        if (approx_bytes >= (1u << 20)) {
+            alloc_info.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+        }
 
         VkResult img_res = vmaCreateImage(
             allocator, &image_info, &alloc_info, &tex_info.gpu_image.handle,

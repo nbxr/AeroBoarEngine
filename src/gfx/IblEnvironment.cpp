@@ -308,9 +308,10 @@ bool IblEnvironment::initialize(VkDevice device, VmaAllocator allocator,
     cube_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     cube_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
+    // Sub-allocate small IBL images from larger VMA blocks (BestPractices warns
+    // against dedicated allocs under ~1 MiB).
     VmaAllocationCreateInfo img_alloc{};
     img_alloc.usage = VMA_MEMORY_USAGE_AUTO;
-    img_alloc.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
 
     if (vmaCreateImage(allocator, &cube_info, &img_alloc, &prefiltered_cube.handle,
                        &prefiltered_cube.allocation, &prefiltered_cube.info) != VK_SUCCESS) {
