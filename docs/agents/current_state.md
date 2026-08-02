@@ -156,7 +156,8 @@ layout(...) readonly buffer Materials { ... } materials[];
 These are non-functional cleanup items identified after the namespace reorganization:
 
 - [done] Replace the global `LOG_ERROR` / `LOG_INFO` macros (in `gfx/Engine.h`) → moved to `core/Log.h` (lightweight, call sites unchanged).
-- Reduce duplication across `MaterialManager`, `MeshManager`, `TextureManager`, and `SceneManager` (double-buffering, recycling, and buffer growth logic is nearly identical).
+- [done] Shared double-buffer helper: `gfx::DoubleBufferedBuffer` used by `MaterialManager`, `SceneManager`, and `MeshManager` (upload/render toggle, growth, memcpy, bind).
+- TextureManager remains image-oriented (not the same buffer pair pattern).
 - Standardize cache / storage naming across the resource managers (currently a mix of `cpu_materials`, `mesh_cache`, `texture_cache`, etc.).
 - [done] Replace the raw `#define INVALID_HANDLE` in `core/Handle.h` with a `constexpr` constant.
 - Reduce unnecessary `gfx::` qualification on types when already inside `namespace gfx`.

@@ -238,6 +238,7 @@ add_executable(Aero_Boar_Engine
     src/main.cpp
     src/AeroBoar.cpp
     src/gfx/BufferUtils.cpp
+    src/gfx/DoubleBufferedBuffer.cpp
     src/gfx/Engine.Destroy.cpp
     src/gfx/Engine.Initialize.cpp
     src/gfx/Engine.InitializeDevices.cpp

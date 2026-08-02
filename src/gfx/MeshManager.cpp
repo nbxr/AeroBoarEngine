@@ -3,315 +3,209 @@
 #include <cstring>
 #include <mutex>
 
-gfx::MeshManager::~MeshManager() {
+namespace gfx {
+
+MeshManager::~MeshManager() {
     if (is_initialized())
         shutdown();
 }
 
-bool gfx::MeshManager::is_initialized() {
-    return device != VK_NULL_HANDLE && allocator != VK_NULL_HANDLE;
+bool MeshManager::is_initialized() const {
+    return device_ != VK_NULL_HANDLE && allocator_ != VK_NULL_HANDLE;
 }
 
-bool gfx::MeshManager::initialize(VkDevice device, VmaAllocator allocator,
-                                  uint32_t initial_capacity) {
-    std::scoped_lock lock(mesh_mutex);
-    this->device = device;
-    this->allocator = allocator;
-    this->mesh_count = 0;
-    for (size_t i = 0; i < max_meshes.size(); i++) {
-        this->max_meshes[i] = initial_capacity;
-        this->max_indices[i] = initial_capacity * 1000;
-        this->max_vertices[i] = initial_capacity * 100;
-    }
-
+bool MeshManager::initialize(VkDevice device, VmaAllocator allocator,
+                             uint32_t initial_capacity) {
+    std::scoped_lock lock(mesh_mutex_);
+    device_ = device;
+    allocator_ = allocator;
+    mesh_count_ = 0;
     if (initial_capacity > 0)
-        this->growth_step_size = initial_capacity;
+        growth_step_size_ = initial_capacity;
 
-    mesh_cache.reserve(initial_capacity);
-    mesh_ssbo_cache.reserve(initial_capacity);
+    mesh_cache_.reserve(initial_capacity);
+    mesh_ssbo_cache_.reserve(initial_capacity);
+    ssbo_buffers_.set_max_elements_both(initial_capacity);
 
-    // ssbo buffer
-    VkDeviceSize ssbo_size = initial_capacity * sizeof(MeshPrimitiveSSBO);
-    bool ssbo_render_initialized = gfx::BufferUtils::initialize_buffer(
-        device, allocator, ssbo_size, get_render_ssbo_buffer());
-    bool ssbo_upload_initialized = gfx::BufferUtils::initialize_buffer(
-        device, allocator, ssbo_size, get_upload_ssbo_buffer());
+    const VkDeviceSize ssbo_size =
+        static_cast<VkDeviceSize>(initial_capacity) * sizeof(MeshPrimitiveSSBO);
+    const VkDeviceSize vertex_size =
+        static_cast<VkDeviceSize>(initial_capacity) * 100ull * sizeof(Vertex);
+    const VkDeviceSize index_size =
+        static_cast<VkDeviceSize>(initial_capacity) * 1000ull * sizeof(Index);
 
-    // vertex buffer (usable both as STORAGE_BUFFER for bindless and VERTEX_BUFFER for attribute input)
-    VkDeviceSize vertex_size = initial_capacity * 100 * sizeof(Vertex);
-    VkBufferUsageFlags vertexExtra = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-    bool vertex_render_initialized = gfx::BufferUtils::initialize_buffer(
-        device, allocator, vertex_size, get_render_vertex_buffer(), vertexExtra);
-    bool vertex_upload_initialized = gfx::BufferUtils::initialize_buffer(
-        device, allocator, vertex_size, get_upload_vertex_buffer(), vertexExtra);
+    const bool ok_ssbo = ssbo_buffers_.initialize(device, allocator, ssbo_size);
+    const bool ok_vtx = vertex_buffers_.initialize(
+        device, allocator, vertex_size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+    const bool ok_idx = index_buffers_.initialize(
+        device, allocator, index_size, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
 
-    // index buffer
-    VkDeviceSize index_size = initial_capacity * 1000 * sizeof(Index);
-    VkBufferUsageFlags indexExtra = VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
-    bool index_render_initialized = gfx::BufferUtils::initialize_buffer(
-        device, allocator, index_size, get_render_index_buffer(), indexExtra);
-    bool index_upload_initialized = gfx::BufferUtils::initialize_buffer(
-        device, allocator, index_size, get_upload_index_buffer(), indexExtra);
-
-    return true;
+    return ok_ssbo && ok_vtx && ok_idx;
 }
 
-gfx::MeshPrimitiveID gfx::MeshManager::add_mesh(gfx::MeshData &mesh_data) {
-    std::scoped_lock lock(mesh_mutex);
-    mesh_cache.push_back(std::move(mesh_data));
-    mesh_count = static_cast<uint32_t>(mesh_cache.size());
-    MeshPrimitiveID id = MeshPrimitiveID(mesh_count - 1);
-    return id;
+MeshPrimitiveID MeshManager::add_mesh(MeshData& mesh_data) {
+    std::scoped_lock lock(mesh_mutex_);
+    mesh_cache_.push_back(std::move(mesh_data));
+    mesh_count_ = static_cast<uint32_t>(mesh_cache_.size());
+    return MeshPrimitiveID(mesh_count_ - 1);
 }
 
-void gfx::MeshManager::update_buffers() {
-    std::scoped_lock lock(mesh_mutex);
+void MeshManager::update_buffers() {
+    std::scoped_lock lock(mesh_mutex_);
 
     ensure_capacity();
 
-    mesh_ssbo_cache.clear(); // prevent accumulation on re-uploads / dynamic adds
+    mesh_ssbo_cache_.clear();
 
     uint32_t vertex_offset = 0;
     uint32_t index_offset = 0;
 
-    for (const auto &mesh : mesh_cache) {
-        MeshPrimitiveSSBO ssbo;
+    auto* vertex_dst =
+        static_cast<Vertex*>(vertex_buffers_.upload().mapped_data);
+    auto* index_dst = static_cast<Index*>(index_buffers_.upload().mapped_data);
+
+    for (const auto& mesh : mesh_cache_) {
+        MeshPrimitiveSSBO ssbo{};
         ssbo.vertex_offset = vertex_offset;
         ssbo.vertex_count = static_cast<uint32_t>(mesh.vertices.size());
         ssbo.index_offset = index_offset;
         ssbo.index_count = static_cast<uint32_t>(mesh.indices.size());
-        mesh_ssbo_cache.push_back(ssbo);
+        mesh_ssbo_cache_.push_back(ssbo);
 
-        auto *vertex_dst = static_cast<Vertex *>(get_upload_vertex_buffer().mapped_data);
-        auto *index_dst = static_cast<Index *>(get_upload_index_buffer().mapped_data);
-
-        memcpy(vertex_dst + vertex_offset, mesh.vertices.data(),
-               mesh.vertices.size() * sizeof(Vertex));
-        memcpy(index_dst + index_offset, mesh.indices.data(),
-               mesh.indices.size() * sizeof(Index));
+        if (vertex_dst && !mesh.vertices.empty()) {
+            std::memcpy(vertex_dst + vertex_offset, mesh.vertices.data(),
+                        mesh.vertices.size() * sizeof(Vertex));
+        }
+        if (index_dst && !mesh.indices.empty()) {
+            std::memcpy(index_dst + index_offset, mesh.indices.data(),
+                        mesh.indices.size() * sizeof(Index));
+        }
 
         vertex_offset += ssbo.vertex_count;
         index_offset += ssbo.index_count;
     }
 
-    auto *ssbo_dst = static_cast<MeshPrimitiveSSBO *>(get_upload_ssbo_buffer().mapped_data);
-    memcpy(ssbo_dst, mesh_ssbo_cache.data(), mesh_ssbo_cache.size() * sizeof(MeshPrimitiveSSBO));
+    if (!mesh_ssbo_cache_.empty()) {
+        ssbo_buffers_.upload_memcpy(
+            mesh_ssbo_cache_.data(),
+            mesh_ssbo_cache_.size() * sizeof(MeshPrimitiveSSBO));
+    }
 
-    vertex_count = vertex_offset;
-    index_count = index_offset;
+    vertex_count_ = vertex_offset;
+    index_count_ = index_offset;
 }
 
-void gfx::MeshManager::bind_descriptor(uint32_t ssbo, uint32_t vertex,
-                                       uint32_t index, VkDescriptorSet target_set) {
-    std::shared_lock lock(mesh_mutex);
-    // SSBO buffer
-    gfx::BufferUtils::update_descriptor(
-        device, get_render_ssbo_buffer(), target_set,
-        mesh_count * sizeof(MeshPrimitiveSSBO), ssbo);
-    // Vertex buffer
-    gfx::BufferUtils::update_descriptor(device, get_render_vertex_buffer(),
-                                         target_set,
-                                         vertex_count * sizeof(Vertex), vertex);
-    // Index buffer
-    gfx::BufferUtils::update_descriptor(device, get_render_index_buffer(),
-                                         target_set,
-                                         index_count * sizeof(Index), index);
+void MeshManager::bind_descriptor(uint32_t ssbo, uint32_t vertex, uint32_t index,
+                                  VkDescriptorSet target_set) {
+    std::shared_lock lock(mesh_mutex_);
+    ssbo_buffers_.bind_render_descriptor(
+        device_, target_set, ssbo, mesh_count_ * sizeof(MeshPrimitiveSSBO));
+    BufferUtils::update_descriptor(device_, vertex_buffers_.render(), target_set,
+                                   vertex_count_ * sizeof(Vertex), vertex);
+    BufferUtils::update_descriptor(device_, index_buffers_.render(), target_set,
+                                   index_count_ * sizeof(Index), index);
 }
 
-void gfx::MeshManager::shutdown() {
-    std::scoped_lock lock(mesh_mutex);
-    gfx::BufferUtils::destroy_buffer(device, allocator,
-                                      get_upload_index_buffer());
-    gfx::BufferUtils::destroy_buffer(device, allocator,
-                                      get_upload_vertex_buffer());
-    gfx::BufferUtils::destroy_buffer(device, allocator,
-                                      get_upload_ssbo_buffer());
-    gfx::BufferUtils::destroy_buffer(device, allocator,
-                                      get_render_index_buffer());
-    gfx::BufferUtils::destroy_buffer(device, allocator,
-                                      get_render_vertex_buffer());
-    gfx::BufferUtils::destroy_buffer(device, allocator,
-                                      get_render_ssbo_buffer());
-    mesh_cache.clear();
-    mesh_ssbo_cache.clear();
-    while (!recycle_cache.empty())
-        recycle_cache.pop();
+void MeshManager::shutdown() {
+    std::scoped_lock lock(mesh_mutex_);
+    vertex_buffers_.destroy(device_, allocator_);
+    index_buffers_.destroy(device_, allocator_);
+    ssbo_buffers_.destroy(device_, allocator_);
 
-    mesh_count = 0;
-    index_count = 0;
-    vertex_count = 0;
+    mesh_cache_.clear();
+    mesh_ssbo_cache_.clear();
+    while (!recycle_cache_.empty())
+        recycle_cache_.pop();
 
-    max_meshes = {0, 0};
-    max_indices = {0, 0};
-    max_vertices = {0, 0};
-
-    device = VK_NULL_HANDLE;
-    allocator = VK_NULL_HANDLE;
+    mesh_count_ = 0;
+    index_count_ = 0;
+    vertex_count_ = 0;
+    device_ = VK_NULL_HANDLE;
+    allocator_ = VK_NULL_HANDLE;
 }
 
-void gfx::MeshManager::clear_all_caches() {
-    std::scoped_lock lock(mesh_mutex);
-
-    mesh_cache.clear();
-    mesh_ssbo_cache.clear();
-    while (!recycle_cache.empty())
-        recycle_cache.pop();
-
-    mesh_count = 0;
-    index_count = 0;
-    vertex_count = 0;
-
-    // Note: We do NOT destroy the GPU buffers here.
-    // The next update_buffers() will repopulate from an empty cache.
-    printf("[MeshManager] clear_all_caches() called - CPU caches wiped.\n");
+void MeshManager::clear_all_caches() {
+    std::scoped_lock lock(mesh_mutex_);
+    mesh_cache_.clear();
+    mesh_ssbo_cache_.clear();
+    while (!recycle_cache_.empty())
+        recycle_cache_.pop();
+    mesh_count_ = 0;
+    index_count_ = 0;
+    vertex_count_ = 0;
 }
 
-void gfx::MeshManager::toggle_buffers() {
-    render ^= 1;
-    upload = render ^ 1;
+void MeshManager::toggle_buffers() {
+    vertex_buffers_.toggle();
+    index_buffers_.toggle();
+    ssbo_buffers_.toggle();
 }
 
-bool gfx::MeshManager::ensure_capacity() {
+bool MeshManager::ensure_capacity() {
     uint64_t required_vertex_count = 0;
     uint64_t required_index_count = 0;
-
-    for (const auto &mesh : mesh_cache) {
+    for (const auto& mesh : mesh_cache_) {
         required_vertex_count += mesh.vertices.size();
         required_index_count += mesh.indices.size();
     }
 
-    // SSBO count is just mesh count
-    if (mesh_cache.size() > mesh_ssbo_cache.capacity() ||
-        mesh_ssbo_cache.empty()) {
-        uint32_t new_ssbo_capacity = mesh_cache.empty()
-                                         ? (growth_step_size > 0 ? growth_step_size : 100)
-                                         : static_cast<uint32_t>(mesh_cache.size() + growth_step_size);
-        resize_mesh_buffer(new_ssbo_capacity);
-    }
+    const uint32_t mesh_n = static_cast<uint32_t>(mesh_cache_.size());
+    ssbo_buffers_.ensure_element_capacity(
+        device_, allocator_, mesh_n > 0 ? mesh_n : 1u, sizeof(MeshPrimitiveSSBO),
+        growth_step_size_,
+        mesh_ssbo_cache_.empty() ? nullptr : mesh_ssbo_cache_.data(),
+        mesh_ssbo_cache_.size() * sizeof(MeshPrimitiveSSBO));
 
-    // Vertex buffer
-    if (vertex_buffer[upload].info.size < required_vertex_count * sizeof(Vertex)) {
-        uint64_t new_vertex_capacity = required_vertex_count + (growth_step_size > 0 ? growth_step_size * 100 : 10000);
-        resize_vertex_buffer(new_vertex_capacity);
-    }
+    const VkDeviceSize vtx_needed = required_vertex_count * sizeof(Vertex);
+    const VkDeviceSize vtx_pad =
+        static_cast<VkDeviceSize>(growth_step_size_ > 0 ? growth_step_size_ * 100
+                                                        : 10000) *
+        sizeof(Vertex);
+    vertex_buffers_.ensure_byte_capacity(
+        device_, allocator_, vtx_needed, vtx_pad,
+        vertex_count_ > 0 ? vertex_buffers_.upload().mapped_data : nullptr,
+        vertex_count_ * sizeof(Vertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
 
-    // Index buffer
-    if (index_buffer[upload].info.size < required_index_count * sizeof(Index)) {
-        uint64_t new_index_capacity = required_index_count + (growth_step_size > 0 ? growth_step_size * 1000 : 100000);
-        resize_index_buffer(new_index_capacity);
-    }
+    const VkDeviceSize idx_needed = required_index_count * sizeof(Index);
+    const VkDeviceSize idx_pad =
+        static_cast<VkDeviceSize>(growth_step_size_ > 0 ? growth_step_size_ * 1000
+                                                        : 100000) *
+        sizeof(Index);
+    index_buffers_.ensure_byte_capacity(
+        device_, allocator_, idx_needed, idx_pad,
+        index_count_ > 0 ? index_buffers_.upload().mapped_data : nullptr,
+        index_count_ * sizeof(Index), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
 
     return true;
 }
 
-void gfx::MeshManager::resize_mesh_buffer(uint32_t new_capacity) {
-    // Resize SSBO buffer
-    uint64_t new_ssbo_size = static_cast<uint64_t>(new_capacity) * sizeof(MeshPrimitiveSSBO);
-    if (mesh_ssbo_cache.empty()) {
-        gfx::BufferUtils::resize_buffer(
-            device, allocator, new_ssbo_size,
-            get_upload_ssbo_buffer(), nullptr, 0);
-    } else {
-        gfx::BufferUtils::resize_buffer(
-            device, allocator, new_ssbo_size,
-            get_upload_ssbo_buffer(),
-            mesh_ssbo_cache.data(),
-            mesh_ssbo_cache.size() * sizeof(MeshPrimitiveSSBO));
-    }
+uint32_t MeshManager::get_primitive_count() const {
+    return static_cast<uint32_t>(mesh_ssbo_cache_.size());
 }
 
-void gfx::MeshManager::resize_vertex_buffer(uint64_t new_capacity) {
-    if (new_capacity == 0) return;
-
-    VkDeviceSize new_size = new_capacity * sizeof(Vertex);
-    bool need_copy = false;
-
-    if (!get_upload_vertex_buffer().buffer ||
-        get_upload_vertex_buffer().info.size < new_size) {
-        need_copy = true;
-    }
-
-    if (need_copy) {
-        gfx::BufferUtils::resize_buffer(
-            device, allocator, new_size,
-            get_upload_vertex_buffer(),
-            vertex_count > 0 ? get_upload_vertex_buffer().mapped_data : nullptr,
-            need_copy ? vertex_count * sizeof(Vertex) : 0,
-            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-    }
-}
-
-void gfx::MeshManager::resize_index_buffer(uint64_t new_capacity) {
-    if (new_capacity == 0) return;
-
-    VkDeviceSize new_size = new_capacity * sizeof(Index);
-    bool need_copy = false;
-
-    if (!get_upload_index_buffer().buffer ||
-        get_upload_index_buffer().info.size < new_size) {
-        need_copy = true;
-    }
-
-    if (need_copy) {
-        gfx::BufferUtils::resize_buffer(
-            device, allocator, new_size,
-            get_upload_index_buffer(),
-            index_count > 0 ? get_upload_index_buffer().mapped_data : nullptr,
-            need_copy ? index_count * sizeof(Index) : 0,
-            VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-    }
-}
-
-
-gfx::AllocatedBuffer &gfx::MeshManager::get_upload_vertex_buffer() {
-    return vertex_buffer[upload];
-}
-
-gfx::AllocatedBuffer &gfx::MeshManager::get_render_vertex_buffer() {
-    return vertex_buffer[render];
-}
-
-gfx::AllocatedBuffer &gfx::MeshManager::get_upload_index_buffer() {
-    return index_buffer[upload];
-}
-
-gfx::AllocatedBuffer &gfx::MeshManager::get_render_index_buffer() {
-    return index_buffer[render];
-}
-
-gfx::AllocatedBuffer &gfx::MeshManager::get_upload_ssbo_buffer() {
-    return ssbo_buffer[upload];
-}
-
-gfx::AllocatedBuffer &gfx::MeshManager::get_render_ssbo_buffer() {
-    return ssbo_buffer[render];
-}
-
-uint32_t gfx::MeshManager::get_primitive_count() const {
-    return static_cast<uint32_t>(mesh_ssbo_cache.size());
-}
-
-uint32_t gfx::MeshManager::get_primitive_vertex_offset(uint32_t index) const {
-    if (index >= mesh_ssbo_cache.size())
+uint32_t MeshManager::get_primitive_vertex_offset(uint32_t index) const {
+    if (index >= mesh_ssbo_cache_.size())
         return 0;
-    return mesh_ssbo_cache[index].vertex_offset;
+    return mesh_ssbo_cache_[index].vertex_offset;
 }
 
-uint32_t gfx::MeshManager::get_primitive_index_offset(uint32_t index) const {
-    if (index >= mesh_ssbo_cache.size())
+uint32_t MeshManager::get_primitive_index_offset(uint32_t index) const {
+    if (index >= mesh_ssbo_cache_.size())
         return 0;
-    return mesh_ssbo_cache[index].index_offset;
+    return mesh_ssbo_cache_[index].index_offset;
 }
 
-uint32_t gfx::MeshManager::get_primitive_index_count(uint32_t index) const {
-    if (index >= mesh_ssbo_cache.size())
+uint32_t MeshManager::get_primitive_index_count(uint32_t index) const {
+    if (index >= mesh_ssbo_cache_.size())
         return 0;
-    return mesh_ssbo_cache[index].index_count;
+    return mesh_ssbo_cache_[index].index_count;
 }
 
-core::AABB gfx::MeshManager::get_primitive_local_aabb(uint32_t index) const {
-    std::shared_lock lock(mesh_mutex);
-    if (index >= mesh_cache.size())
+core::AABB MeshManager::get_primitive_local_aabb(uint32_t index) const {
+    std::shared_lock lock(mesh_mutex_);
+    if (index >= mesh_cache_.size())
         return core::AABB{};
-    return mesh_cache[index].local_aabb;
+    return mesh_cache_[index].local_aabb;
 }
+
+} // namespace gfx

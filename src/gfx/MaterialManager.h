@@ -1,73 +1,49 @@
 #pragma once
 
 #include "gfx/Material.h"
-#include "gfx/TextureInfo.h"
-#include "gfx/AllocatedBuffer.h"
-#include <array>
-#include <memory>
+#include "gfx/DoubleBufferedBuffer.h"
 #include <shared_mutex>
 #include <stack>
-#include <unordered_map>
 #include <vector>
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan.h>
 
 namespace gfx {
+
 class MaterialManager {
-  private:
-    VkDevice device{VK_NULL_HANDLE};
-    VmaAllocator allocator{VK_NULL_HANDLE};
-
-    // Internal storage using AllocatedBuffer
-    std::array<AllocatedBuffer, 2> material_buffer{};
-
-    // Indexes to control which buffers are used for uploading
-    // and which are used for rendering
-    uint32_t upload = 1;
-    uint32_t render = 0;
-
-    // Material storage
-    std::vector<Material> cpu_materials{};
-
-    // Handles that can be reused from within cpu_materials
-    std::stack<MaterialID> recycle_cache{};
-
-    uint32_t material_count = 0;
-    std::array<uint32_t, 2> max_materials{0, 0};
-    uint32_t growth_step_size = 50;
-
-    mutable std::shared_mutex material_mutex;
-
   public:
     MaterialManager() = default;
     ~MaterialManager();
 
-    // Non-copyable
-    MaterialManager(const MaterialManager &) = delete;
-    MaterialManager &operator=(const MaterialManager &) = delete;
+    MaterialManager(const MaterialManager&) = delete;
+    MaterialManager& operator=(const MaterialManager&) = delete;
 
-    // Common buffer management methods
-    bool is_initialized();
-    bool initialize(VkDevice device, VmaAllocator allocator,
-                    uint32_t initial_capacity);
+    bool is_initialized() const;
+    bool initialize(VkDevice device, VmaAllocator allocator, uint32_t initial_capacity);
 
-    // Create a new material and return its ID
-    MaterialID create_material(const gfx::Material &material);
-    void remove_material(const MaterialID material_id);
-
-    // Update a material by its ID
-    void update_material(MaterialID material_id, const gfx::Material &material);
+    MaterialID create_material(const Material& material);
+    void remove_material(MaterialID material_id);
+    void update_material(MaterialID material_id, const Material& material);
 
     void update_buffers();
     void bind_descriptor(uint32_t binding_index, VkDescriptorSet target_set);
-    void toggle_buffers();  // exposed for Engine load-time commit (double-buffer swap)
+    void toggle_buffers();
     void shutdown();
 
-    [[nodiscard]] uint32_t get_material_count() const { return material_count; }
+    [[nodiscard]] uint32_t get_material_count() const { return material_count_; }
 
   private:
-    void resize_buffer(uint32_t new_capacity);
-    [[nodiscard]] AllocatedBuffer &get_upload_buffer();
-    [[nodiscard]] AllocatedBuffer &get_render_buffer();
+    VkDevice device_{VK_NULL_HANDLE};
+    VmaAllocator allocator_{VK_NULL_HANDLE};
+
+    DoubleBufferedBuffer buffers_{};
+    std::vector<Material> cpu_materials_{};
+    std::stack<MaterialID> recycle_cache_{};
+
+    uint32_t material_count_ = 0;
+    uint32_t growth_step_size_ = 50;
+
+    mutable std::shared_mutex material_mutex_;
 };
-}; // namespace gfx
+
+} // namespace gfx

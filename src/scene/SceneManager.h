@@ -1,14 +1,12 @@
 #pragma once
 
-#include "gfx/AllocatedBuffer.h"
+#include "gfx/DoubleBufferedBuffer.h"
 #include "scene/GameObject.h"
 #include "scene/RenderMesh.h"
 #include "scene/SceneInstance.h"
 #include "scene/TransformManager.h"
-#include <array>
 #include <cstdint>
 #include <glm/glm.hpp>
-#include <mutex>
 #include <shared_mutex>
 #include <utility>
 #include <vector>
@@ -20,27 +18,6 @@ namespace scene {
 // Orchestrates GameObject / RenderMesh / TransformManager and (legacy) flat
 // SceneInstance GPU buffers. New code should use the GameObject registry APIs.
 class SceneManager {
-  private:
-    VkDevice device{VK_NULL_HANDLE};
-    VmaAllocator allocator{VK_NULL_HANDLE};
-
-    std::array<gfx::AllocatedBuffer, 2> instance_buffer{};
-    uint32_t upload = 1;
-    uint32_t render = 0;
-
-    // Legacy flat list (still uploaded for optional GPU use / debugging)
-    std::vector<SceneInstance> cpu_instances{};
-    uint32_t instance_count = 0;
-    std::array<uint32_t, 2> max_instances{0, 0};
-    uint32_t growth_step_size = 50;
-
-    // New scene model
-    TransformManager transforms_{};
-    std::vector<GameObject> game_objects_{};
-    std::vector<RenderMesh> render_meshes_{};
-
-    mutable std::shared_mutex instance_mutex;
-
   public:
     SceneManager() = default;
     ~SceneManager();
@@ -48,10 +25,9 @@ class SceneManager {
     SceneManager(const SceneManager&) = delete;
     SceneManager& operator=(const SceneManager&) = delete;
 
-    bool is_initialized();
+    bool is_initialized() const;
     bool initialize(VkDevice device, VmaAllocator allocator, uint32_t initial_capacity);
 
-    // --- New registry API ---
     TransformManager& transforms() { return transforms_; }
     const TransformManager& transforms() const { return transforms_; }
 
@@ -93,25 +69,34 @@ class SceneManager {
     void bind_descriptor(uint32_t binding_index, VkDescriptorSet target_set);
     void toggle_buffers();
 
-    [[nodiscard]] gfx::AllocatedBuffer& get_buffer() { return get_render_buffer(); }
+    [[nodiscard]] gfx::AllocatedBuffer& get_buffer() { return instance_buffers_.render(); }
 
     [[nodiscard]] glm::mat4 get_first_instance_transform() const;
     [[nodiscard]] std::pair<glm::vec3, float> get_first_instance_framing_sphere() const;
-    // Union of all render-mesh world AABBs (preferred for camera frame).
     [[nodiscard]] std::pair<glm::vec3, float> get_scene_framing_sphere() const;
 
-    [[nodiscard]] uint32_t get_instance_count() const { return instance_count; }
+    [[nodiscard]] uint32_t get_instance_count() const { return instance_count_; }
     [[nodiscard]] const SceneInstance& get_instance(uint32_t index) const {
-        return cpu_instances[index];
+        return cpu_instances_[index];
     }
 
     void shutdown();
     void clear_scene_data(); // clears GO/RM/transforms + instances (keeps Vulkan buffers)
 
   private:
-    void resize_buffer(uint32_t new_capacity);
-    [[nodiscard]] gfx::AllocatedBuffer& get_upload_buffer();
-    [[nodiscard]] gfx::AllocatedBuffer& get_render_buffer();
+    VkDevice device_{VK_NULL_HANDLE};
+    VmaAllocator allocator_{VK_NULL_HANDLE};
+
+    gfx::DoubleBufferedBuffer instance_buffers_{};
+    std::vector<SceneInstance> cpu_instances_{};
+    uint32_t instance_count_ = 0;
+    uint32_t growth_step_size_ = 50;
+
+    TransformManager transforms_{};
+    std::vector<GameObject> game_objects_{};
+    std::vector<RenderMesh> render_meshes_{};
+
+    mutable std::shared_mutex instance_mutex_;
 };
 
 } // namespace scene

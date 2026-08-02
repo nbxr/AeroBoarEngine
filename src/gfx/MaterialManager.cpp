@@ -1,142 +1,96 @@
 #include "gfx/MaterialManager.h"
-#include "gfx/BufferUtils.h"
-#include <cstring>
+#include "core/Log.h"
 #include <mutex>
 
-gfx::MaterialManager::~MaterialManager() {
+namespace gfx {
+
+MaterialManager::~MaterialManager() {
     if (is_initialized())
         shutdown();
 }
 
-bool gfx::MaterialManager::is_initialized() {
-    return device != VK_NULL_HANDLE && allocator != VK_NULL_HANDLE;
+bool MaterialManager::is_initialized() const {
+    return device_ != VK_NULL_HANDLE && allocator_ != VK_NULL_HANDLE;
 }
 
-bool gfx::MaterialManager::initialize(VkDevice device, VmaAllocator allocator,
-                                      uint32_t initial_capacity) {
-    this->device = device;
-    this->allocator = allocator;
-    for (size_t i = 0; i < max_materials.size(); i++)
-        this->max_materials[i] = initial_capacity;
-    this->material_count = 0;
+bool MaterialManager::initialize(VkDevice device, VmaAllocator allocator,
+                                 uint32_t initial_capacity) {
+    device_ = device;
+    allocator_ = allocator;
+    material_count_ = 0;
     if (initial_capacity > 0)
-        this->growth_step_size = initial_capacity;
+        growth_step_size_ = initial_capacity;
 
-    cpu_materials.reserve(initial_capacity);
+    cpu_materials_.reserve(initial_capacity);
+    buffers_.set_max_elements_both(initial_capacity);
 
-    VkDeviceSize size = initial_capacity * sizeof(gfx::Material);
-
-    bool render_initialized = gfx::BufferUtils::initialize_buffer(
-        device, allocator, size, get_render_buffer());
-
-    bool upload_initialized = gfx::BufferUtils::initialize_buffer(
-        device, allocator, size, get_upload_buffer());
-
-    return render_initialized && upload_initialized;
+    const VkDeviceSize size =
+        static_cast<VkDeviceSize>(initial_capacity) * sizeof(Material);
+    return buffers_.initialize(device, allocator, size);
 }
 
-gfx::MaterialID
-gfx::MaterialManager::create_material(const gfx::Material &material) {
-    std::scoped_lock lock(material_mutex);
-    // use a recycled value if available
-    if (!recycle_cache.empty()) {
-        gfx::MaterialID id = recycle_cache.top();
-        recycle_cache.pop();
-        if (id < cpu_materials.size()) {
-            cpu_materials[id] = material;
+MaterialID MaterialManager::create_material(const Material& material) {
+    std::scoped_lock lock(material_mutex_);
+    if (!recycle_cache_.empty()) {
+        const MaterialID id = recycle_cache_.top();
+        recycle_cache_.pop();
+        if (id < cpu_materials_.size()) {
+            cpu_materials_[id] = material;
             return id;
         }
-        // If recycled ID is invalid (e.g. after resize), treat as new
     }
 
-    // Add material to the vector, update count
-    // and return the index as the material ID
-    cpu_materials.push_back(material);
-    material_count = static_cast<uint32_t>(cpu_materials.size());
-    return gfx::MaterialID(material_count - 1);
+    cpu_materials_.push_back(material);
+    material_count_ = static_cast<uint32_t>(cpu_materials_.size());
+    return MaterialID(material_count_ - 1);
 }
 
-void gfx::MaterialManager::remove_material(const gfx::MaterialID material_id) {
-    std::scoped_lock lock(material_mutex);
-    // add this to recycle_cache. the material cannot be
-    // removed because this would break the indexing of
-    // all existing materials.
-    recycle_cache.push(material_id);
+void MaterialManager::remove_material(const MaterialID material_id) {
+    std::scoped_lock lock(material_mutex_);
+    recycle_cache_.push(material_id);
 }
 
-void gfx::MaterialManager::update_material(gfx::MaterialID material_id,
-                                           const gfx::Material &material) {
-    std::scoped_lock lock(material_mutex);
-    if (material_id < cpu_materials.size())
-        cpu_materials[material_id] = material;
-    // TODO: else log failure
-}
-
-void gfx::MaterialManager::update_buffers() {
-    std::scoped_lock lock(material_mutex);
-
-    // Resize if capacity exceeded
-    if (material_count > max_materials[upload]) {
-        uint32_t overflow = (material_count - max_materials[upload]);
-        uint32_t chunks = 1 + (overflow / growth_step_size);
-        uint32_t new_capacity =
-            max_materials[upload] + (chunks * growth_step_size);
-        resize_buffer(new_capacity);
+void MaterialManager::update_material(MaterialID material_id, const Material& material) {
+    std::scoped_lock lock(material_mutex_);
+    if (material_id < cpu_materials_.size()) {
+        cpu_materials_[material_id] = material;
+        return;
     }
+    LOG_ERROR("[MaterialManager] update_material: invalid id " << material_id);
+}
 
-    // Upload CPU data to mapped GPU memory
-    if (get_upload_buffer().mapped_data && !cpu_materials.empty()) {
-        memcpy(get_upload_buffer().mapped_data, cpu_materials.data(),
-               material_count * sizeof(Material));
+void MaterialManager::update_buffers() {
+    std::scoped_lock lock(material_mutex_);
+
+    buffers_.ensure_element_capacity(
+        device_, allocator_, material_count_, sizeof(Material), growth_step_size_,
+        cpu_materials_.empty() ? nullptr : cpu_materials_.data(),
+        material_count_ * sizeof(Material));
+
+    if (!cpu_materials_.empty()) {
+        buffers_.upload_memcpy(cpu_materials_.data(),
+                               material_count_ * sizeof(Material));
     }
 }
 
-void gfx::MaterialManager::bind_descriptor(uint32_t binding_index, VkDescriptorSet target_set) {
-    std::shared_lock lock(material_mutex);
-    gfx::BufferUtils::update_descriptor(
-        device, get_render_buffer(), target_set,
-        material_count * sizeof(Material), binding_index);
+void MaterialManager::bind_descriptor(uint32_t binding_index,
+                                      VkDescriptorSet target_set) {
+    std::shared_lock lock(material_mutex_);
+    buffers_.bind_render_descriptor(device_, target_set, binding_index,
+                                    material_count_ * sizeof(Material));
 }
 
-void gfx::MaterialManager::shutdown() {
-    std::scoped_lock lock(material_mutex);
-
-    gfx::BufferUtils::destroy_buffer(device, allocator, get_upload_buffer());
-    gfx::BufferUtils::destroy_buffer(device, allocator, get_render_buffer());
-    
-    cpu_materials.clear();
-    while (!recycle_cache.empty())
-        recycle_cache.pop();
-
-    material_count = 0;
-    max_materials = {0, 0};
-
-    device = VK_NULL_HANDLE;
-    allocator = VK_NULL_HANDLE;
+void MaterialManager::shutdown() {
+    std::scoped_lock lock(material_mutex_);
+    buffers_.destroy(device_, allocator_);
+    cpu_materials_.clear();
+    while (!recycle_cache_.empty())
+        recycle_cache_.pop();
+    material_count_ = 0;
+    device_ = VK_NULL_HANDLE;
+    allocator_ = VK_NULL_HANDLE;
 }
 
-void gfx::MaterialManager::resize_buffer(uint32_t new_capacity) {
+void MaterialManager::toggle_buffers() { buffers_.toggle(); }
 
-    // Must be called with material_mutex held
-    VkDeviceSize new_size =
-        static_cast<VkDeviceSize>(new_capacity * sizeof(Material));
-    size_t data_size = material_count * sizeof(Material);
-
-    gfx::BufferUtils::resize_buffer(device, allocator, new_size,
-                                     get_upload_buffer(), cpu_materials.data(),
-                                     data_size);
-    max_materials[upload] = new_capacity;
-}
-
-void gfx::MaterialManager::toggle_buffers() {
-    render ^= 1;
-    upload = render ^ 1;
-}
-
-gfx::AllocatedBuffer &gfx::MaterialManager::get_upload_buffer() {
-    return material_buffer[upload];
-}
-
-gfx::AllocatedBuffer &gfx::MaterialManager::get_render_buffer() {
-    return material_buffer[render];
-}
+} // namespace gfx
