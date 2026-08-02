@@ -40,7 +40,7 @@
   "validationFeatures" : [
     {
       "name": "gpuAssistedValidation",
-      "enabled": true
+      "enabled": false
     }
   ]
 }

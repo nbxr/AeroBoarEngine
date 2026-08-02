@@ -134,15 +134,18 @@ void scene::SceneManager::bind_descriptor(uint32_t binding_index,
 void scene::SceneManager::shutdown() {
     clear_scene_data();
 
-    if (get_upload_buffer().allocation != VK_NULL_HANDLE) {
-        vmaDestroyBuffer(allocator, get_upload_buffer().buffer,
-                         get_upload_buffer().allocation);
-        get_upload_buffer() = {};
-    }
-    if (get_render_buffer().allocation != VK_NULL_HANDLE) {
-        vmaDestroyBuffer(allocator, get_render_buffer().buffer,
-                         get_render_buffer().allocation);
-        get_render_buffer() = {};
+    // Idempotent: safe if already shut down or never initialized.
+    if (allocator != VK_NULL_HANDLE) {
+        if (get_upload_buffer().allocation != VK_NULL_HANDLE) {
+            vmaDestroyBuffer(allocator, get_upload_buffer().buffer,
+                             get_upload_buffer().allocation);
+            get_upload_buffer() = {};
+        }
+        if (get_render_buffer().allocation != VK_NULL_HANDLE) {
+            vmaDestroyBuffer(allocator, get_render_buffer().buffer,
+                             get_render_buffer().allocation);
+            get_render_buffer() = {};
+        }
     }
 
     max_instances = {0, 0};

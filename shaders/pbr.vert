@@ -2,6 +2,8 @@
 
 // Instanced PBR: viewProj + base instance index in push constants.
 // Per-instance model + material from DrawInstanceGPU SSBO (binding 1).
+// (gl_BaseInstance requires draw-parameter extensions not available with our
+// glslc path; first_instance is supplied via push.extra.x per indirect draw.)
 layout(push_constant) uniform PushConstants {
     mat4   viewProj;
     uvec4  extra; // x = first_instance into draw_instances[]
@@ -16,7 +18,6 @@ layout(set = 0, binding = 1) readonly buffer DrawInstances {
     DrawInstance draw_instances[];
 };
 
-// Vertex attributes
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec4 inTangent;

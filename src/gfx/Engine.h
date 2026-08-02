@@ -4,6 +4,7 @@
 #include "gfx/Renderer.h"
 #include "scene/Camera.h"
 #include "core/Log.h"
+#include <glm/glm.hpp>
 #include <iostream>
 #include <stdio.h>
 #include <utility>
@@ -61,6 +62,10 @@ class Engine {
 
     // Write active lights + constants into the mapped buffers for one frame slot.
     void write_frame_lighting(uint32_t frame_index);
+
+    // Frustum-cull RenderMeshes, pack DrawInstanceGPU + indirect commands for this frame.
+    void prepare_culled_draws(uint32_t frame_index, const glm::mat4& view_proj);
+
     bool init_pipeline_layout();
     bool init_graphics_pipeline();
 

@@ -17,16 +17,18 @@
 #include <GLFW/glfw3.h>
 #include <array>
 #include <vector>
+#include <vulkan/vulkan.h>
 
 namespace gfx {
 struct Renderer {
     static constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 2;
 
     // Bindless set layout (textures must be highest binding for VARIABLE_COUNT):
-    // 0 FrameConstants | 1 instances | 2 materials | 3 mesh meta
+    // 0 FrameConstants | 1 draw instances | 2 materials | 3 mesh meta
     // 4 verts | 5 indices | 6 lights SSBO
     // 7 prefiltered env cubemap | 8 BRDF LUT | 9 textures[]
     static constexpr uint32_t BINDING_FRAME_CONSTANTS = 0;
+    static constexpr uint32_t BINDING_DRAW_INSTANCES = 1;
     static constexpr uint32_t BINDING_LIGHTS = 6;
     static constexpr uint32_t BINDING_IBL_SPECULAR = 7;
     static constexpr uint32_t BINDING_IBL_BRDF_LUT = 8;
@@ -42,28 +44,31 @@ struct Renderer {
     TextureManager texture_manager{};
     scene::SceneManager scene_manager{};
 
-    // Engine-owned fallback / dev light when the scene has no KHR_lights_punctual.
     gfx::Light globalLight{};
-
-    // Scene lights (world-space after load). Primary source for the lights SSBO.
     std::vector<gfx::Light> lights{};
-
-    // Cached scene center for auto-exposure (updated at load).
     glm::vec3 scene_center{0.0f};
 
-    // Per-frame FrameConstants UBO (binding 0) + lights SSBO (binding 6).
-    // Double-buffered and paired with bindless_descriptor_sets[] by current_frame.
     std::array<AllocatedBuffer, 2> frame_constants_buffer{};
     std::array<AllocatedBuffer, 2> frame_lights_buffer{};
 
-    // Engine IBL (procedural sky → SH + prefiltered cube + BRDF LUT)
     IblEnvironment ibl{};
 
-    // Instanced draws: compact DrawInstanceGPU[] (binding 1) + mesh batches.
-    // Built once at scene load; static scenes only for now.
-    AllocatedBuffer draw_instance_buffer{};
-    std::vector<DrawInstanceGPU> draw_instances_cpu{};
-    std::vector<DrawBatch> draw_batches{};
+    // Static mesh draw templates (built at load). Per-frame cull fills instances + indirect.
+    std::vector<MeshDrawInfo> mesh_draw_infos{};
+
+    // Per-frame-in-flight: visible DrawInstanceGPU[] + draw commands after cull
+    std::array<AllocatedBuffer, 2> draw_instance_buffer{};
+    std::array<AllocatedBuffer, 2> indirect_draw_buffer{}; // VkDrawIndexedIndirectCommand
+    // Base instance index into draw_instance_buffer for each indirect command
+    // (must NOT also go in cmd.firstInstance — see prepare_culled_draws).
+    std::array<std::vector<uint32_t>, 2> indirect_instance_bases{};
+    std::array<uint32_t, 2> indirect_draw_count{}; // commands written this frame
+    uint32_t max_draw_instances = 0;
+    uint32_t max_indirect_draws = 0;
+
+    // Optional: last frame cull stats for logging
+    uint32_t last_visible_instances = 0;
+    uint32_t last_total_render_meshes = 0;
 
     uint32_t current_frame = 0;
 

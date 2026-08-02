@@ -47,7 +47,7 @@ Early foundation phase. A basic PBR forward renderer is implemented and active. 
 
 ## Current Focus Areas
 
-- GPU frustum culling over `RenderMesh` + transform SSBO; multi-draw indirect
+- Move frustum cull to compute (write indirect + instances on GPU); `gl_BaseInstance` path
 - Transform hierarchy propagate (local TRS SOA → world)
 - Spot light direction packing, dynamic lights, HDR env loading
 - Optional: remove or archive unused `debug_draw.*` path
@@ -69,11 +69,13 @@ Early foundation phase. A basic PBR forward renderer is implemented and active. 
   - BRDF integration LUT (128²) → binding 8 `sampler2D`
   - Split-sum specular in `pbr.frag` when IBL is ready
   Still deferred: load HDR equirect env assets, dynamic lights, clustered many-lights, complete spot packing.
-- **Instancing (landed)**: `RenderMesh` entries grouped by `mesh_index` into `DrawBatch`es. One `vkCmdDrawIndexed` per unique mesh with `instanceCount = N`. `DrawInstanceGPU` SSBO (binding 1) from transform + material.
-- No multi-draw indirect / GPU-driven draw counts yet.
-- The old debug shader (`debug_draw.*`) still exists but is not the active pipeline (forced-depth hack remains only there).
-- No compute culling pass
-- No indirect drawing
+- **Instancing + cull + indirect (landed)**:
+  - Static `MeshDrawInfo` templates at load (geometry ranges + RenderMesh ids)
+  - Per-frame **CPU frustum cull** of world AABBs (`core::Frustum`) → compact `DrawInstanceGPU[]` + `VkDrawIndexedIndirectCommand[]` (double-buffered)
+  - `vkCmdDrawIndexedIndirect` per visible mesh batch; push `first_instance` as `pc.extra.x`
+  - Device features: `multiDrawIndirect`, `drawIndirectFirstInstance` (ready for full GPU path)
+  - Still TODO: compute cull writing indirect/instance buffers; `gl_BaseInstance` when glslc supports it
+- The old debug shader (`debug_draw.*`) still exists but is not the active pipeline
 - No OpenXR / VR input layer (desktop GLFW only)
 - **Scene model (foundation landed)**: glTF load creates `GameObject` (per mesh node) + `RenderMesh` (per prim) + `TransformManager` world matrices. Instanced draws and camera framing use this path. Legacy `SceneInstance` dual-written. Log: `gameObjects=… renderMeshes=… transforms=…`. Still TODO: hierarchy propagate, GPU cull buffer, full SOA TRS.
 - No physics, audio, or higher-level input abstraction (desktop input layer is now complete via `core::InputManager`)
@@ -90,7 +92,8 @@ Early foundation phase. A basic PBR forward renderer is implemented and active. 
 - [done] Camera framing
 - [done] Mesh-grouped instancing (`DrawBatch` / `DrawInstanceGPU`)
 - [done] GameObject + RenderMesh + TransformManager foundation
-- Next: GPU frustum culling + multi-draw indirect; transform hierarchy propagate
+- [done] Frustum culling + multi-draw indirect (CPU cull; compute cull next)
+- Next: compute frustum cull; transform hierarchy propagate
 - [done] Desktop input layer: `core::InputManager` (callback-driven deltas + EWMA + acceleration + capture state) + full decoupling from `scene::Camera` (see `docs/architecture/desktop-inputs.md` and the implementation plan). Pitch sign convention restored to original comfortable default.
 - glTF loader robustness: `extract_mesh_data` now accepts primitives that provide only POSITION (common in minimal test assets). Missing NORMAL defaults to (0,0,1); missing TEXCOORD_0 defaults to (0,0). This allows the Cameras.gltf pure-camera test scene (and similar) to load and render its proxy geometry. Also injects a default white material when the glTF contains no materials array (primitives may still reference default material via -1).
 - Node transform extraction (`extract_node_transform`): now correctly defaults absent translation (0,0,0), rotation (identity quat), and scale (1,1,1) per glTF spec. Previous `value_or_ident` always supplied 1.0 which placed nodes incorrectly for assets like Cameras.gltf that omit TRS keys on some nodes (e.g. camera nodes with only translation, mesh nodes with only rotation). The helper was removed as dead after the fix. Quat component order also corrected for glTF [x,y,z,w] layout.

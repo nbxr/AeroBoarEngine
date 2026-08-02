@@ -14,22 +14,29 @@ struct DrawInstanceGPU {
 };
 static_assert(sizeof(DrawInstanceGPU) == 80, "DrawInstanceGPU must be 80 bytes");
 
-// One multi-instance draw: all instances share the same mesh primitive (index/vertex range).
+// Static mesh draw template (geometry range). Visibility is decided per frame.
+struct MeshDrawInfo {
+    uint32_t mesh_index = 0;
+    uint32_t index_count = 0;
+    uint32_t index_offset = 0;
+    int32_t  vertex_offset = 0;
+    std::vector<uint32_t> render_mesh_ids; // SceneManager RenderMesh indices
+};
+
+// One multi-instance draw after culling (matches VkDrawIndexedIndirectCommand layout).
 struct DrawBatch {
     uint32_t mesh_index = 0;
     uint32_t index_count = 0;
-    uint32_t index_offset = 0;  // firstIndex for vkCmdDrawIndexed
-    int32_t  vertex_offset = 0; // vertexOffset for vkCmdDrawIndexed
-    uint32_t first_instance = 0;
+    uint32_t index_offset = 0;
+    int32_t  vertex_offset = 0;
+    uint32_t first_instance = 0; // gl_BaseInstance into DrawInstanceGPU[]
     uint32_t instance_count = 0;
 };
 
-// Push constants for instanced PBR (viewProj + base instance index).
-// Model/material come from DrawInstanceGPU[base + gl_InstanceIndex].
+// Push constants: viewProj only (base instance comes from gl_BaseInstance).
 struct PbrPushInstanced {
     glm::mat4 viewProj{1.0f};
-    glm::uvec4 extra{0}; // x = first_instance into DrawInstanceGPU[]
-                         // y = debugMode (0 = normal)
+    glm::uvec4 extra{0}; // y = debugMode (reserved)
 };
 static_assert(sizeof(PbrPushInstanced) == 80, "PbrPushInstanced size");
 

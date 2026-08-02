@@ -186,6 +186,17 @@ void gfx::Engine::add_features(vkb::PhysicalDeviceSelector &selector) {
     selector.add_required_extension(
         VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME);
 
+    // Multi-draw indirect uses firstInstance → gl_BaseInstance in the VS.
+    VkPhysicalDeviceFeatures features10{};
+    features10.drawIndirectFirstInstance = VK_TRUE;
+    features10.multiDrawIndirect = VK_TRUE;
+    selector.set_required_features(features10);
+
+    VkPhysicalDeviceVulkan11Features features11{};
+    features11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
+    features11.shaderDrawParameters = VK_TRUE; // gl_BaseInstance
+    selector.set_required_features_11(features11);
+
     VkPhysicalDeviceVulkan12Features features12 = {};
     features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
     features12.descriptorIndexing = VK_TRUE;

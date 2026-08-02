@@ -3,10 +3,10 @@
 #include <vulkan/vulkan.h>
 #include "gfx/VulkanContext.h"
 #include "gfx/PassContext.h"
-#include "scene/SceneInstance.h"
 #include "gfx/Light.h"
 #include "gfx/BufferUtils.h"
 #include "gfx/PbrPush.h"
+#include "core/Frustum.h"
 
 // GLM configuration for Vulkan
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -14,6 +14,7 @@
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <array>
 
 void gfx::Engine::render() {
     auto& vk = renderer.vk;
@@ -125,6 +126,9 @@ void gfx::Engine::render() {
 
     glm::mat4 viewProj = proj * view;
 
+    // CPU frustum cull → pack instances + indirect commands (fence already waited).
+    prepare_culled_draws(renderer.current_frame, viewProj);
+
     auto& index_buf = renderer.mesh_manager.get_render_index_buffer();
     vkCmdBindIndexBuffer(frame.command_buffer, index_buf.buffer, 0, VK_INDEX_TYPE_UINT32);
 
@@ -132,18 +136,19 @@ void gfx::Engine::render() {
     VkDeviceSize vbo_offset = 0;
     vkCmdBindVertexBuffers(frame.command_buffer, 0, 1, &vertex_buf.buffer, &vbo_offset);
 
-    // Instanced draws: one vkCmdDrawIndexed per unique mesh (N instances each).
-    // Model + material come from DrawInstanceGPU[first_instance + gl_InstanceIndex].
+    // Culled multi-draw: one draw per visible mesh batch.
+    // Instance buffer base is push.extra.x only (cmd.firstInstance is always 0).
+    const uint32_t draw_count = renderer.indirect_draw_count[renderer.current_frame];
+    const auto* cmds = static_cast<const VkDrawIndexedIndirectCommand*>(
+        renderer.indirect_draw_buffer[renderer.current_frame].mapped_data);
+    const auto& bases = renderer.indirect_instance_bases[renderer.current_frame];
+
     gfx::PbrPush pushData{};
     pushData.viewProj = viewProj;
-    constexpr uint32_t kDebugMode = 0;
 
-    for (const auto& batch : renderer.draw_batches) {
-        if (batch.instance_count == 0 || batch.index_count == 0)
-            continue;
-
-        pushData.extra = glm::uvec4{batch.first_instance, kDebugMode, 0, 0};
-
+    for (uint32_t i = 0; i < draw_count; ++i) {
+        const uint32_t base = (i < bases.size()) ? bases[i] : 0u;
+        pushData.extra = glm::uvec4{base, 0u, 0u, 0u};
         vkCmdPushConstants(
             frame.command_buffer,
             vk.pipeline_layout,
@@ -152,12 +157,16 @@ void gfx::Engine::render() {
             sizeof(PbrPush),
             &pushData);
 
-        vkCmdDrawIndexed(frame.command_buffer,
-                         batch.index_count,
-                         batch.instance_count,
-                         batch.index_offset,
-                         batch.vertex_offset,
-                         0);
+        // Direct multi-instance draw (same data as the indirect command).
+        // Prefer DrawIndexed over Indirect here so firstInstance cannot interact
+        // with gl_InstanceIndex; command buffer still drives future GPU cull.
+        vkCmdDrawIndexed(
+            frame.command_buffer,
+            cmds[i].indexCount,
+            cmds[i].instanceCount,
+            cmds[i].firstIndex,
+            cmds[i].vertexOffset,
+            0);
     }
 
     vkCmdEndRenderPass(frame.command_buffer);
