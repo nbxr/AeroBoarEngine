@@ -49,7 +49,6 @@ Early foundation phase. A basic PBR forward renderer is implemented and active. 
 
 - Dirty-flag per-frame `propagate()` when animated transforms land
 - Spot light direction packing, dynamic lights, HDR env loading
-- Optional: remove or archive unused `debug_draw.*` path
 - **Future tooling:** migrate shader compile from `glslc` → **glslang** when cross-platform (Quest/Android) work starts — see `tech_context.md`
 - **VR depth / cull quality (roadmap):** reverse-Z + replace HZB hysteresis with same-frame / reprojected Hi-Z — see `tech_context.md`
 
@@ -80,7 +79,6 @@ Early foundation phase. A basic PBR forward renderer is implemented and active. 
   - HZB occlusion uses **desktop hysteresis** (see `tech_context.md` § Hi-Z occlusion hysteresis): off on any camera motion, on only after ~20 still frames + capture-camera match. **Interim only** — replace/improve for VR head-tracking (same-frame HZB or reprojection), not hysteresis.
   - Still TODO for cull quality: same-frame two-phase occlusion / reprojected HZB while the camera (or HMD) moves
 - **Depth model:** standard Z today (0=near, 1=far, `LESS`). **Planned:** reverse-Z with VR/multiview depth work (`GREATER`/`GREATER_OR_EQUAL`, clear 0, max-depth Hi-Z) — official roadmap item in `tech_context.md`
-- The old debug shader (`debug_draw.*`) still exists but is not the active pipeline
 - No OpenXR / VR input layer (desktop GLFW only)
 - **Scene model (hierarchy landed)**: `GameObject` + `RenderMesh` + `TransformManager` with **local matrices + parent links + `propagate()`** at load. glTF load walks the node tree (`set_local` + `set_parent`), then `propagate()`, then `refresh_instance_worlds()` + `GpuCulling::build_scene` (world matrices). Legacy `SceneInstance` dual-written and re-synced after propagate.
 - No physics, audio, or higher-level input abstraction (desktop input layer is now complete via `core::InputManager`)
@@ -131,7 +129,7 @@ A basic PBR forward renderer is now active:
 - The render loop successfully draws the loaded scene with correct transforms.
 - Multi-material scenes work once materials are indexed as elements of a single SSBO (see Materials SSBO note below).
 
-The implementation is on a CPU-driven path (one draw call per primitive). Instancing and GPU-driven culling remain future work.
+GPU frustum/Hi-Z cull + mesh-grouped instancing + single multi-draw indirect is the active path (see Known Gaps for remaining work).
 
 ### Materials SSBO (important)
 
@@ -165,12 +163,11 @@ These are non-functional cleanup items identified after the namespace reorganiza
 - Consider whether the top-level `AeroBoar` stub class is still needed.
 - [done] Complete per-frame bindless descriptor consistency for globals (binding 0): legacy `globals_upload`/`globals_render` removed, `bind_frame_globals_to_all_sets()` helper added, all sets now correctly paired with their buffers.
 - [done] PBR diagnostic noise and accidental `extra.y` debug-mode pollution cleaned up (2026-08).
+- [done] Removed unused `debug_draw.*` / `screen_clear.*` shaders; dead MeshManager first-mesh helpers; unused `batch_bases` after multi-draw; PBR push-constant debug viz branches.
 
 ## Debugging & Diagnostics
 - `core/Log.h` now supports a persistent log file (`aero_boar.log`). The file is explicitly opened relative to `std::filesystem::current_path()` (the process working directory) at startup. This respects the project's CMake setting `VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"`, so under normal debugging the log lands in the `build/` folder. At init time the code prints the **full absolute path** to both the console and the Visual Studio / VS Code debugger Output window so you always know exactly where the validation crash log went.
 - Replaced vk-bootstrap's default debug messenger with a custom `VkDebugUtilsMessengerEXT` callback (`vulkan_debug_callback` in Engine.InitializeDevices.cpp) that funnels every validation layer message (errors, warnings, info, loader messages, etc.) through the logger. This ensures the exact validation text that precedes a crash (e.g. the DEVICE_LOST / bindless / sync issues you are hunting) is retained in the log file even when stdout/stderr buffers are lost.
 - The log is enabled unconditionally at the very start of `main()`; no new config or command-line flags were added (kept minimal per project rules).
 - The messenger is still cleaned up via `vkb::destroy_debug_utils_messenger` in the normal destroy path.
-- Optional PBR debug viz remains available by setting `kDebugMode` in `Engine.Render.cpp` (`0` normal, `1` UV, `2` flat by material index). Default is `0`.
-
 Update this file when major phases complete or the focus shifts significantly.

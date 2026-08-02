@@ -65,7 +65,7 @@ bool gfx::Engine::init_vulkan() {
     if (!init_render_pass()) //
         return false;
 
-    // intialize MSAA and depth images
+    // Initialize MSAA and depth images
     if (!init_msaa_color_image())
         return false;
 

@@ -68,21 +68,10 @@ class MeshManager {
     void toggle_buffers();  // exposed for Engine load-time commit (double-buffer swap)
     void shutdown();
 
-    // Force clear CPU-side mesh data (useful for debugging reloads / stale UV data)
+    // Force clear CPU-side mesh data (scene reload / re-upload).
     void clear_all_caches();
 
-    // Accessors for the first loaded primitive (used by the renderer)
-    [[nodiscard]] uint32_t get_first_primitive_vertex_offset() const;
-    [[nodiscard]] uint32_t get_first_primitive_index_offset() const;
-    [[nodiscard]] uint32_t get_first_primitive_index_count() const;
-
-    // Full range for the very first mesh (all its primitives) — for debug drawing
-    [[nodiscard]] uint32_t get_first_mesh_vertex_offset() const;
-    [[nodiscard]] uint32_t get_first_mesh_vertex_count() const;
-    [[nodiscard]] uint32_t get_first_mesh_index_offset() const;
-    [[nodiscard]] uint32_t get_first_mesh_index_count() const;
-
-    // Per-primitive accessors for drawing all meshes in the scene (debug path)
+    // Per-primitive accessors (GPU cull / instanced draw path)
     [[nodiscard]] uint32_t get_primitive_count() const;
     [[nodiscard]] uint64_t get_total_vertex_count() const { return vertex_count; }
     [[nodiscard]] uint64_t get_total_index_count() const { return index_count; }

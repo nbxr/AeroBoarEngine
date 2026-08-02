@@ -55,10 +55,6 @@ file(MAKE_DIRECTORY ${SHADER_OUTPUT_DIR})
 
 # Define shader files to compile (add more as needed)
 set(SHADER_FILES
-    screen_clear.vert
-    screen_clear.frag
-    debug_draw.vert
-    debug_draw.frag
     pbr.vert
     pbr.frag
     cull_frustum.comp

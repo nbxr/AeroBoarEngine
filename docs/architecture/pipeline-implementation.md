@@ -10,13 +10,10 @@ Goal: 72–120 FPS at 2064×2208 per eye with minimal CPU overhead and maximum d
 ## Status / Target vs Current
 **This is target / aspirational guidance for the 2026 Quest 3 pipeline.**
 
-As of late May 2026:
-- A basic PBR forward shader (`pbr.vert` / `pbr.frag`) is implemented and active. It supports albedo, normal, metal/roughness, emissive, and separate AO textures.
-- A working render loop exists and draws scenes using the bindless resources + per-draw push constants.
-- Single-subpass render pass with transient MSAA + `DONT_CARE` is in place.
-- The current active asset only contains a single material.
-- Multi-subpass structure, multiview, compute culling, indirect draws, and advanced lighting (full IBL + multi-light from scenes) are **not yet implemented**. We currently have a correct GGX BRDF + one reliable engine-provided global directional light via the binding 0 UBO. See `docs/architecture/lighting-implementation.md` for the exact current simplified model.
-- Drawing is still CPU-driven (one `vkCmdDrawIndexed` per primitive). Vertex input uses proper attributes (`gfx::Vertex`); materials are a single SSBO with a runtime array (not a descriptor array of buffers).
+**Status snapshot (maintain details in `docs/agents/current_state.md`):**
+- Active path: bindless PBR (`pbr.vert` / `pbr.frag`), GPU frustum + Hi-Z cull, multi-draw indirect, scene lights + procedural IBL.
+- Desktop single-subpass with MSAA + depth resolve for Hi-Z source.
+- Still target/aspirational for Quest: multiview, reverse-Z, TBDR subpass layout, full production IBL assets, clustered lights.
 
 See `docs/agents/current_state.md` for the latest implementation status.
 

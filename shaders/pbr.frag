@@ -40,10 +40,10 @@ layout(location = 2) in vec4 inTangent;
 layout(location = 3) in vec2 inUV;
 layout(location = 4) flat in uint inMaterialIndex;
 
-// Push constants (must match pbr.vert) — only viewProj + debug/base used here
+// Push constants (must match pbr.vert / gfx::PbrPushInstanced)
 layout(push_constant) uniform PushConstants {
     mat4   viewProj;
-    uvec4  extra; // y = debugMode
+    uvec4  extra; // reserved
 } pc;
 
 layout(location = 0) out vec4 outColor;
@@ -290,16 +290,4 @@ void main() {
     color = color / (color + 1.0);
 
     outColor = vec4(color, albedo.a);
-
-    // Optional visualization via push constant extra.y (default 0 = normal PBR).
-    // Set only from Engine.Render.cpp intentionally — do not encode draw indices here.
-    //   1 = UV (R=U, G=V)
-    //   2 = flat gray by material index (sanity-check multi-material)
-    uint debugMode = pc.extra.y;
-    if (debugMode == 1u) {
-        outColor = vec4(inUV, 0.0, 1.0);
-    } else if (debugMode == 2u) {
-        float id = float(matIdx % 8u);
-        outColor = vec4(vec3(id / 7.0), 1.0);
-    }
 }

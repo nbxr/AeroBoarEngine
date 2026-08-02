@@ -512,7 +512,6 @@ scene::GltfLoader::extract_mesh_data(const tinygltf::Model &model,
             }
 
             mesh_data.local_aabb = aabb;
-            // mesh_data.material = material_lookup[primitive.material]; // TODO
 
             meshes.push_back(renderer.mesh_manager.add_mesh(mesh_data));
         }

@@ -323,10 +323,9 @@ bool gfx::Engine::init_swapchain(vkb::Device &dev) {
     vkb::SwapchainBuilder swapchain_builder{dev, renderer.vk.surface};
     auto swap_ret =
         swapchain_builder
-            // Quick experiment (Step 2): request one extra image beyond MAX_FRAMES_IN_FLIGHT
-            // to give the present engine headroom. With 2 frames + 2 images + vsync we were
-            // hitting the "already acquired 1 image" VUID + immediate DEVICE_LOST on submit.
-            // For Quest 3 the runtime controls the actual count; desktop can afford a bit more slack.
+            // Request one extra image beyond MAX_FRAMES_IN_FLIGHT so present has
+            // headroom under vsync (avoids "already acquired" stress on desktop).
+            // Quest/OpenXR runtime controls swapchain count separately.
             .set_desired_min_image_count(renderer.MAX_FRAMES_IN_FLIGHT + 1)
             .build();
 
@@ -350,7 +349,8 @@ bool gfx::Engine::init_swapchain(vkb::Device &dev) {
     renderer.vk.swap_chain_image_count = static_cast<uint32_t>(renderer.vk.swap_chain_image_views.size());
 
     LOG_INFO("[Swapchain] Created with " << renderer.vk.swap_chain_image_count
-             << " images (requested minImageCount=" << renderer.MAX_FRAMES_IN_FLIGHT + 1 << " for headroom experiment)");
+             << " images (minImageCount request="
+             << renderer.MAX_FRAMES_IN_FLIGHT + 1 << ")");
 
     return true;
 }
@@ -382,8 +382,6 @@ void gfx::Engine::recreate_swapchain() {
     vkb::SwapchainBuilder swapchain_builder{renderer.vk.device};
     auto swap_ret = swapchain_builder
         .set_old_swapchain(renderer.vk.swapchain)
-        // Quick experiment (Step 2): request one extra image beyond MAX_FRAMES_IN_FLIGHT
-        // (same rationale as in init_swapchain).
         .set_desired_min_image_count(renderer.MAX_FRAMES_IN_FLIGHT + 1)
         .set_desired_extent(renderer.window.width, renderer.window.height)
         .build();
@@ -586,7 +584,8 @@ void gfx::Engine::recreate_swapchain() {
         renderer.current_frame = 0;
 
         LOG_INFO("[Swapchain] Recreated with " << renderer.vk.swap_chain_image_count
-                 << " images (requested minImageCount=" << renderer.MAX_FRAMES_IN_FLIGHT + 1 << " for headroom experiment)");
+                 << " images (minImageCount request="
+                 << renderer.MAX_FRAMES_IN_FLIGHT + 1 << ")");
 
     } else {
         // --- ROLLBACK: Something failed. Clean up everything we created and keep old resources ---

@@ -4,15 +4,15 @@
 Lightweight, cache-friendly data structures designed for a C++ Vulkan engine using GPU-driven rendering on Meta Quest 3. Focuses on efficient GLTF loading, multi-mesh / multi-material support (e.g. characters), and direct feeding into compute-based culling and indirect draw pipelines.
 
 ## Status
-**Foundation landed (load path + draw source of truth).**  
+**Hierarchy + GPU cull path landed (see `docs/agents/current_state.md` for latest).**  
 
-- `TransformManager` — dense world-matrix storage with allocate/free and parent slots (propagation still TODO).
+- `TransformManager` — local matrices + parent links + `propagate()` to world (load-time; dirty per-frame propagate still TODO).
 - `GameObject` — root transform + render-mesh range; one per glTF mesh node at load.
 - `RenderMesh` — mesh/material/transform indices + **mesh-local** AABB; one per primitive.
-- `SceneManager` — registry (`create_game_object`, `add_render_mesh`); framing and instanced draws read this model.
-- Legacy `SceneInstance` is dual-written for compatibility and optional GPU upload; new code should use RenderMesh.
+- `SceneManager` — registry (`create_game_object`, `add_render_mesh`); framing and GPU cull read this model.
+- Legacy `SceneInstance` is dual-written / refreshed after `propagate()` for compatibility.
 
-Still TODO: local TRS SOA + hierarchy propagate, dirty upload of transforms, GPU cull SSBO of RenderMeshes, skinning.
+Still TODO: dirty upload of transforms per frame, skinning, full TRS SOA if needed.
 
 ## Core Principles
 - Flat SOA-style layouts for high cache efficiency and low CPU overhead.

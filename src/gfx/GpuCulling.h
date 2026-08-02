@@ -84,9 +84,6 @@ class GpuCulling {
         return indirect_cmds_[frame];
     }
 
-    // CPU-side bases for push.extra.x (static after build_scene)
-    [[nodiscard]] const std::vector<uint32_t>& batch_bases() const { return batch_bases_; }
-
     // After fence wait for this frame slot, previous counts are still valid until record().
     [[nodiscard]] uint32_t read_visible_count(uint32_t frame_index) const;
 
@@ -116,7 +113,6 @@ class GpuCulling {
     std::array<AllocatedBuffer, kMaxFrames> out_instances_{};
     std::array<AllocatedBuffer, kMaxFrames> indirect_cmds_{};
 
-    std::vector<uint32_t> batch_bases_{};
     uint32_t item_count_ = 0;
     uint32_t batch_count_ = 0;
     bool ready_ = false;

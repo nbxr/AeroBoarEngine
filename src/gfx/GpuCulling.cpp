@@ -117,7 +117,6 @@ void GpuCulling::clear_scene(VkDevice device, VmaAllocator allocator) {
         BufferUtils::destroy_buffer(device, allocator, out_instances_[i]);
         BufferUtils::destroy_buffer(device, allocator, indirect_cmds_[i]);
     }
-    batch_bases_.clear();
     item_count_ = 0;
     batch_count_ = 0;
     ready_ = false;
@@ -220,7 +219,6 @@ bool GpuCulling::build_scene(VkDevice device, VmaAllocator allocator,
 
     std::vector<GpuBatchMeta> metas(batch_count_);
     std::vector<GpuCullItem> items;
-    batch_bases_.resize(batch_count_);
 
     uint32_t running_base = 0;
     for (uint32_t b = 0; b < batch_count_; ++b) {
@@ -231,7 +229,6 @@ bool GpuCulling::build_scene(VkDevice device, VmaAllocator allocator,
         metas[b].index_count = info.index_count;
         metas[b].first_index = info.index_offset;
         metas[b].vertex_offset = info.vertex_offset;
-        batch_bases_[b] = running_base;
 
         for (uint32_t rm_id : info.render_mesh_ids) {
             const auto& rm = scene.get_render_mesh(rm_id);
