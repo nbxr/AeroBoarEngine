@@ -1,0 +1,46 @@
+{
+  "defaultScene": "ABeautifulGame",
+  "activeSystem": "Windows",
+  "home": [
+    {
+      "system": "Windows",
+      "path": "W:/git/"
+    },
+    {
+      "system": "Linux",
+      "path": "/home/nolin/repo/"
+    }
+  ],
+  "scenes": [
+    {
+      "name": "Sponza",
+      "filename": "glTF-Sample-Assets/Models/Sponza/glTF/Sponza.gltf"
+    },
+    {
+      "name": "DamagedHelmet",
+      "filename": "glTF-Sample-Assets/Models/DamagedHelmet/glTF/DamagedHelmet.gltf"
+    },
+    {
+      "name": "Dev",
+      "filename": "glTF-Sample-Assets/Models/Suzanne/glTF/Suzanne.gltf"
+    },
+    {
+      "name": "DamagedHelmetScene",
+      "filename": "glTF-Sample-Assets/Models/DamagedHelmet/glTF-Scene/DamagedHelmetScene.gltf"
+    },
+    {
+      "name": "Cameras",
+      "filename": "glTF-Sample-Assets/Models/Cameras/glTF/Cameras.gltf"
+    },
+    {
+      "name": "ABeautifulGame",
+      "filename": "glTF-Sample-Assets/Models/ABeautifulGame/glTF/ABeautifulGame.gltf"
+    }
+  ],
+  "validationFeatures" : [
+    {
+      "name": "gpuAssistedValidation",
+      "enabled": false
+    }
+  ]
+}

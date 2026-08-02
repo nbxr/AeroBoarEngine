@@ -1,0 +1,21 @@
+#version 450
+
+// Sample resolved single-sample depth → R32F HZB mip 0.
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2D depth_src;
+layout(set = 0, binding = 1, r32f) writeonly uniform image2D hzb_mip0;
+
+layout(push_constant) uniform PC {
+    uvec2 extent; // mip0 size
+} pc;
+
+void main() {
+    uvec2 p = gl_GlobalInvocationID.xy;
+    if (p.x >= pc.extent.x || p.y >= pc.extent.y)
+        return;
+
+    vec2 uv = (vec2(p) + vec2(0.5)) / vec2(pc.extent);
+    float d = texture(depth_src, uv).r;
+    imageStore(hzb_mip0, ivec2(p), vec4(d, 0.0, 0.0, 0.0));
+}

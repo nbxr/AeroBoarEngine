@@ -1,0 +1,208 @@
+#define VMA_IMPLEMENTATION
+#include "gfx/Engine.h"
+#include "gfx/AllocatedBuffer.h"
+#include "gfx/AllocatedImage.h"
+#include "gfx/BufferUtils.h"
+#include "scene/GameObject.h"
+#include "scene/RenderMesh.h"
+#include "gfx/Renderer.h"
+#include "gfx/Light.h"
+#include "VkBootstrap.h"
+#include "vk_mem_alloc.h"
+
+bool gfx::Engine::initialize() {
+    if (init_vulkan()) {
+        return true;
+    } else
+        return false;
+}
+
+bool gfx::Engine::init_vulkan() {
+    // Initialize Vulkan using vk-bootstrap
+    vkb::InstanceBuilder builder{};
+
+    // vulkan instance
+    if (!init_vk_instance(builder)) // destroy_devices
+        return false;
+
+    // surface
+    init_surface(); // destroy_devices
+
+    // physical and logical devices
+    auto init_phys = init_physical_device(); // n/a
+    if (!init_phys.first)
+        return false;
+    auto phys = init_phys.second;
+
+    select_depth_format(phys);
+    select_sample_counts(phys);
+
+    auto init_dev = init_logical_device(phys); // destroy_devices
+
+    if (!init_dev.first)
+        return false;
+
+    auto dev = init_dev.second;
+
+    if (!init_vma()) // destroy_vma
+        return false;
+
+    // queues
+    if (!init_graphics_queue(dev)) // n/a
+        return false;
+
+    if (!init_present_queue(dev)) // n/a
+        return false;
+
+    if (!init_transfer_queue(dev)) // n/a
+        return false;
+
+    // swapchain
+    if (!init_swapchain(dev)) // destroy_swapchain
+        return false;
+
+    // render pass
+    if (!init_render_pass()) //
+        return false;
+
+    // Initialize MSAA and depth images
+    if (!init_msaa_color_image())
+        return false;
+
+    if (!init_depth_image())
+        return false;
+
+    // Initialize descriptor pool and set layout for bindless rendering
+    if (!init_descriptor_pool())
+        return false;
+    if (!init_descriptor_set_layout())
+        return false;
+
+    if (!init_bindless_descriptor_set())
+        return false;
+
+    // Initialize pipeline layout
+    if (!init_pipeline_layout())
+        return false;
+
+    // Initialize graphics pipeline
+    if (!init_graphics_pipeline())
+        return false;
+
+    // Initialize command pool and buffers
+    if (!init_command_pool())
+        return false;
+
+    if (!init_command_buffers())
+        return false;
+
+    // Initialize framebuffers
+    if (!init_framebuffers())
+        return false;
+
+    // Initialize synchronization primitives
+    if (!init_sync_primitives())
+        return false;
+
+    if (!init_resource_managers())
+        return false;
+
+    return true;
+}
+
+bool gfx::Engine::init_vma() {
+    VmaAllocatorCreateInfo alloc_info = {};
+    alloc_info.instance = renderer.vk.instance;
+    alloc_info.physicalDevice = renderer.vk.physical_device;
+    alloc_info.device = renderer.vk.device.device;
+    alloc_info.vulkanApiVersion = VK_API_VERSION_1_4;
+    alloc_info.flags = VMA_ALLOCATOR_CREATE_EXTERNALLY_SYNCHRONIZED_BIT |
+                       VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT |
+                       VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
+
+    if (vmaCreateAllocator(&alloc_info, &renderer.allocator) != VK_SUCCESS) {
+        LOG_ERROR("Failed to create Vulkan Memory Allocator");
+        return false;
+    }
+
+    return true;
+}
+
+bool gfx::Engine::init_surface() {
+    // surface
+    if (glfwCreateWindowSurface(renderer.vk.instance,
+                                renderer.window.glfw_handle, nullptr,
+                                &renderer.vk.surface) != VK_SUCCESS) {
+        LOG_ERROR("Failed to create Vulkan surface");
+        return false;
+    }
+    return true;
+}
+
+bool gfx::Engine::init_resource_managers() {
+    // Initialize managers. The initial capacity is passed; binding to specific
+    // descriptor sets happens later via explicit bind_descriptor(target) calls
+    // (replicated to all per-frame sets at load time in InitializeScene).
+    if (!renderer.scene_manager.initialize(
+            renderer.vk.device.device, renderer.allocator, 100))
+        return false;
+
+    if (!renderer.material_manager.initialize(
+            renderer.vk.device.device, renderer.allocator, 100))
+        return false;
+
+    if (!renderer.mesh_manager.initialize(
+            renderer.vk.device.device, renderer.allocator, 100))
+        return false;
+
+    if (!renderer.texture_manager.initialize(
+            renderer.vk.device.device, renderer.allocator,
+            renderer.vk.transfer_queue, renderer.vk.graphics_queue,
+            renderer.vk.graphics_family_index,
+            renderer.vk.transfer_family_index))
+        return false;
+
+    // FrameConstants UBO (binding 0) + lights SSBO (binding 6), double-buffered.
+    VkDeviceSize constantsSize = sizeof(gfx::FrameConstants);
+    VkBufferUsageFlags uboUsage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+    VkDeviceSize lightsSize =
+        static_cast<VkDeviceSize>(gfx::MAX_LIGHTS) * sizeof(gfx::GpuLight);
+
+    bool c0 = gfx::BufferUtils::initialize_buffer(
+        renderer.vk.device.device, renderer.allocator, constantsSize,
+        renderer.frame_constants_buffer[0], uboUsage);
+    bool c1 = gfx::BufferUtils::initialize_buffer(
+        renderer.vk.device.device, renderer.allocator, constantsSize,
+        renderer.frame_constants_buffer[1], uboUsage);
+    bool l0 = gfx::BufferUtils::initialize_buffer(
+        renderer.vk.device.device, renderer.allocator, lightsSize,
+        renderer.frame_lights_buffer[0]);
+    bool l1 = gfx::BufferUtils::initialize_buffer(
+        renderer.vk.device.device, renderer.allocator, lightsSize,
+        renderer.frame_lights_buffer[1]);
+
+    if (!c0 || !c1 || !l0 || !l1) {
+        LOG_ERROR("Failed to create per-frame lighting buffers (constants UBO + lights SSBO)");
+        return false;
+    }
+
+    // Procedural IBL (SH + prefiltered cube + BRDF LUT). Non-fatal if bake fails.
+    if (!renderer.ibl.initialize(renderer.vk.device.device, renderer.allocator,
+                                 renderer.vk.graphics_queue,
+                                 renderer.vk.graphics_family_index)) {
+        LOG_ERROR("[IBL] initialize failed — continuing without specular IBL");
+    }
+
+    if (!renderer.gpu_culling.initialize(renderer.vk.device.device, renderer.allocator)) {
+        LOG_ERROR("[GpuCulling] initialize failed — will fall back if scene has no cull data");
+    }
+
+    if (!renderer.hzb.initialize(renderer.vk.device.device, renderer.allocator)) {
+        LOG_ERROR("[Hzb] initialize failed — occlusion culling disabled");
+    } else if (!renderer.hzb.resize(renderer.vk.device.device, renderer.allocator,
+                                    renderer.vk.swap_chain_extent)) {
+        LOG_ERROR("[Hzb] resize failed — occlusion culling disabled");
+    }
+
+    return true;
+}

@@ -1,286 +1,310 @@
-cmake_minimum_required(VERSION 3.20)
-project(AeroBoarEngine LANGUAGES CXX)
+cmake_minimum_required(VERSION 3.5...3.22)
+
+project(Aero_Boar_Engine)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Configure for static linking
-set(CMAKE_FIND_LIBRARY_SUFFIXES .lib .a)
-set(BUILD_SHARED_LIBS OFF)
-
-# Static runtime library for MSVC
-if(MSVC)
-    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MT")
-    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MTd")
-    set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /MT")
-    set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} /MTd")
-    
+# -----------------------------------------------------------------------------
+# Basic sanity checks
+# -----------------------------------------------------------------------------
+if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+    message(FATAL_ERROR
+        "32-bit build detected (i686 / mingw32 style).\n"
+        "This engine requires a 64-bit toolchain (x86_64 or ARM64).\n"
+        "Current compiler: ${CMAKE_CXX_COMPILER}\n\n"
+        "On Windows:\n"
+        "  - Preferred: cmake -G \"Visual Studio 17 2022\" -A x64\n"
+        "  - For 64-bit MinGW: use x86_64-w64-mingw32-gcc/g++ (not the i686 'mingw32' one)\n"
+        "Delete your build/ directory and reconfigure with a 64-bit compiler.")
 endif()
 
-# Additional static linking configuration
-set(CMAKE_POSITION_INDEPENDENT_CODE OFF)
-
-# Set Visual Studio solution and project organization
-if(MSVC)
-    set_property(GLOBAL PROPERTY USE_FOLDERS ON)
-    set_property(GLOBAL PROPERTY PREDEFINED_TARGETS_FOLDER "CMake")
+# Add position-independent code for Linux builds
+if(UNIX AND NOT APPLE)
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 endif()
 
-# Build options
-option(BUILD_VR "Enable VR mode (OpenXR)" ON)
-option(BUILD_ANDROID "Build for Android (Quest)" OFF)
+# -----------------------------------------------------------------------------
+# Shader compilation with glslc
+# -----------------------------------------------------------------------------
 
-# Find Vulkan and glslangValidator
-find_package(Vulkan REQUIRED)
-find_program(GLSLANG_VALIDATOR glslangValidator HINTS ${Vulkan_GLSLANG_VALIDATOR_EXECUTABLE})
-if(NOT GLSLANG_VALIDATOR)
-    message(FATAL_ERROR "glslangValidator not found. Install Vulkan SDK.")
+# Find glslc (part of Vulkan SDK)
+if(WIN32)
+    find_program(GLSLC glslc HINTS $ENV{VULKAN_SDK}/Bin)
+elseif(APPLE)
+    find_program(GLSLC glslc HINTS $ENV{VULKAN_SDK}/bin)
+else()
+    find_program(GLSLC glslc HINTS $ENV{VULKAN_SDK}/bin /usr/bin)
 endif()
 
-# Define source files
-set(SOURCES
-    src/main.cpp
-    src/core/renderer.cpp
-    src/core/transfer_manager.cpp
-    src/core/window_factory.cpp
-    src/core/skybox.cpp
-    src/core/accessibility.cpp
-    src/input/input_manager.cpp
-    src/input/hand_tracker.cpp
-    src/physics/physics_world.cpp
-    src/vr/vr_system.cpp
-    src/assets/gltf_loader.cpp
+if(NOT GLSLC)
+    message(WARNING "glslc not found. Shaders will not be compiled automatically.")
+    set(GLSLC_AVAILABLE OFF)
+else()
+    message(STATUS "Found glslc: ${GLSLC}")
+    set(GLSLC_AVAILABLE ON)
+endif()
+
+# Set shader directories
+set(SHADER_SOURCE_DIR ${CMAKE_SOURCE_DIR}/shaders)
+set(SHADER_OUTPUT_DIR ${CMAKE_BINARY_DIR}/shaders)
+
+# Create shader output directory
+file(MAKE_DIRECTORY ${SHADER_OUTPUT_DIR})
+
+# Define shader files to compile (add more as needed)
+set(SHADER_FILES
+    pbr.vert
+    pbr.frag
+    cull_frustum.comp
+    build_indirect.comp
+    hzb_copy.comp
+    hzb_reduce.comp
 )
 
-# Platform-specific sources
-if(BUILD_ANDROID)
-    set(PLATFORM_SOURCES src/platforms/android/android_main.cpp)
-else()
-    set(PLATFORM_SOURCES src/platforms/desktop/desktop_window.cpp)
-endif()
-
-# Combine sources
-list(APPEND SOURCES ${PLATFORM_SOURCES})
-
-# Include directories
-set(INCLUDE_DIRS
-    include
-    external/glfw/include
-    external/glm
-    external/jolt
-    external/openxr/include
-    external/tinygltf
-    external/fmod/inc
-    external/vk-bootstrap/src
-    external/vulkan-memory-allocator/include
-    ${Vulkan_INCLUDE_DIRS}
-)
-
-# Configure external libraries for static linking BEFORE adding subdirectories
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared libraries" FORCE)
-
-# Check for vendored FMOD
-if(NOT EXISTS "${CMAKE_SOURCE_DIR}/external/fmod/inc/fmod.hpp")
-    message(FATAL_ERROR "FMOD headers not found. Download from https://fmod.com/download and place in external/fmod/inc/")
-endif()
-
-# Configure external libraries for static runtime
-set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-
-# Add submodules
-add_subdirectory(external/glfw)
-add_subdirectory(external/jolt/Build)
-add_subdirectory(external/tinygltf)
-
-# Configure OpenXR build options to avoid sanitizers dependency
-set(BUILD_ALL_EXTENSIONS OFF CACHE BOOL "Build loader and layers with all extensions")
-set(BUILD_LOADER_WITH_EXCEPTION_HANDLING ON CACHE BOOL "Enable exception handling in the loader")
-set(BUILD_TESTS OFF CACHE BOOL "Build tests")
-set(BUILD_CONFORMANCE_TESTS OFF CACHE BOOL "Build conformance tests")
-set(BUILD_API_LAYERS OFF CACHE BOOL "Build API layers")
-set(DYNAMIC_LOADER OFF CACHE BOOL "Build OpenXR loader as static library")
-
-add_subdirectory(external/openxr)
-add_subdirectory(external/vk-bootstrap)
-add_subdirectory(external/vulkan-memory-allocator)
-
-# Configure external library output directories for Visual Studio-like structure
-if(MSVC)
-    # GLFW
-    set_target_properties(glfw PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/External/GLFW/Debug"
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/External/GLFW/Release"
-        LIBRARY_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/External/GLFW/Debug"
-        LIBRARY_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/External/GLFW/Release"
-        ARCHIVE_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/External/GLFW/Debug"
-        ARCHIVE_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/External/GLFW/Release"
-    )
-    
-    # OpenXR
-    set_target_properties(openxr_loader PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/External/OpenXR/Debug"
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/External/OpenXR/Release"
-        LIBRARY_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/External/OpenXR/Debug"
-        LIBRARY_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/External/OpenXR/Release"
-        ARCHIVE_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/External/OpenXR/Debug"
-        ARCHIVE_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/External/OpenXR/Release"
-    )
-    
-    # VK-Bootstrap
-    set_target_properties(vk-bootstrap PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/External/VK-Bootstrap/Debug"
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/External/VK-Bootstrap/Release"
-        LIBRARY_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/External/VK-Bootstrap/Debug"
-        LIBRARY_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/External/VK-Bootstrap/Release"
-        ARCHIVE_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/External/VK-Bootstrap/Debug"
-        ARCHIVE_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/External/VK-Bootstrap/Release"
-    )
-endif()
-
-# Define executable
-if(BUILD_ANDROID)
-    add_executable(aero_boar_engine ${SOURCES})
-else()
-    add_executable(aero_boar_engine ${SOURCES})
-endif()
-
-# Set Visual Studio-like output directories
-if(MSVC)
-    set_target_properties(aero_boar_engine PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/AeroBoarEngine/Debug"
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/AeroBoarEngine/Release"
-        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/AeroBoarEngine/Release"
-        RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}/AeroBoarEngine/Release"
-        
-        LIBRARY_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/AeroBoarEngine/Debug"
-        LIBRARY_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/AeroBoarEngine/Release"
-        LIBRARY_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/AeroBoarEngine/Release"
-        LIBRARY_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}/AeroBoarEngine/Release"
-        
-        ARCHIVE_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/AeroBoarEngine/Debug"
-        ARCHIVE_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/AeroBoarEngine/Release"
-        ARCHIVE_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/AeroBoarEngine/Release"
-        ARCHIVE_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}/AeroBoarEngine/Release"
-        
-        PDB_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/AeroBoarEngine/Debug"
-        PDB_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/AeroBoarEngine/Release"
-        PDB_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/AeroBoarEngine/Release"
-        PDB_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}/AeroBoarEngine/Release"
-    )
-endif()
-
-# Include directories
-target_include_directories(aero_boar_engine PRIVATE ${INCLUDE_DIRS})
-
-# Link libraries
-target_link_libraries(aero_boar_engine PRIVATE
-    Vulkan::Vulkan
-    glfw
-    Jolt
-    openxr_loader
-    vk-bootstrap
-    VulkanMemoryAllocator
-    tinygltf
-)
-
-# FMOD: Link prebuilt libs
-if(BUILD_ANDROID)
-    find_library(FMOD_LIB NAMES fmod PATHS "${CMAKE_SOURCE_DIR}/external/fmod/lib/android/arm64-v8a")
-    if(NOT FMOD_LIB)
-        message(FATAL_ERROR "FMOD lib not found in external/fmod/lib/android/arm64-v8a/")
-    endif()
-    target_link_libraries(aero_boar_engine PRIVATE ${FMOD_LIB})
-else()
-    find_library(FMOD_LIB NAMES fmod fmodL fmod_vc fmodL_vc PATHS "${CMAKE_SOURCE_DIR}/external/fmod/lib/win64")
-    if(NOT FMOD_LIB)
-        message(FATAL_ERROR "FMOD lib not found in external/fmod/lib/win64/")
-    endif()
-    target_link_libraries(aero_boar_engine PRIVATE ${FMOD_LIB})
-endif()
-
-# Compile definitions
-if(BUILD_VR)
-    target_compile_definitions(aero_boar_engine PRIVATE USE_VR=1)
-endif()
-if(BUILD_ANDROID)
-    target_compile_definitions(aero_boar_engine PRIVATE VK_USE_PLATFORM_ANDROID_KHR)
+# Create shader compilation rules
+if(GLSLC_AVAILABLE)
+    foreach(SHADER_FILE ${SHADER_FILES})
+        get_filename_component(SHADER_NAME ${SHADER_FILE} NAME)
+        get_filename_component(SHADER_EXT ${SHADER_FILE} EXT)
+        set(SHADER_SPIRV_OUTPUT ${SHADER_OUTPUT_DIR}/${SHADER_NAME}.spv)
+        set(SHADER_SOURCE ${SHADER_SOURCE_DIR}/${SHADER_FILE})
+        # Compute shaders: target Vulkan 1.3 so LocalSize is valid under current
+        # maintenance4 / SPIR-V expectations (reduces BestPractices WorkgroupSize noise).
+        # vulkan1.1+ for gl_BaseInstance (shaderDrawParameters); compute uses 1.3.
+        if(SHADER_EXT STREQUAL ".comp")
+            set(SHADER_GLSLC_FLAGS -g --target-env=vulkan1.3)
         else()
-            if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-                target_compile_options(aero_boar_engine PRIVATE -Wall -Wextra)
-                if (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
-                    target_link_libraries(aero_boar_engine PRIVATE -static-libgcc -static-libstdc++)
-                endif()
-            elseif(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
-                target_compile_options(aero_boar_engine PRIVATE /W4)
-                # Force static runtime library for consistency with Jolt
-                target_compile_options(aero_boar_engine PRIVATE $<$<CONFIG:Debug>:/MTd> $<$<CONFIG:Release>:/MT>)
-            endif()
+            set(SHADER_GLSLC_FLAGS -g --target-env=vulkan1.1)
         endif()
-
-# Shader compilation to SPIR-V
-file(GLOB SHADERS shaders/*.vert shaders/*.frag shaders/*.tesc shaders/*.tese)
-foreach(SHADER ${SHADERS})
-    get_filename_component(SHADER_NAME ${SHADER} NAME)
-    set(SPIRV_OUT "${CMAKE_BINARY_DIR}/Shaders/Debug/${SHADER_NAME}.spv")
-    add_custom_command(
-        OUTPUT ${SPIRV_OUT}
-        COMMAND ${GLSLANG_VALIDATOR} -V ${SHADER} -o ${SPIRV_OUT}
-        DEPENDS ${SHADER}
-        COMMENT "Compiling ${SHADER_NAME} to SPIR-V"
-    )
-    list(APPEND SPIRV_SHADERS ${SPIRV_OUT})
-endforeach()
-add_custom_target(shaders ALL DEPENDS ${SPIRV_SHADERS})
-add_dependencies(aero_boar_engine shaders)
-
-# Set shader target properties for Visual Studio-like structure
-if(MSVC)
-    set_target_properties(shaders PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/Shaders/Debug"
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/Shaders/Release"
-        FOLDER "Shaders"
-    )
+        add_custom_command(
+            OUTPUT ${SHADER_SPIRV_OUTPUT}
+            COMMAND ${GLSLC} ${SHADER_GLSLC_FLAGS} ${SHADER_SOURCE} -o ${SHADER_SPIRV_OUTPUT}
+            DEPENDS ${SHADER_SOURCE}
+            COMMENT "Compiling shader: ${SHADER_NAME}"
+        )
+    endforeach()
     
-    # Set folder organization for all targets
-    set_target_properties(aero_boar_engine PROPERTIES FOLDER "AeroBoarEngine")
-    set_target_properties(glfw PROPERTIES FOLDER "External/GLFW")
-    set_target_properties(openxr_loader PROPERTIES FOLDER "External/OpenXR")
-    set_target_properties(vk-bootstrap PROPERTIES FOLDER "External/VK-Bootstrap")
-endif()
-
-# Copy assets and config to build dir
-file(COPY assets DESTINATION ${CMAKE_BINARY_DIR}/Assets)
-file(COPY config DESTINATION ${CMAKE_BINARY_DIR}/Config)
-
-# Copy shaders, assets, and config to output directory for each configuration
-if(NOT BUILD_ANDROID)
-    # Copy shaders to Debug output directory
-    add_custom_command(TARGET aero_boar_engine POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:aero_boar_engine>/shaders
-        COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/Shaders/Debug $<TARGET_FILE_DIR:aero_boar_engine>/shaders
-        COMMENT "Copying shaders to output directory"
-    )
+    # Custom target for all shaders
+    set(SHADER_OUTPUT_FILES "")
+    foreach(SHADER_FILE ${SHADER_FILES})
+        get_filename_component(SHADER_NAME ${SHADER_FILE} NAME)
+        list(APPEND SHADER_OUTPUT_FILES ${SHADER_OUTPUT_DIR}/${SHADER_NAME}.spv)
+    endforeach()
     
-    # Copy assets to Debug output directory
-    add_custom_command(TARGET aero_boar_engine POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:aero_boar_engine>/assets
-        COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/Assets/assets $<TARGET_FILE_DIR:aero_boar_engine>/assets
-        COMMENT "Copying assets to output directory"
-    )
-    
-    # Copy config to Debug output directory
-    add_custom_command(TARGET aero_boar_engine POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:aero_boar_engine>/config
-        COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/Config/config $<TARGET_FILE_DIR:aero_boar_engine>/config
-        COMMENT "Copying config to output directory"
+    add_custom_target(compile_shaders
+        DEPENDS ${SHADER_OUTPUT_FILES}
+        COMMENT "All shaders compiled"
     )
 endif()
 
-# Android-specific
-if(BUILD_ANDROID)
-    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -u ANativeActivity_onCreate")
-    set(ANDROID_NDK $ENV{ANDROID_NDK_HOME})
-    if(NOT ANDROID_NDK)
-        message(FATAL_ERROR "Set ANDROID_NDK_HOME environment variable")
+# -----------------------------------------------------------------------------
+# Asset / configuration copying
+# (Uses OUTPUT + DEPENDS so that *only* changing configuration.json will
+#  cause a re-copy on the next `cmake --build`, without needing to touch C++ sources.)
+# -----------------------------------------------------------------------------
+set(CONFIG_SOURCE ${CMAKE_SOURCE_DIR}/assets/scenes/configuration.json)
+set(CONFIG_DEST   ${CMAKE_BINARY_DIR}/assets/scenes/configuration.json)
+
+file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/assets/scenes)
+
+add_custom_command(
+    OUTPUT ${CONFIG_DEST}
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CONFIG_SOURCE}
+            ${CONFIG_DEST}
+    DEPENDS ${CONFIG_SOURCE}
+    COMMENT "Copying configuration.json to build directory"
+)
+
+add_custom_target(copy_configuration ALL
+    DEPENDS ${CONFIG_DEST}
+    COMMENT "Ensure configuration is up-to-date in build tree"
+)
+
+# -----------------------------------------------------------------------------
+# Dependencies
+# -----------------------------------------------------------------------------
+
+# Find Vulkan SDK
+# Windows requires explicit help. The stock FindVulkan is sensitive to how CMake
+# is invoked (shell vs IDE, generator, whether the env var was present at first configure).
+# We seed it using the same $ENV{VULKAN_SDK} that our glslc finder (lines 19-25) already trusts.
+if(WIN32)
+    if(DEFINED ENV{VULKAN_SDK})
+        # Make the whole SDK visible to find modules and any Vulkan*.cmake the SDK ships.
+        list(APPEND CMAKE_PREFIX_PATH "$ENV{VULKAN_SDK}")
+
+        # Directly set the two cache variables that FindVulkan populates and caches.
+        # FORCE makes the current environment win over any stale build/ cache from a prior run.
+        set(Vulkan_INCLUDE_DIR "$ENV{VULKAN_SDK}/Include" CACHE PATH "Vulkan headers" FORCE)
+        set(Vulkan_LIBRARY     "$ENV{VULKAN_SDK}/Lib/vulkan-1.lib" CACHE FILEPATH "Vulkan loader" FORCE)
+    else()
+        message(WARNING "VULKAN_SDK is not set in the environment. Vulkan discovery on Windows will likely fail.")
     endif()
+endif()
+
+find_package(Vulkan REQUIRED)
+if(NOT Vulkan_FOUND)
+    message(FATAL_ERROR "Vulkan SDK not found. Please install Vulkan SDK or set the VULKAN_SDK environment variable.")
+else()
+    message(STATUS "Vulkan SDK found at: ${Vulkan_INCLUDE_DIRS}")
+    message(STATUS "Vulkan library: ${Vulkan_LIBRARY}")
+endif()
+
+# Setup FetchContent
+include(FetchContent)
+
+# 1. Vulkan Memory Allocator (VMA)
+FetchContent_Declare(
+    VulkanMemoryAllocator
+    GIT_REPOSITORY https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
+    GIT_TAG v3.3.0
+)
+
+# 2. VK-Bootstrap
+FetchContent_Declare(
+    vk-bootstrap
+    GIT_REPOSITORY https://github.com/charles-lunarg/VK-Bootstrap.git
+    GIT_TAG v1.4.341
+)
+
+# 3. tinygltf
+set(TINYGLTF_HEADER_ONLY ON CACHE INTERNAL "" FORCE)
+set(TINYGLTF_INSTALL OFF CACHE INTERNAL "" FORCE)
+FetchContent_Declare(
+    tinygltf
+    GIT_REPOSITORY https://github.com/syoyo/tinygltf.git
+    GIT_TAG v3.0.0
+)
+
+# 4. GLFW
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    glfw
+    GIT_REPOSITORY https://github.com/glfw/glfw.git
+    GIT_TAG 3.3.8
+)
+
+# 5. GLM
+FetchContent_Declare(
+    glm
+    GIT_REPOSITORY https://github.com/g-truc/glm.git
+    GIT_TAG 1.0.3
+)
+
+# 6. nlohmann/json (header-only library)
+set(JSON_BuildTests OFF CACHE INTERNAL "" FORCE)
+FetchContent_Declare(
+    nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.11.3
+)
+
+# Enable updating dependencies
+set(FETCHCONTENT_QUIET OFF)
+
+# Fetch and make dependencies available
+FetchContent_MakeAvailable(VulkanMemoryAllocator vk-bootstrap tinygltf glfw glm nlohmann_json)
+
+# -----------------------------------------------------------------------------
+# Build Configuration
+# -----------------------------------------------------------------------------
+
+# Platform-specific settings
+if(WIN32)
+    add_definitions(-D_CRT_SECURE_NO_DEPRECATE -D_CRT_SECURE_NO_WARNINGS)
+elseif(UNIX)
+    # Linux-specific compiler flags
+    add_compile_options(-Wall -Wextra -Wpedantic)
+
+    # Add debug symbols for development builds
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+        add_compile_options(-g)
+    endif()
+endif()
+
+# don't show warnings for dependencies
+target_compile_options(VulkanMemoryAllocator INTERFACE -w)
+target_compile_options(vk-bootstrap PRIVATE -w)
+target_compile_options(tinygltf INTERFACE -w)
+target_compile_options(glfw PRIVATE -w)
+target_compile_options(glm PRIVATE -w)
+
+add_executable(Aero_Boar_Engine
+    src/main.cpp
+    src/AeroBoar.cpp
+    src/gfx/BufferUtils.cpp
+    src/gfx/DoubleBufferedBuffer.cpp
+    src/gfx/Engine.Destroy.cpp
+    src/gfx/Engine.Initialize.cpp
+    src/gfx/Engine.InitializeDevices.cpp
+    src/gfx/Engine.InitializePasses.cpp
+    src/gfx/Engine.InitializePipeline.cpp
+    src/gfx/Engine.InitializeScene.cpp
+    src/gfx/Engine.Render.cpp
+    src/scene/GltfLoader.cpp
+    src/scene/SceneManager.cpp
+    src/scene/TransformManager.cpp
+    src/scene/Camera.cpp
+    src/core/InputManager.cpp
+    src/core/Configuration.cpp
+    src/gfx/ShaderLoader.cpp
+    src/gfx/MaterialManager.cpp
+    src/gfx/MeshManager.cpp
+    src/gfx/TextureManager.cpp
+    src/gfx/IblEnvironment.cpp
+    src/gfx/GpuCulling.cpp
+    src/gfx/HzbPyramid.cpp
+)
+
+# Make sure configuration + (optionally) shaders are available during build.
+# The copy_configuration target has proper DEPENDS on the source json,
+# so editing only the .json will cause the copy step to run.
+add_dependencies(Aero_Boar_Engine copy_configuration)
+if(GLSLC_AVAILABLE)
+    add_dependencies(Aero_Boar_Engine compile_shaders)
+endif()
+
+# Include directories
+target_include_directories(Aero_Boar_Engine PRIVATE
+    src    
+    ${tinygltf_SOURCE_DIR}
+    ${GLFW_INCLUDE_DIRS}
+    ${Vulkan_INCLUDE_DIRS}
+    ${SHADER_OUTPUT_DIR}  # Add this to include compiled shaders
+    ${nlohmann_json_SOURCE_DIR}/include
+    
+)
+
+# Link libraries - use ${Vulkan_LIBRARIES} as fallback if necessary
+target_link_libraries(Aero_Boar_Engine PRIVATE 
+    Vulkan::Vulkan
+    vk-bootstrap::vk-bootstrap
+    GPUOpen::VulkanMemoryAllocator    
+    glfw
+    glm::glm
+)
+
+# Make Visual Studio debugger use the build directory as the working directory.
+# This matches how the project copies configuration.json + shaders into ${CMAKE_BINARY_DIR}/assets and /shaders.
+# The engine (and configuration.json) expects to run with CWD at the build root so that
+# relative paths like "assets/scenes/..." resolve correctly.
+# (On Linux this often "just worked" depending on how you launched the binary.)
+set_target_properties(Aero_Boar_Engine PROPERTIES
+    VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
+)
+
+# Copy shaders to build directory after compilation (optional, for easier deployment)
+if(GLSLC_AVAILABLE)
+    add_custom_command(
+        TARGET Aero_Boar_Engine POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory 
+        ${SHADER_OUTPUT_DIR} 
+        ${CMAKE_BINARY_DIR}/shaders
+        COMMENT "Copying compiled shaders to build directory"
+    )
 endif()

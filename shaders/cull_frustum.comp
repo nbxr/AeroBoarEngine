@@ -1,0 +1,208 @@
+#version 450
+
+// One thread per CullItem. Visible instances pack into a fixed per-batch region:
+//   out_instances[batch.base + atomicAdd(counts[batch], 1)] = ...
+// Frustum test (current camera) + optional previous-frame Hi-Z occlusion.
+// HZB tests MUST use view_proj from the frame that built the pyramid (same depth space).
+layout(local_size_x = 64) in;
+
+struct CullItem {
+    mat4  model;
+    vec4  aabb_min; // xyz = local AABB min
+    vec4  aabb_max; // xyz = local AABB max
+    uvec4 meta;     // x = material_index, y = batch_index, z = base, w = capacity
+};
+
+struct DrawInstance {
+    mat4  model;
+    uvec4 meta; // x = material_index
+};
+
+layout(set = 0, binding = 0, std140) uniform CullGlobals {
+    vec4  planes[6];
+    uint  item_count;
+    uint  batch_count;
+    uint  hzb_enabled; // 1 = test previous-frame HZB
+    uint  hzb_mips;
+    // View-projection of the camera that *wrote* the HZB depth (not necessarily current).
+    mat4  hzb_view_proj;
+    vec4  hzb_info; // xy = HZB mip0 size (pixels), z = depth bias, w = unused
+} globals;
+
+layout(set = 0, binding = 1, std430) readonly buffer CullItems {
+    CullItem items[];
+};
+
+layout(set = 0, binding = 2, std430) writeonly buffer OutInstances {
+    DrawInstance out_instances[];
+};
+
+layout(set = 0, binding = 3, std430) buffer BatchCounts {
+    uint batch_counts[];
+};
+
+layout(set = 0, binding = 6) uniform sampler2D hzb;
+
+// Plane: dot(n, p) + d >= 0 is inside (matches core::Frustum).
+bool frustum_intersects_aabb(vec3 wmin, vec3 wmax) {
+    vec3 ext = wmax - wmin;
+    vec3 pad = ext * 0.05 + vec3(0.05);
+    wmin -= pad;
+    wmax += pad;
+
+    for (int i = 0; i < 6; ++i) {
+        vec3 n = globals.planes[i].xyz;
+        float d = globals.planes[i].w;
+        vec3 p = vec3(
+            n.x >= 0.0 ? wmax.x : wmin.x,
+            n.y >= 0.0 ? wmax.y : wmin.y,
+            n.z >= 0.0 ? wmax.z : wmin.z);
+        if (dot(n, p) + d < -0.02)
+            return false;
+    }
+    return true;
+}
+
+void transform_aabb(mat4 m, vec3 bmin, vec3 bmax, out vec3 wmin, out vec3 wmax) {
+    wmin = vec3( 1e30);
+    wmax = vec3(-1e30);
+    for (int i = 0; i < 8; ++i) {
+        vec3 c = vec3(
+            (i & 1) != 0 ? bmax.x : bmin.x,
+            (i & 2) != 0 ? bmax.y : bmin.y,
+            (i & 4) != 0 ? bmax.z : bmin.z);
+        vec3 w = (m * vec4(c, 1.0)).xyz;
+        wmin = min(wmin, w);
+        wmax = max(wmax, w);
+    }
+}
+
+// Previous-frame Hi-Z (Vulkan depth 0=near, 1=far, LESS).
+// Prefer false-negative (keep) over false-positive (pop), especially at distance
+// where nonlinear Z + min-mip contamination causes far objects to "pop".
+bool hzb_occluded(vec3 wmin, vec3 wmax) {
+    if (globals.hzb_enabled == 0u)
+        return false;
+
+    float z_near = 1.0;
+    float z_far_corner = 0.0;
+    vec2 uv_min = vec2( 1e30);
+    vec2 uv_max = vec2(-1e30);
+
+    for (int i = 0; i < 8; ++i) {
+        vec3 c = vec3(
+            (i & 1) != 0 ? wmax.x : wmin.x,
+            (i & 2) != 0 ? wmax.y : wmin.y,
+            (i & 4) != 0 ? wmax.z : wmin.z);
+        vec4 clip = globals.hzb_view_proj * vec4(c, 1.0);
+
+        // Crosses near plane → keep.
+        if (clip.w <= 1e-4)
+            return false;
+
+        vec3 ndc = clip.xyz / clip.w;
+
+        // Any corner clearly off-screen → keep (partial visibility uncertain).
+        const float lim = 1.02;
+        if (ndc.x < -lim || ndc.x > lim || ndc.y < -lim || ndc.y > lim ||
+            ndc.z < 0.0 || ndc.z > 1.0)
+            return false;
+
+        vec2 uv = clamp(ndc.xy * 0.5 + 0.5, vec2(0.0), vec2(1.0));
+        z_near = min(z_near, ndc.z);
+        z_far_corner = max(z_far_corner, ndc.z);
+        uv_min = min(uv_min, uv);
+        uv_max = max(uv_max, uv);
+    }
+
+    // Never hard-cull with HZB near the camera or in the far half of the depth range.
+    // Far false-positives from previous-frame min-Z are very visible as "pop".
+    if (z_near < 0.002 || z_near > 0.45)
+        return false;
+
+    // Deep AABBs (near and far corners far apart in depth) are uncertain.
+    if ((z_far_corner - z_near) > 0.15)
+        return false;
+
+    vec2 uv_size = uv_max - uv_min;
+    if (uv_size.x <= 1e-6 || uv_size.y <= 1e-6)
+        return false;
+
+    // Tiny screen footprints: HZB at half-res is unreliable → keep.
+    vec2 size_px = uv_size * globals.hzb_info.xy;
+    if (max(size_px.x, size_px.y) < 4.0)
+        return false;
+
+    // Pad sample rect outward (harder to cull = safer).
+    vec2 pad = max(uv_size * 0.12, vec2(2.0) / max(globals.hzb_info.xy, vec2(1.0)));
+    uv_min = clamp(uv_min - pad, vec2(0.0), vec2(1.0));
+    uv_max = clamp(uv_max + pad, vec2(0.0), vec2(1.0));
+    if (uv_min.x >= uv_max.x || uv_min.y >= uv_max.y)
+        return false;
+
+    // Prefer fine mips; force mip 0–1 for mid distances (main false-positive source).
+    size_px = (uv_max - uv_min) * globals.hzb_info.xy;
+    float max_extent = max(size_px.x, size_px.y);
+    float mip_f = max(0.0, floor(log2(max(max_extent, 1.0))) - 2.0);
+    float max_mip = float(max(globals.hzb_mips, 1u) - 1u);
+    max_mip = max(0.0, max_mip - 3.0);
+    if (z_near > 0.2)
+        max_mip = min(max_mip, 1.0);
+    mip_f = clamp(mip_f, 0.0, max_mip);
+
+    // 3x3; max of min-depths = farthest occluder sample in the rect.
+    float farthest = 0.0;
+    float closest = 1.0;
+    for (int y = 0; y < 3; ++y) {
+        for (int x = 0; x < 3; ++x) {
+            vec2 t = vec2(float(x), float(y)) / 2.0;
+            vec2 uv = mix(uv_min, uv_max, t);
+            float s = textureLod(hzb, uv, mip_f).r;
+            farthest = max(farthest, s);
+            closest = min(closest, s);
+        }
+    }
+
+    if (farthest >= 0.995 || closest >= 0.99)
+        return false;
+
+    // Sample variance high → hole / edge / mixed depths → keep.
+    if ((farthest - closest) > 0.08)
+        return false;
+
+    // Bias grows with distance (nonlinear Z + stale previous frame).
+    // hzb_info.z already includes warmup scale from the host.
+    float bias = max(globals.hzb_info.z, 0.006);
+    bias = max(bias, z_near * 0.04);
+    bias = max(bias, z_near * z_near * 0.12);
+    return z_near > farthest + bias;
+}
+
+void main() {
+    uint id = gl_GlobalInvocationID.x;
+    if (id >= globals.item_count)
+        return;
+
+    CullItem item = items[id];
+    uint batch = item.meta.y;
+    if (batch >= globals.batch_count)
+        return;
+
+    vec3 wmin, wmax;
+    transform_aabb(item.model, item.aabb_min.xyz, item.aabb_max.xyz, wmin, wmax);
+    if (!frustum_intersects_aabb(wmin, wmax))
+        return;
+    if (hzb_occluded(wmin, wmax))
+        return;
+
+    uint base = item.meta.z;
+    uint capacity = item.meta.w;
+    uint slot = atomicAdd(batch_counts[batch], 1u);
+    if (slot >= capacity)
+        return;
+
+    DrawInstance di;
+    di.model = item.model;
+    di.meta = uvec4(item.meta.x, 0u, 0u, 0u);
+    out_instances[base + slot] = di;
+}
