@@ -1,0 +1,107 @@
+#version 450
+
+// One thread per CullItem. Visible instances pack into a fixed per-batch region:
+//   out_instances[batch.base + atomicAdd(counts[batch], 1)] = ...
+layout(local_size_x = 64) in;
+
+struct CullItem {
+    mat4  model;
+    vec4  aabb_min; // xyz = local AABB min
+    vec4  aabb_max; // xyz = local AABB max
+    uvec4 meta;     // x = material_index, y = batch_index
+};
+
+struct DrawInstance {
+    mat4  model;
+    uvec4 meta; // x = material_index
+};
+
+layout(set = 0, binding = 0, std140) uniform CullGlobals {
+    vec4  planes[6];
+    uint  item_count;
+    uint  batch_count;
+    uint  _pad0;
+    uint  _pad1;
+} globals;
+
+layout(set = 0, binding = 1, std430) readonly buffer CullItems {
+    CullItem items[];
+};
+
+layout(set = 0, binding = 2, std430) writeonly buffer OutInstances {
+    DrawInstance out_instances[];
+};
+
+layout(set = 0, binding = 3, std430) buffer BatchCounts {
+    uint batch_counts[];
+};
+
+// Transform local AABB → world (8 corners) then frustum test.
+// Plane: dot(n, p) + d >= 0 is inside (matches core::Frustum).
+bool frustum_intersects_aabb(vec3 wmin, vec3 wmax) {
+    // Pad slightly (matches CPU path intent)
+    vec3 ext = wmax - wmin;
+    vec3 pad = ext * 0.05 + vec3(0.05);
+    wmin -= pad;
+    wmax += pad;
+
+    for (int i = 0; i < 6; ++i) {
+        vec3 n = globals.planes[i].xyz;
+        float d = globals.planes[i].w;
+        vec3 p = vec3(
+            n.x >= 0.0 ? wmax.x : wmin.x,
+            n.y >= 0.0 ? wmax.y : wmin.y,
+            n.z >= 0.0 ? wmax.z : wmin.z);
+        if (dot(n, p) + d < -0.02)
+            return false;
+    }
+    return true;
+}
+
+void transform_aabb(mat4 m, vec3 bmin, vec3 bmax, out vec3 wmin, out vec3 wmax) {
+    wmin = vec3( 1e30);
+    wmax = vec3(-1e30);
+    for (int i = 0; i < 8; ++i) {
+        vec3 c = vec3(
+            (i & 1) != 0 ? bmax.x : bmin.x,
+            (i & 2) != 0 ? bmax.y : bmin.y,
+            (i & 4) != 0 ? bmax.z : bmin.z);
+        vec3 w = (m * vec4(c, 1.0)).xyz;
+        wmin = min(wmin, w);
+        wmax = max(wmax, w);
+    }
+}
+
+void main() {
+    uint id = gl_GlobalInvocationID.x;
+    if (id >= globals.item_count)
+        return;
+
+    CullItem item = items[id];
+    uint batch = item.meta.y;
+    if (batch >= globals.batch_count)
+        return;
+
+    vec3 wmin, wmax;
+    transform_aabb(item.model, item.aabb_min.xyz, item.aabb_max.xyz, wmin, wmax);
+    if (!frustum_intersects_aabb(wmin, wmax))
+        return;
+
+    // Compact into this batch's fixed region. Capacity is enforced by not
+    // writing past base+capacity — atomic can exceed capacity under race if
+    // over-visible; clamp write.
+    // Batch bases/capacities live in build_indirect; we only atomic count here
+    // and write at a provisional index that build_indirect doesn't use...
+    // FIXED REGION write: need base in the item or a parallel buffer.
+    // meta.z = instance_base for the batch (same for all items of that batch).
+    uint base = item.meta.z;
+    uint capacity = item.meta.w;
+    uint slot = atomicAdd(batch_counts[batch], 1u);
+    if (slot >= capacity)
+        return;
+
+    DrawInstance di;
+    di.model = item.model;
+    di.meta = uvec4(item.meta.x, 0u, 0u, 0u);
+    out_instances[base + slot] = di;
+}

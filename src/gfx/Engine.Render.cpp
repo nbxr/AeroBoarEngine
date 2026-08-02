@@ -6,9 +6,8 @@
 #include "gfx/Light.h"
 #include "gfx/BufferUtils.h"
 #include "gfx/PbrPush.h"
-#include "core/Frustum.h"
+#include "core/Log.h"
 
-// GLM configuration for Vulkan
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_RADIANS
 
@@ -20,7 +19,6 @@ void gfx::Engine::render() {
     auto& vk = renderer.vk;
     auto& frame = renderer.frames[renderer.current_frame];
 
-    // 1. Wait for the previous frame using this slot to finish
     VkResult wait_res = vkWaitForFences(vk.device, 1, &frame.in_flight_fence, VK_TRUE, UINT64_MAX);
     if (wait_res == VK_ERROR_DEVICE_LOST) {
         renderer.vk.device_lost = true;
@@ -31,13 +29,33 @@ void gfx::Engine::render() {
         return;
     }
 
-    // 2. Acquire next swapchain image
+    // Previous GPU cull results for this frame slot are still in counts[] until
+    // the next record() zeros them — log cull stats on change.
+    if (renderer.gpu_culling.is_ready()) {
+        const uint32_t visible =
+            renderer.gpu_culling.read_visible_count(renderer.current_frame);
+        const uint32_t total = renderer.last_total_render_meshes;
+        // First frames after load may read zeros before any dispatch completed.
+        if (total > 0) {
+            const uint32_t culled = (total > visible) ? (total - visible) : 0u;
+            static uint32_t prev_culled = ~0u;
+            static uint32_t prev_total = ~0u;
+            if (culled != prev_culled || total != prev_total) {
+                prev_culled = culled;
+                prev_total = total;
+                LOG_INFO("[Cull] " << culled << " of " << total
+                         << " objects culled (" << visible << " drawn)");
+            }
+            renderer.last_visible_instances = visible;
+        }
+    }
+
     uint32_t image_index;
     VkResult result = vkAcquireNextImageKHR(
         vk.device,
         vk.swapchain,
         UINT64_MAX,
-        vk.image_available_semaphores[renderer.current_frame],  // per-frame acquire semaphore
+        vk.image_available_semaphores[renderer.current_frame],
         VK_NULL_HANDLE,
         &image_index
     );
@@ -55,10 +73,7 @@ void gfx::Engine::render() {
         return;
     }
 
-    // Reset fence for this frame
     vkResetFences(vk.device, 1, &frame.in_flight_fence);
-
-    // 3. Record command buffer
     vkResetCommandBuffer(frame.command_buffer, 0);
 
     VkCommandBufferBeginInfo begin_info{};
@@ -70,7 +85,29 @@ void gfx::Engine::render() {
         return;
     }
 
-    // Begin render pass
+    float aspect = (float)vk.swap_chain_extent.width / (float)vk.swap_chain_extent.height;
+    glm::mat4 view = camera.get_view_matrix();
+    glm::mat4 proj = camera.get_projection_matrix(aspect);
+    proj[1][1] *= -1.0f;
+    glm::mat4 viewProj = proj * view;
+
+    // GPU frustum cull + build indirect (before the graphics render pass).
+    if (renderer.gpu_culling.is_ready()) {
+        renderer.gpu_culling.record(frame.command_buffer, renderer.current_frame,
+                                    viewProj);
+    }
+
+    write_frame_lighting(renderer.current_frame);
+
+    // Ensure graphics set binding 1 points at this frame's instance buffer.
+    if (renderer.gpu_culling.is_ready()) {
+        auto& inst = renderer.gpu_culling.out_instances(renderer.current_frame);
+        gfx::BufferUtils::update_descriptor(
+            renderer.vk.device.device, inst,
+            renderer.vk.bindless_descriptor_sets[renderer.current_frame],
+            inst.info.size, Renderer::BINDING_DRAW_INSTANCES);
+    }
+
     VkRenderPassBeginInfo render_pass_info{};
     render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     render_pass_info.renderPass = renderer.main_pass.render_pass;
@@ -82,7 +119,6 @@ void gfx::Engine::render() {
     clear_values[0].color = {{0.02f, 0.02f, 0.03f, 1.0f}};
     clear_values[1].color = {{0.02f, 0.02f, 0.03f, 1.0f}};
     clear_values[2].depthStencil = {1.0f, 0};
-
     render_pass_info.clearValueCount = static_cast<uint32_t>(clear_values.size());
     render_pass_info.pClearValues = clear_values.data();
 
@@ -90,10 +126,6 @@ void gfx::Engine::render() {
 
     vkCmdBindPipeline(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, vk.pipeline);
 
-    // Update FrameConstants UBO + lights SSBO for this frame slot (fence-guarded).
-    write_frame_lighting(renderer.current_frame);
-
-    // Bind *this frame's* bindless set (static tables + per-frame lighting).
     vkCmdBindDescriptorSets(
         frame.command_buffer,
         VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -103,7 +135,6 @@ void gfx::Engine::render() {
         0, nullptr
     );
 
-    // Dynamic viewport + scissor
     VkViewport viewport{};
     viewport.x = 0.0f;
     viewport.y = 0.0f;
@@ -118,17 +149,6 @@ void gfx::Engine::render() {
     scissor.extent = vk.swap_chain_extent;
     vkCmdSetScissor(frame.command_buffer, 0, 1, &scissor);
 
-    // Use the real camera system (now that we've validated the vertex buffer)
-    float aspect = (float)vk.swap_chain_extent.width / (float)vk.swap_chain_extent.height;
-    glm::mat4 view = camera.get_view_matrix();
-    glm::mat4 proj = camera.get_projection_matrix(aspect);
-    proj[1][1] *= -1.0f; // Vulkan clip space flip
-
-    glm::mat4 viewProj = proj * view;
-
-    // CPU frustum cull → pack instances + indirect commands (fence already waited).
-    prepare_culled_draws(renderer.current_frame, viewProj);
-
     auto& index_buf = renderer.mesh_manager.get_render_index_buffer();
     vkCmdBindIndexBuffer(frame.command_buffer, index_buf.buffer, 0, VK_INDEX_TYPE_UINT32);
 
@@ -136,37 +156,33 @@ void gfx::Engine::render() {
     VkDeviceSize vbo_offset = 0;
     vkCmdBindVertexBuffers(frame.command_buffer, 0, 1, &vertex_buf.buffer, &vbo_offset);
 
-    // Culled multi-draw: one draw per visible mesh batch.
-    // Instance buffer base is push.extra.x only (cmd.firstInstance is always 0).
-    const uint32_t draw_count = renderer.indirect_draw_count[renderer.current_frame];
-    const auto* cmds = static_cast<const VkDrawIndexedIndirectCommand*>(
-        renderer.indirect_draw_buffer[renderer.current_frame].mapped_data);
-    const auto& bases = renderer.indirect_instance_bases[renderer.current_frame];
-
     gfx::PbrPush pushData{};
     pushData.viewProj = viewProj;
 
-    for (uint32_t i = 0; i < draw_count; ++i) {
-        const uint32_t base = (i < bases.size()) ? bases[i] : 0u;
-        pushData.extra = glm::uvec4{base, 0u, 0u, 0u};
-        vkCmdPushConstants(
-            frame.command_buffer,
-            vk.pipeline_layout,
-            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-            0,
-            sizeof(PbrPush),
-            &pushData);
+    if (renderer.gpu_culling.is_ready()) {
+        const uint32_t batches = renderer.gpu_culling.batch_count();
+        const auto& bases = renderer.gpu_culling.batch_bases();
+        auto& indirect = renderer.gpu_culling.indirect_cmds(renderer.current_frame);
 
-        // Direct multi-instance draw (same data as the indirect command).
-        // Prefer DrawIndexed over Indirect here so firstInstance cannot interact
-        // with gl_InstanceIndex; command buffer still drives future GPU cull.
-        vkCmdDrawIndexed(
-            frame.command_buffer,
-            cmds[i].indexCount,
-            cmds[i].instanceCount,
-            cmds[i].firstIndex,
-            cmds[i].vertexOffset,
-            0);
+        for (uint32_t i = 0; i < batches; ++i) {
+            const uint32_t base = (i < bases.size()) ? bases[i] : 0u;
+            pushData.extra = glm::uvec4{base, 0u, 0u, 0u};
+            vkCmdPushConstants(
+                frame.command_buffer,
+                vk.pipeline_layout,
+                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                0,
+                sizeof(PbrPush),
+                &pushData);
+
+            // 5 uints = 20 bytes per VkDrawIndexedIndirectCommand
+            vkCmdDrawIndexedIndirect(
+                frame.command_buffer,
+                indirect.buffer,
+                VkDeviceSize(i) * 20ull,
+                1,
+                20);
+        }
     }
 
     vkCmdEndRenderPass(frame.command_buffer);
@@ -176,7 +192,6 @@ void gfx::Engine::render() {
         return;
     }
 
-    // 4. Submit
     VkSubmitInfo submit_info{};
     submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 
@@ -185,11 +200,9 @@ void gfx::Engine::render() {
     submit_info.waitSemaphoreCount = 1;
     submit_info.pWaitSemaphores = wait_semaphores;
     submit_info.pWaitDstStageMask = wait_stages;
-
     submit_info.commandBufferCount = 1;
     submit_info.pCommandBuffers = &frame.command_buffer;
 
-    // Use render finished semaphore indexed by the actual image we acquired
     VkSemaphore signal_semaphores[] = {vk.render_finished_semaphores[image_index]};
     submit_info.signalSemaphoreCount = 1;
     submit_info.pSignalSemaphores = signal_semaphores;
@@ -199,19 +212,16 @@ void gfx::Engine::render() {
         if (result == VK_ERROR_DEVICE_LOST) {
             renderer.vk.device_lost = true;
             LOG_ERROR("FATAL: vkQueueSubmit returned VK_ERROR_DEVICE_LOST. GPU is gone.");
-            // TODO: query VK_EXT_device_fault here for shader PC, address, etc. before exiting.
         } else {
-            LOG_ERROR("vkQueueSubmit failed with VkResult=" << (int)result
-                      << " (VK_ERROR_DEVICE_LOST=-4, VK_TIMEOUT=-2 are the ones that kill the GPU)");
+            LOG_ERROR("vkQueueSubmit failed with VkResult=" << (int)result);
         }
         return;
     }
 
-    // 5. Present
     VkPresentInfoKHR present_info{};
     present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     present_info.waitSemaphoreCount = 1;
-    present_info.pWaitSemaphores = signal_semaphores;  // the per-image render_finished semaphore
+    present_info.pWaitSemaphores = signal_semaphores;
 
     VkSwapchainKHR swapchains[] = {vk.swapchain};
     present_info.swapchainCount = 1;
@@ -229,6 +239,5 @@ void gfx::Engine::render() {
         LOG_ERROR("vkQueuePresentKHR failed with VkResult=" << (int)result);
     }
 
-    // Advance to next frame in flight
     renderer.current_frame = (renderer.current_frame + 1) % Renderer::MAX_FRAMES_IN_FLIGHT;
 }

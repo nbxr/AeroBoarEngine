@@ -61,18 +61,27 @@ set(SHADER_FILES
     debug_draw.frag
     pbr.vert
     pbr.frag
+    cull_frustum.comp
+    build_indirect.comp
 )
 
 # Create shader compilation rules
 if(GLSLC_AVAILABLE)
     foreach(SHADER_FILE ${SHADER_FILES})
         get_filename_component(SHADER_NAME ${SHADER_FILE} NAME)
+        get_filename_component(SHADER_EXT ${SHADER_FILE} EXT)
         set(SHADER_SPIRV_OUTPUT ${SHADER_OUTPUT_DIR}/${SHADER_NAME}.spv)
         set(SHADER_SOURCE ${SHADER_SOURCE_DIR}/${SHADER_FILE})
-        
+        # Compute shaders: target Vulkan 1.3 so LocalSize is valid under current
+        # maintenance4 / SPIR-V expectations (reduces BestPractices WorkgroupSize noise).
+        if(SHADER_EXT STREQUAL ".comp")
+            set(SHADER_GLSLC_FLAGS -g --target-env=vulkan1.3)
+        else()
+            set(SHADER_GLSLC_FLAGS -g)
+        endif()
         add_custom_command(
             OUTPUT ${SHADER_SPIRV_OUTPUT}
-            COMMAND ${GLSLC} -g ${SHADER_SOURCE} -o ${SHADER_SPIRV_OUTPUT}
+            COMMAND ${GLSLC} ${SHADER_GLSLC_FLAGS} ${SHADER_SOURCE} -o ${SHADER_SPIRV_OUTPUT}
             DEPENDS ${SHADER_SOURCE}
             COMMENT "Compiling shader: ${SHADER_NAME}"
         )
@@ -248,6 +257,7 @@ add_executable(Aero_Boar_Engine
     src/gfx/MeshManager.cpp
     src/gfx/TextureManager.cpp
     src/gfx/IblEnvironment.cpp
+    src/gfx/GpuCulling.cpp
 )
 
 # Make sure configuration + (optionally) shaders are available during build.

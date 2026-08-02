@@ -1,0 +1,57 @@
+#version 450
+
+// One thread per mesh batch: write VkDrawIndexedIndirectCommand from GPU counts.
+layout(local_size_x = 64) in;
+
+// Must match Vulkan VkDrawIndexedIndirectCommand (20 bytes + pad to 32 for std430 array).
+// Actually std430 struct with 5 uint/int is 20 bytes, array stride rounds to 16? 
+// uint x5 = 20, base align 4, array stride 20. Vulkan expects tightly packed 20-byte commands.
+// Write as five consecutive uints via a uint buffer to avoid padding surprises.
+struct BatchMeta {
+    uint base;
+    uint capacity;
+    uint index_count;
+    uint first_index;
+    int  vertex_offset;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+};
+
+layout(set = 0, binding = 0, std140) uniform CullGlobals {
+    vec4  planes[6];
+    uint  item_count;
+    uint  batch_count;
+    uint  _pad0;
+    uint  _pad1;
+} globals;
+
+layout(set = 0, binding = 3, std430) readonly buffer BatchCounts {
+    uint batch_counts[];
+};
+
+layout(set = 0, binding = 4, std430) readonly buffer BatchMetas {
+    BatchMeta batches[];
+};
+
+// Packed as uint array: 5 words per command (indexCount, instanceCount, firstIndex,
+// vertexOffset bitcast, firstInstance)
+layout(set = 0, binding = 5, std430) writeonly buffer IndirectCmds {
+    uint cmds[];
+};
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= globals.batch_count)
+        return;
+
+    BatchMeta b = batches[i];
+    uint visible = min(batch_counts[i], b.capacity);
+
+    uint o = i * 5u;
+    cmds[o + 0u] = b.index_count;
+    cmds[o + 1u] = visible;
+    cmds[o + 2u] = b.first_index;
+    cmds[o + 3u] = uint(b.vertex_offset); // bit-identical for non-negative offsets
+    cmds[o + 4u] = 0u; // firstInstance — base is push.extra.x
+}

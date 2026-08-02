@@ -12,6 +12,7 @@
 #include "gfx/Light.h"
 #include "gfx/IblEnvironment.h"
 #include "gfx/DrawBatch.h"
+#include "gfx/GpuCulling.h"
 #include "gfx/AllocatedBuffer.h"
 #include "vk_mem_alloc.h"
 #include <GLFW/glfw3.h>
@@ -53,20 +54,10 @@ struct Renderer {
 
     IblEnvironment ibl{};
 
-    // Static mesh draw templates (built at load). Per-frame cull fills instances + indirect.
+    // Static mesh draw templates (built at load) + GPU frustum cull system.
     std::vector<MeshDrawInfo> mesh_draw_infos{};
+    GpuCulling gpu_culling{};
 
-    // Per-frame-in-flight: visible DrawInstanceGPU[] + draw commands after cull
-    std::array<AllocatedBuffer, 2> draw_instance_buffer{};
-    std::array<AllocatedBuffer, 2> indirect_draw_buffer{}; // VkDrawIndexedIndirectCommand
-    // Base instance index into draw_instance_buffer for each indirect command
-    // (must NOT also go in cmd.firstInstance — see prepare_culled_draws).
-    std::array<std::vector<uint32_t>, 2> indirect_instance_bases{};
-    std::array<uint32_t, 2> indirect_draw_count{}; // commands written this frame
-    uint32_t max_draw_instances = 0;
-    uint32_t max_indirect_draws = 0;
-
-    // Optional: last frame cull stats for logging
     uint32_t last_visible_instances = 0;
     uint32_t last_total_render_meshes = 0;
 

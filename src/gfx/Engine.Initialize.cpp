@@ -193,5 +193,9 @@ bool gfx::Engine::init_resource_managers() {
         LOG_ERROR("[IBL] initialize failed — continuing without specular IBL");
     }
 
+    if (!renderer.gpu_culling.initialize(renderer.vk.device.device, renderer.allocator)) {
+        LOG_ERROR("[GpuCulling] initialize failed — will fall back if scene has no cull data");
+    }
+
     return true;
 }

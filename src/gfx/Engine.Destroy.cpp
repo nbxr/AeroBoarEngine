@@ -22,13 +22,8 @@ void gfx::Engine::destroy() {
 }
 
 void gfx::Engine::destroy_buffers() {
+    renderer.gpu_culling.destroy(renderer.vk.device, renderer.allocator);
     renderer.ibl.destroy(renderer.vk.device, renderer.allocator);
-    for (uint32_t i = 0; i < Renderer::MAX_FRAMES_IN_FLIGHT; ++i) {
-        gfx::BufferUtils::destroy_buffer(renderer.vk.device, renderer.allocator,
-                                         renderer.draw_instance_buffer[i]);
-        gfx::BufferUtils::destroy_buffer(renderer.vk.device, renderer.allocator,
-                                         renderer.indirect_draw_buffer[i]);
-    }
     gfx::BufferUtils::destroy_buffer(renderer.vk.device, renderer.allocator, renderer.frame_constants_buffer[0]);
     gfx::BufferUtils::destroy_buffer(renderer.vk.device, renderer.allocator, renderer.frame_constants_buffer[1]);
     gfx::BufferUtils::destroy_buffer(renderer.vk.device, renderer.allocator, renderer.frame_lights_buffer[0]);

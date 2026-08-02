@@ -287,18 +287,9 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     renderer.mesh_manager.update_buffers();
     renderer.texture_manager.upload_textures();
 
-    // Build static mesh draw templates + per-frame-in-flight instance/indirect buffers.
-    // Visibility is decided each frame in prepare_culled_draws().
+    // Mesh templates + GPU cull resources (fixed per-batch instance regions).
     {
-        for (uint32_t i = 0; i < Renderer::MAX_FRAMES_IN_FLIGHT; ++i) {
-            gfx::BufferUtils::destroy_buffer(renderer.vk.device, renderer.allocator,
-                                             renderer.draw_instance_buffer[i]);
-            gfx::BufferUtils::destroy_buffer(renderer.vk.device, renderer.allocator,
-                                             renderer.indirect_draw_buffer[i]);
-            renderer.indirect_draw_count[i] = 0;
-        }
         renderer.mesh_draw_infos.clear();
-
         const uint32_t n_rm = renderer.scene_manager.render_mesh_count();
         std::unordered_map<uint32_t, std::vector<uint32_t>> by_mesh;
         by_mesh.reserve(n_rm);
@@ -329,35 +320,18 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
             renderer.mesh_draw_infos.push_back(std::move(info));
         }
 
-        renderer.max_draw_instances = std::max(1u, n_rm);
-        renderer.max_indirect_draws =
-            std::max(1u, static_cast<uint32_t>(renderer.mesh_draw_infos.size()));
-
-        const VkDeviceSize inst_bytes =
-            VkDeviceSize(renderer.max_draw_instances) * sizeof(DrawInstanceGPU);
-        const VkDeviceSize cmd_bytes =
-            VkDeviceSize(renderer.max_indirect_draws) *
-            sizeof(VkDrawIndexedIndirectCommand);
-
-        for (uint32_t i = 0; i < Renderer::MAX_FRAMES_IN_FLIGHT; ++i) {
-            if (!gfx::BufferUtils::initialize_buffer(
-                    renderer.vk.device.device, renderer.allocator, inst_bytes,
-                    renderer.draw_instance_buffer[i])) {
-                LOG_ERROR("[Draw] Failed to create draw_instance_buffer[" << i << "]");
-                return false;
-            }
-            if (!gfx::BufferUtils::initialize_buffer(
-                    renderer.vk.device.device, renderer.allocator, cmd_bytes,
-                    renderer.indirect_draw_buffer[i],
-                    VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT)) {
-                LOG_ERROR("[Draw] Failed to create indirect_draw_buffer[" << i << "]");
-                return false;
-            }
+        renderer.last_total_render_meshes = n_rm;
+        if (!renderer.gpu_culling.build_scene(renderer.vk.device.device,
+                                              renderer.allocator,
+                                              renderer.mesh_draw_infos,
+                                              renderer.scene_manager)) {
+            LOG_ERROR("[Draw] GPU cull build_scene failed");
+            return false;
         }
 
-        LOG_INFO("[Draw] Cull/indirect ready: " << n_rm << " renderMeshes / "
+        LOG_INFO("[Draw] GPU cull ready: " << n_rm << " renderMeshes / "
                  << renderer.scene_manager.game_object_count() << " gameObjects / "
-                 << renderer.mesh_draw_infos.size() << " mesh templates");
+                 << renderer.mesh_draw_infos.size() << " batches");
     }
 
     {
@@ -379,11 +353,13 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
 
     for (uint32_t i = 0; i < renderer.vk.bindless_descriptor_sets.size(); ++i) {
         auto& set = renderer.vk.bindless_descriptor_sets[i];
-        // Binding 1: per-frame-in-flight DrawInstanceGPU[] (filled by cull each frame)
-        gfx::BufferUtils::update_descriptor(
-            renderer.vk.device.device, renderer.draw_instance_buffer[i], set,
-            VkDeviceSize(renderer.max_draw_instances) * sizeof(DrawInstanceGPU),
-            Renderer::BINDING_DRAW_INSTANCES);
+        // Binding 1: GPU-written instance buffer for this frame slot
+        if (renderer.gpu_culling.is_ready()) {
+            auto& inst = renderer.gpu_culling.out_instances(i);
+            gfx::BufferUtils::update_descriptor(
+                renderer.vk.device.device, inst, set, inst.info.size,
+                Renderer::BINDING_DRAW_INSTANCES);
+        }
         renderer.material_manager.bind_descriptor(2, set);
         renderer.mesh_manager.bind_descriptor(3, 4, 5, set);
         renderer.texture_manager.bind_descriptor(Renderer::BINDING_TEXTURES, set);
@@ -542,114 +518,14 @@ void gfx::Engine::bind_frame_lighting_to_all_sets() {
 }
 
 void gfx::Engine::cleanup_scene() {
-    // Frames may still be in-flight and referencing draw-instance SSBOs.
-    // Wait before tearing down any GPU resources used by the last submits.
     if (renderer.vk.device.device != VK_NULL_HANDLE) {
         vkDeviceWaitIdle(renderer.vk.device.device);
     }
 
     renderer.lights.clear();
     renderer.mesh_draw_infos.clear();
-    for (uint32_t i = 0; i < Renderer::MAX_FRAMES_IN_FLIGHT; ++i) {
-        gfx::BufferUtils::destroy_buffer(renderer.vk.device, renderer.allocator,
-                                         renderer.draw_instance_buffer[i]);
-        gfx::BufferUtils::destroy_buffer(renderer.vk.device, renderer.allocator,
-                                         renderer.indirect_draw_buffer[i]);
-        renderer.indirect_draw_count[i] = 0;
-        renderer.indirect_instance_bases[i].clear();
-    }
-    renderer.max_draw_instances = 0;
-    renderer.max_indirect_draws = 0;
-
-    // CPU scene graph only — Vulkan buffers for managers are destroyed in
-    // destroy_resource_managers() so we do not double-shutdown here.
+    renderer.gpu_culling.clear_scene(renderer.vk.device, renderer.allocator);
+    renderer.last_visible_instances = 0;
+    renderer.last_total_render_meshes = 0;
     renderer.scene_manager.clear_scene_data();
-}
-
-void gfx::Engine::prepare_culled_draws(uint32_t frame_index,
-                                       const glm::mat4& view_proj) {
-    if (frame_index >= Renderer::MAX_FRAMES_IN_FLIGHT)
-        return;
-
-    const core::Frustum frustum = core::Frustum::from_view_proj(view_proj);
-
-    auto* inst_dst = static_cast<DrawInstanceGPU*>(
-        renderer.draw_instance_buffer[frame_index].mapped_data);
-    auto* cmd_dst = static_cast<VkDrawIndexedIndirectCommand*>(
-        renderer.indirect_draw_buffer[frame_index].mapped_data);
-    if (!inst_dst || !cmd_dst)
-        return;
-
-    auto& bases = renderer.indirect_instance_bases[frame_index];
-    bases.clear();
-    bases.reserve(renderer.mesh_draw_infos.size());
-
-    uint32_t inst_count = 0;
-    uint32_t cmd_count = 0;
-    uint32_t total_rm = 0;
-    uint32_t visible_rm = 0;
-
-    for (const auto& mesh_info : renderer.mesh_draw_infos) {
-        const uint32_t first_instance = inst_count;
-        uint32_t batch_instances = 0;
-
-        for (uint32_t rm_id : mesh_info.render_mesh_ids) {
-            ++total_rm;
-            const auto& rm = renderer.scene_manager.get_render_mesh(rm_id);
-            const glm::mat4& world =
-                renderer.scene_manager.transforms().get_world_matrix(
-                    rm.transform_index);
-            const core::AABB world_aabb = rm.local_aabb.transformed(world);
-            if (!frustum.intersects_aabb(world_aabb))
-                continue;
-
-            if (inst_count >= renderer.max_draw_instances)
-                break;
-
-            DrawInstanceGPU di{};
-            di.model = world;
-            di.meta = glm::uvec4(rm.material_index, 0u, 0u, 0u);
-            inst_dst[inst_count++] = di;
-            ++batch_instances;
-            ++visible_rm;
-        }
-
-        if (batch_instances == 0)
-            continue;
-        if (cmd_count >= renderer.max_indirect_draws)
-            break;
-
-        // firstInstance stays 0 — buffer base is only in push.extra.x / bases[].
-        VkDrawIndexedIndirectCommand cmd{};
-        cmd.indexCount = mesh_info.index_count;
-        cmd.instanceCount = batch_instances;
-        cmd.firstIndex = mesh_info.index_offset;
-        cmd.vertexOffset = mesh_info.vertex_offset;
-        cmd.firstInstance = 0;
-        cmd_dst[cmd_count++] = cmd;
-        bases.push_back(first_instance);
-    }
-
-    renderer.indirect_draw_count[frame_index] = cmd_count;
-    renderer.last_visible_instances = visible_rm;
-    renderer.last_total_render_meshes = total_rm;
-
-    {
-        const uint32_t culled = (total_rm > visible_rm) ? (total_rm - visible_rm) : 0u;
-        static uint32_t prev_culled = ~0u;
-        static uint32_t prev_total = ~0u;
-        if (culled != prev_culled || total_rm != prev_total) {
-            prev_culled = culled;
-            prev_total = total_rm;
-            LOG_INFO("[Cull] " << culled << " of " << total_rm
-                     << " objects culled (" << visible_rm << " drawn)");
-        }
-    }
-
-    gfx::BufferUtils::update_descriptor(
-        renderer.vk.device.device,
-        renderer.draw_instance_buffer[frame_index],
-        renderer.vk.bindless_descriptor_sets[frame_index],
-        VkDeviceSize(renderer.max_draw_instances) * sizeof(DrawInstanceGPU),
-        Renderer::BINDING_DRAW_INSTANCES);
 }
