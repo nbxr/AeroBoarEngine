@@ -282,7 +282,8 @@ bool GpuCulling::build_scene(VkDevice device, VmaAllocator allocator,
             return false;
         }
 
-        // Write descriptors for this frame set (HZB updated per-frame in record)
+        // Buffer bindings are static for the scene. HZB image is set via bind_hzb
+        // (dummy until the pyramid is wired after resize / scene load).
         VkDescriptorBufferInfo infos[6]{};
         infos[0] = {cull_globals_[f].buffer, 0, sizeof(GpuCullGlobals)};
         infos[1] = {cull_items_.buffer, 0, items_bytes};
@@ -322,17 +323,42 @@ bool GpuCulling::build_scene(VkDevice device, VmaAllocator allocator,
     return true;
 }
 
+void GpuCulling::bind_hzb(uint32_t frame_index, VkImageView hzb_view,
+                          VkSampler hzb_sampler) {
+    if (frame_index >= kMaxFrames || sets_[frame_index] == VK_NULL_HANDLE)
+        return;
+
+    VkDescriptorImageInfo hzb_info{};
+    if (hzb_view != VK_NULL_HANDLE && hzb_sampler != VK_NULL_HANDLE) {
+        hzb_info.sampler = hzb_sampler;
+        hzb_info.imageView = hzb_view;
+        // Pyramid is GENERAL for its whole life (init + build + sample). Avoids
+        // SHADER_READ_ONLY vs UNDEFINED mismatches on the first frames.
+        hzb_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    } else {
+        hzb_info.sampler = dummy_sampler_;
+        hzb_info.imageView = dummy_hzb_.view;
+        hzb_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    }
+
+    VkWriteDescriptorSet w{};
+    w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    w.dstSet = sets_[frame_index];
+    w.dstBinding = 6;
+    w.descriptorCount = 1;
+    w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    w.pImageInfo = &hzb_info;
+    vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
+}
+
 void GpuCulling::record(VkCommandBuffer cmd, uint32_t frame_index,
-                        const glm::mat4& view_proj, VkImageView hzb_view,
-                        VkSampler hzb_sampler, uint32_t hzb_width, uint32_t hzb_height,
-                        uint32_t hzb_mips, const glm::mat4* hzb_view_proj,
-                        float hzb_bias_scale) {
+                        const glm::mat4& view_proj, bool enable_hzb, uint32_t hzb_width,
+                        uint32_t hzb_height, uint32_t hzb_mips, float hzb_depth_bias) {
     if (!ready_ || frame_index >= kMaxFrames)
         return;
 
     const bool use_hzb =
-        hzb_view != VK_NULL_HANDLE && hzb_sampler != VK_NULL_HANDLE && hzb_width > 0 &&
-        hzb_height > 0 && hzb_mips > 0 && hzb_view_proj != nullptr;
+        enable_hzb && hzb_width > 0 && hzb_height > 0 && hzb_mips > 0;
 
     // BestPractices-ImageMemoryBarrier-TransitionUndefinedToReadOnly: never go
     // UNDEFINED → SHADER_READ_ONLY (discards into a read-only layout). GENERAL is fine
@@ -354,7 +380,8 @@ void GpuCulling::record(VkCommandBuffer cmd, uint32_t frame_index,
         dummy_layout_ready_ = true;
     }
 
-    // Frustum from *current* camera; HZB projection from the camera that wrote depth.
+    // Same-frame: frustum + HZB use the same view_proj as the depth prepass.
+    // HZB image descriptor is already set via bind_hzb (no mid-record updates).
     core::Frustum fr = core::Frustum::from_view_proj(view_proj);
     GpuCullGlobals g{};
     for (int i = 0; i < 6; ++i)
@@ -363,29 +390,10 @@ void GpuCulling::record(VkCommandBuffer cmd, uint32_t frame_index,
     g.batch_count = batch_count_;
     g.hzb_enabled = use_hzb ? 1u : 0u;
     g.hzb_mips = hzb_mips;
-    g.view_proj = use_hzb ? *hzb_view_proj : view_proj;
-    // z = base depth bias; w = bias scale (warmup after hysteresis re-enable)
-    const float base_bias = 0.004f;
-    const float scale = (hzb_bias_scale > 0.0f) ? hzb_bias_scale : 1.0f;
-    g.hzb_info = glm::vec4(float(hzb_width), float(hzb_height), base_bias * scale, scale);
+    g.view_proj = view_proj;
+    const float bias = (hzb_depth_bias > 0.0f) ? hzb_depth_bias : 0.003f;
+    g.hzb_info = glm::vec4(float(hzb_width), float(hzb_height), bias, 1.0f);
     memcpy(cull_globals_[frame_index].mapped_data, &g, sizeof(g));
-
-    // Bind HZB (or dummy). Real HZB ends in SHADER_READ_ONLY; dummy stays GENERAL.
-    {
-        VkDescriptorImageInfo hzb_info{};
-        hzb_info.sampler = use_hzb ? hzb_sampler : dummy_sampler_;
-        hzb_info.imageView = use_hzb ? hzb_view : dummy_hzb_.view;
-        hzb_info.imageLayout = use_hzb ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-                                       : VK_IMAGE_LAYOUT_GENERAL;
-        VkWriteDescriptorSet w{};
-        w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        w.dstSet = sets_[frame_index];
-        w.dstBinding = 6;
-        w.descriptorCount = 1;
-        w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        w.pImageInfo = &hzb_info;
-        vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
-    }
 
     // Zero batch counts on the host (buffer is persistently mapped + coherent).
     if (batch_counts_[frame_index].mapped_data && batch_count_ > 0) {

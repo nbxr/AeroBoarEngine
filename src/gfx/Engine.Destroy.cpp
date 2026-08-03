@@ -62,6 +62,16 @@ void gfx::Engine::destroy_images() {
         }
     }
     renderer.main_pass.resolved_depth_images.clear();
+
+    for (auto &img : renderer.depth_prepass.depth_images) {
+        if (img.view != VK_NULL_HANDLE) {
+            vkDestroyImageView(renderer.vk.device, img.view, nullptr);
+        }
+        if (img.handle != VK_NULL_HANDLE) {
+            vmaDestroyImage(renderer.allocator, img.handle, img.allocation);
+        }
+    }
+    renderer.depth_prepass.depth_images.clear();
 }
 
 void gfx::Engine::destroy_command_buffers() {
@@ -114,19 +124,43 @@ void gfx::Engine::destroy_descriptor_pool() {
 }
 
 void gfx::Engine::destroy_pipelines() {
-    vkDestroyPipeline(renderer.vk.device, renderer.vk.pipeline, nullptr);
-    vkDestroyPipelineLayout(renderer.vk.device, renderer.vk.pipeline_layout,
-                            nullptr);
+    if (renderer.vk.depth_prepass_pipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(renderer.vk.device, renderer.vk.depth_prepass_pipeline, nullptr);
+        renderer.vk.depth_prepass_pipeline = VK_NULL_HANDLE;
+    }
+    if (renderer.vk.pipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(renderer.vk.device, renderer.vk.pipeline, nullptr);
+        renderer.vk.pipeline = VK_NULL_HANDLE;
+    }
+    if (renderer.vk.pipeline_layout != VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(renderer.vk.device, renderer.vk.pipeline_layout, nullptr);
+        renderer.vk.pipeline_layout = VK_NULL_HANDLE;
+    }
 }
 
 void gfx::Engine::destroy_render_targets() {
-    vkDestroyRenderPass(renderer.vk.device, renderer.main_pass.render_pass,
-                        nullptr);
+    if (renderer.depth_prepass.render_pass != VK_NULL_HANDLE) {
+        vkDestroyRenderPass(renderer.vk.device, renderer.depth_prepass.render_pass,
+                            nullptr);
+        renderer.depth_prepass.render_pass = VK_NULL_HANDLE;
+    }
+    if (renderer.main_pass.render_pass != VK_NULL_HANDLE) {
+        vkDestroyRenderPass(renderer.vk.device, renderer.main_pass.render_pass,
+                            nullptr);
+        renderer.main_pass.render_pass = VK_NULL_HANDLE;
+    }
 }
 
 void gfx::Engine::destroy_framebuffers() {
+    for (auto &framebuffer : renderer.depth_prepass.framebuffers) {
+        if (framebuffer != VK_NULL_HANDLE)
+            vkDestroyFramebuffer(renderer.vk.device, framebuffer, nullptr);
+    }
+    renderer.depth_prepass.framebuffers.clear();
+
     for (auto &framebuffer : renderer.main_pass.framebuffers) {
-        vkDestroyFramebuffer(renderer.vk.device, framebuffer, nullptr);
+        if (framebuffer != VK_NULL_HANDLE)
+            vkDestroyFramebuffer(renderer.vk.device, framebuffer, nullptr);
     }
     renderer.main_pass.framebuffers.clear();
 }

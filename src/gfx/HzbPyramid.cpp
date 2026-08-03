@@ -4,7 +4,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <glm/geometric.hpp>
 
 namespace gfx {
 namespace {
@@ -55,27 +54,7 @@ bool HzbPyramid::initialize(VkDevice device, VmaAllocator /*allocator*/) {
     if (vkCreateSampler(device, &sci, nullptr, &depth_sampler_) != VK_SUCCESS)
         return false;
 
-    VkDescriptorSetLayoutBinding b[2]{};
-    b[0].binding = 0;
-    b[0].descriptorCount = 1;
-    b[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    b[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; // copy: depth
-    // reduce reuses layout: binding0 = storage src, binding1 = storage dst
-    // Use a flexible layout: both bindings as storage, and for copy we use
-    // different types — need two layouts or mutable. Simpler: two set layouts.
-    // Use COMBINED for binding 0 and STORAGE for binding 1 for copy,
-    // STORAGE+STORAGE for reduce. Two layouts.
-    //
-    // Simpler approach: one layout with
-    //   binding 0: COMBINED_IMAGE_SAMPLER (depth or unused)
-    //   binding 1: STORAGE_IMAGE (dst)
-    //   binding 2: STORAGE_IMAGE (src for reduce)
-    // And two pipelines with different shaders that only use what they need.
-    // Validation may complain about unused. Cleaner: two set layouts.
-
-    // Combined layout used by both: binding0 sampled, binding1 storage write.
-    // Reduce will sample via imageLoad on storage — separate layout for reduce.
-
+    // One layout for copy + reduce: binding0 combined, binding1 storage write.
     VkDescriptorSetLayoutBinding copy_b[2]{};
     copy_b[0].binding = 0;
     copy_b[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -85,20 +64,6 @@ bool HzbPyramid::initialize(VkDevice device, VmaAllocator /*allocator*/) {
     copy_b[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     copy_b[1].descriptorCount = 1;
     copy_b[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-    // For reduce we need storage+storage. Use same pool, second layout.
-    // Keep set_layout_ for copy; create reduce layout as part of pipeline_layout
-    // with push constants only and rebind — actually use one pipeline layout
-    // with set 0 = copy layout OR we use a dual-purpose approach:
-    // Both shaders use storage images only; copy samples depth via
-    // subpass? No.
-    //
-    // Final: set_layout_ is for copy (sampler+storage).
-    // We'll store reduce_set_layout on the class... add member or reuse
-    // by making reduce also use sampler of previous mip (simpler!).
-
-    // Reduce via sampling previous mip with nearest sampler + write storage.
-    // Then one layout works for both: binding0 combined, binding1 storage.
 
     VkDescriptorSetLayoutCreateInfo lci{};
     lci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -124,7 +89,6 @@ bool HzbPyramid::initialize(VkDevice device, VmaAllocator /*allocator*/) {
     if (!create_pipelines(device))
         return false;
 
-    // Large enough pool for copy + reduces * frames
     VkDescriptorPoolSize sizes[] = {
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxFrames * kMaxMips},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, kMaxFrames * kMaxMips},
@@ -144,8 +108,6 @@ bool HzbPyramid::initialize(VkDevice device, VmaAllocator /*allocator*/) {
 
 bool HzbPyramid::create_pipelines(VkDevice device) {
     VkShaderModule copy_mod = load_module(device, "shaders/hzb_copy.comp.spv");
-    // Reduce will use a sampling-based shader — update hzb_reduce to use sampler
-    // OR keep imageLoad and second layout. I'll rewrite reduce to sample.
     VkShaderModule reduce_mod = load_module(device, "shaders/hzb_reduce.comp.spv");
     if (!copy_mod || !reduce_mod) {
         LOG_ERROR("[Hzb] Failed to load hzb_copy / hzb_reduce SPIR-V");
@@ -168,12 +130,7 @@ bool HzbPyramid::create_pipelines(VkDevice device) {
                VK_SUCCESS;
     };
 
-    // Reduce shader currently uses two storage images — layout mismatch.
-    // Fix reduce shader to use sampler2D + storage image to match layout.
-    bool ok = make(copy_mod, &copy_pipeline_);
-    // Temporarily create reduce with same layout only after shader fix.
-    // We'll fix shader now to use sampler.
-    ok = ok && make(reduce_mod, &reduce_pipeline_);
+    bool ok = make(copy_mod, &copy_pipeline_) && make(reduce_mod, &reduce_pipeline_);
 
     vkDestroyShaderModule(device, copy_mod, nullptr);
     vkDestroyShaderModule(device, reduce_mod, nullptr);
@@ -195,7 +152,6 @@ void HzbPyramid::destroy_images(VkDevice device, VmaAllocator allocator, uint32_
         vmaDestroyImage(allocator, images_[frame].handle, images_[frame].allocation);
         images_[frame] = {};
     }
-    built_[frame] = false;
 }
 
 bool HzbPyramid::create_images(VkDevice device, VmaAllocator allocator, uint32_t frame) {
@@ -252,8 +208,8 @@ bool HzbPyramid::create_images(VkDevice device, VmaAllocator allocator, uint32_t
     if (vkCreateImageView(device, &full, nullptr, &full_views_[frame]) != VK_SUCCESS)
         return false;
 
-    // Allocate descriptor sets: 1 copy + (mip_count-1) reduce
-    const uint32_t nsets = mip_count_; // copy uses [0], reduce uses [1..]
+    // 1 copy + (mip_count-1) reduce
+    const uint32_t nsets = mip_count_;
     std::vector<VkDescriptorSetLayout> layouts(nsets, set_layout_);
     std::vector<VkDescriptorSet> sets(nsets);
     VkDescriptorSetAllocateInfo ai{};
@@ -268,40 +224,96 @@ bool HzbPyramid::create_images(VkDevice device, VmaAllocator allocator, uint32_t
     copy_sets_[frame] = sets[0];
     reduce_sets_[frame].assign(sets.begin() + 1, sets.end());
 
+    // Pre-write reduce sets (stable mip views). Copy set: mip0 storage now;
+    // depth source is filled by bind_depth_source() when prepass depth exists.
+    {
+        VkDescriptorImageInfo mip0_info{};
+        mip0_info.imageView = mip_views_[frame][0];
+        mip0_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        VkWriteDescriptorSet w{};
+        w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        w.dstSet = copy_sets_[frame];
+        w.dstBinding = 1;
+        w.descriptorCount = 1;
+        w.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        w.pImageInfo = &mip0_info;
+        vkUpdateDescriptorSets(device, 1, &w, 0, nullptr);
+    }
+    for (uint32_t m = 1; m < mip_count_; ++m) {
+        const uint32_t ri = m - 1;
+        VkDescriptorImageInfo src_info{};
+        src_info.sampler = sampler_;
+        src_info.imageView = mip_views_[frame][m - 1];
+        src_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+        VkDescriptorImageInfo dst_info{};
+        dst_info.imageView = mip_views_[frame][m];
+        dst_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+        VkWriteDescriptorSet writes[2]{};
+        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet = reduce_sets_[frame][ri];
+        writes[0].dstBinding = 0;
+        writes[0].descriptorCount = 1;
+        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[0].pImageInfo = &src_info;
+        writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].dstSet = reduce_sets_[frame][ri];
+        writes[1].dstBinding = 1;
+        writes[1].descriptorCount = 1;
+        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[1].pImageInfo = &dst_info;
+        vkUpdateDescriptorSets(device, 2, writes, 0, nullptr);
+    }
+
     return true;
+}
+
+void HzbPyramid::bind_depth_source(uint32_t frame_index, VkImageView depth_view) {
+    if (!ready_ || frame_index >= kMaxFrames || depth_view == VK_NULL_HANDLE ||
+        copy_sets_[frame_index] == VK_NULL_HANDLE)
+        return;
+
+    VkDescriptorImageInfo depth_info{};
+    depth_info.sampler = depth_sampler_;
+    depth_info.imageView = depth_view;
+    depth_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    VkWriteDescriptorSet w{};
+    w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    w.dstSet = copy_sets_[frame_index];
+    w.dstBinding = 0;
+    w.descriptorCount = 1;
+    w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    w.pImageInfo = &depth_info;
+    vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
 }
 
 bool HzbPyramid::resize(VkDevice device, VmaAllocator allocator, VkExtent2D extent) {
     if (extent.width == 0 || extent.height == 0)
         return false;
 
-    // Half-res pyramid is enough for coarse AABB occlusion and cheaper.
+    // Half-res pyramid; mip0 is min-downsampled from full-res depth (hzb_copy.comp).
     width_ = std::max(1u, extent.width / 2);
     height_ = std::max(1u, extent.height / 2);
     mip_count_ = calc_mip_count(width_, height_);
 
-    // Reset pool allocations by recreating pool contents — free sets first.
     if (pool_ != VK_NULL_HANDLE) {
         vkResetDescriptorPool(device, pool_, 0);
     }
     for (uint32_t f = 0; f < kMaxFrames; ++f) {
         copy_sets_[f] = VK_NULL_HANDLE;
         reduce_sets_[f].clear();
-        built_[f] = false;
-        view_proj_[f] = glm::mat4(1.0f);
-        cam_pos_[f] = glm::vec3(0.0f);
-        cam_forward_[f] = glm::vec3(0.0f, 0.0f, -1.0f);
         if (!create_images(device, allocator, f)) {
             ready_ = false;
             return false;
         }
     }
 
-    have_last_frame_cam_ = false;
-    stable_frames_ = 0;
     ready_ = true;
+    needs_layout_init_ = true;
     LOG_INFO("[Hzb] Pyramid " << width_ << "x" << height_ << " (" << mip_count_
-             << " mips), double-buffered");
+             << " mips), same-frame double-buffered");
     return true;
 }
 
@@ -335,154 +347,71 @@ void HzbPyramid::destroy(VkDevice device, VmaAllocator allocator) {
     device_ = VK_NULL_HANDLE;
 }
 
-bool HzbPyramid::capture_compatible(uint32_t frame_index, const glm::vec3& cam_pos,
-                                    const glm::vec3& cam_forward) const {
-    if (!is_ready(frame_index))
-        return false;
-
-    const glm::vec3 dpos = cam_pos - cam_pos_[frame_index];
-    // HZB is 1–2 frames old; only tiny drift allowed while "still".
-    const float max_pos_err = 0.005f;
-    if (glm::dot(dpos, dpos) > max_pos_err * max_pos_err)
-        return false;
-
-    const glm::vec3 f0 = glm::normalize(cam_forward_[frame_index]);
-    const glm::vec3 f1 = glm::normalize(cam_forward);
-    // ~0.75° vs capture camera
-    if (glm::dot(f0, f1) < 0.9999f)
-        return false;
-
-    return true;
-}
-
-bool HzbPyramid::should_use_occlusion(uint32_t frame_index, const glm::vec3& cam_pos,
-                                      const glm::vec3& cam_forward,
-                                      float* bias_scale_out) {
-    if (bias_scale_out)
-        *bias_scale_out = 1.0f;
-
-    // 1) Inter-frame motion: any real mouse-look / WASD kills HZB immediately.
-    //    Re-enable only after a long still period (avoids mid-look false culls / pop).
-    bool moved = false;
-    if (have_last_frame_cam_) {
-        const glm::vec3 dpos = cam_pos - last_frame_pos_;
-        // ~0.2 mm
-        if (glm::dot(dpos, dpos) > 4.0e-8f)
-            moved = true;
-        const float d = glm::dot(glm::normalize(last_frame_forward_),
-                                 glm::normalize(cam_forward));
-        // ~0.15° — any intentional mouse tick
-        if (d < 0.9999965f)
-            moved = true;
-    }
-    last_frame_pos_ = cam_pos;
-    last_frame_forward_ = cam_forward;
-    have_last_frame_cam_ = true;
-
-    if (moved) {
-        stable_frames_ = 0;
-        return false;
-    }
-    if (stable_frames_ < 0xffffffffu)
-        ++stable_frames_;
-
-    if (stable_frames_ < kMinStableFrames)
-        return false;
-
-    if (!capture_compatible(frame_index, cam_pos, cam_forward))
-        return false;
-
-    // First frames after re-enable: inflate depth bias so borderline false culls
-    // don't pop objects in/out as HZB warms up.
-    if (bias_scale_out && stable_frames_ < kMinStableFrames + kWarmupFrames) {
-        const float t = float(stable_frames_ - kMinStableFrames) / float(kWarmupFrames);
-        *bias_scale_out = 2.5f - 1.5f * t; // 2.5 → 1.0 over warmup
-    }
-    return true;
-}
-
-void HzbPyramid::record_build(VkCommandBuffer cmd, uint32_t frame_index,
-                              VkImageView depth_view, VkImage depth_image,
-                              VkExtent2D depth_extent, const glm::mat4& view_proj,
-                              const glm::vec3& cam_pos, const glm::vec3& cam_forward) {
-    if (!ready_ || frame_index >= kMaxFrames || depth_view == VK_NULL_HANDLE)
+void HzbPyramid::record_init_layouts(VkCommandBuffer cmd) {
+    if (!ready_ || !needs_layout_init_)
         return;
-
-    // Store the matrix / camera that produced this depth so cull can match space
-    // and refuse occlusion when the view has moved.
-    view_proj_[frame_index] = view_proj;
-    cam_pos_[frame_index] = cam_pos;
-    cam_forward_[frame_index] = cam_forward;
-
-    // Depth: attachment → shader read (caller may already transition; do it here
-    // from DEPTH_STENCIL_READ_ONLY or SHADER_READ).
-    // Render pass finalLayout is SHADER_READ_ONLY_OPTIMAL for resolved depth.
-    (void)depth_image;
-    (void)depth_extent;
-
-    // Transition full HZB image UNDEFINED → GENERAL for storage writes.
-    {
+    for (uint32_t f = 0; f < kMaxFrames; ++f) {
+        if (images_[f].handle == VK_NULL_HANDLE)
+            continue;
         VkImageMemoryBarrier bar{};
         bar.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         bar.srcAccessMask = 0;
-        bar.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        bar.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
         bar.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         bar.newLayout = VK_IMAGE_LAYOUT_GENERAL;
         bar.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         bar.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        bar.image = images_[frame_index].handle;
+        bar.image = images_[f].handle;
         bar.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, mip_count_, 0, 1};
         vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                              VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0,
                              nullptr, 1, &bar);
     }
+    needs_layout_init_ = false;
+}
 
-    // Update copy descriptors: depth sampler + mip0 storage
+void HzbPyramid::record_build(VkCommandBuffer cmd, uint32_t frame_index,
+                              VkExtent2D depth_extent) {
+    if (!ready_ || frame_index >= kMaxFrames || copy_sets_[frame_index] == VK_NULL_HANDLE)
+        return;
+    if (depth_extent.width == 0 || depth_extent.height == 0)
+        return;
+
+    // Pyramid lives in GENERAL (init + cull sample). Barrier for storage overwrite.
+    // Do NOT use UNDEFINED here: the image is already bound as GENERAL on the cull
+    // set for this frame (frustum pass) and mid-CB discard confuses validation.
     {
-        VkDescriptorImageInfo depth_info{};
-        depth_info.sampler = depth_sampler_;
-        depth_info.imageView = depth_view;
-        depth_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-        VkDescriptorImageInfo mip0_info{};
-        mip0_info.imageView = mip_views_[frame_index][0];
-        mip0_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-
-        VkWriteDescriptorSet writes[2]{};
-        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[0].dstSet = copy_sets_[frame_index];
-        writes[0].dstBinding = 0;
-        writes[0].descriptorCount = 1;
-        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[0].pImageInfo = &depth_info;
-
-        writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[1].dstSet = copy_sets_[frame_index];
-        writes[1].dstBinding = 1;
-        writes[1].descriptorCount = 1;
-        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        writes[1].pImageInfo = &mip0_info;
-
-        vkUpdateDescriptorSets(device_, 2, writes, 0, nullptr);
+        VkImageMemoryBarrier bar{};
+        bar.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        bar.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        bar.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        bar.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+        bar.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        bar.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        bar.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        bar.image = images_[frame_index].handle;
+        bar.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, mip_count_, 0, 1};
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0,
+                             nullptr, 1, &bar);
     }
 
+    // Descriptors are pre-written (bind_depth_source + create_images) — no
+    // vkUpdateDescriptorSets here (would invalidate the recording command buffer).
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, copy_pipeline_);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout_, 0, 1,
                             &copy_sets_[frame_index], 0, nullptr);
-    uint32_t pc_copy[4] = {width_, height_, 0, 0};
+    uint32_t pc_copy[4] = {width_, height_, depth_extent.width, depth_extent.height};
     vkCmdPushConstants(cmd, pipeline_layout_, VK_SHADER_STAGE_COMPUTE_BIT, 0,
                        sizeof(pc_copy), pc_copy);
     vkCmdDispatch(cmd, (width_ + 7) / 8, (height_ + 7) / 8, 1);
 
-    // Reduce mips. Update reduce shader descriptors: sample prev mip view as
-    // combined, write next mip storage.
     uint32_t src_w = width_;
     uint32_t src_h = height_;
     for (uint32_t m = 1; m < mip_count_; ++m) {
         const uint32_t dst_w = std::max(1u, src_w / 2);
         const uint32_t dst_h = std::max(1u, src_h / 2);
 
-        // Barrier: previous mip write → next read
         VkImageMemoryBarrier bar{};
         bar.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         bar.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
@@ -497,32 +426,7 @@ void HzbPyramid::record_build(VkCommandBuffer cmd, uint32_t frame_index,
                              VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0,
                              nullptr, 1, &bar);
 
-        VkDescriptorImageInfo src_info{};
-        src_info.sampler = sampler_;
-        src_info.imageView = mip_views_[frame_index][m - 1];
-        src_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-
-        VkDescriptorImageInfo dst_info{};
-        dst_info.imageView = mip_views_[frame_index][m];
-        dst_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-
         const uint32_t ri = m - 1;
-        VkWriteDescriptorSet writes[2]{};
-        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[0].dstSet = reduce_sets_[frame_index][ri];
-        writes[0].dstBinding = 0;
-        writes[0].descriptorCount = 1;
-        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[0].pImageInfo = &src_info;
-
-        writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[1].dstSet = reduce_sets_[frame_index][ri];
-        writes[1].dstBinding = 1;
-        writes[1].descriptorCount = 1;
-        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        writes[1].pImageInfo = &dst_info;
-        vkUpdateDescriptorSets(device_, 2, writes, 0, nullptr);
-
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, reduce_pipeline_);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout_, 0,
                                 1, &reduce_sets_[frame_index][ri], 0, nullptr);
@@ -535,14 +439,14 @@ void HzbPyramid::record_build(VkCommandBuffer cmd, uint32_t frame_index,
         src_h = dst_h;
     }
 
-    // Final barrier: HZB ready for next frame's cull (shader read via sampler)
+    // HZB ready for same-frame occlusion cull — stay GENERAL (matches bind_hzb).
     {
         VkImageMemoryBarrier bar{};
         bar.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         bar.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
         bar.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
         bar.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-        bar.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        bar.newLayout = VK_IMAGE_LAYOUT_GENERAL;
         bar.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         bar.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         bar.image = images_[frame_index].handle;
@@ -551,8 +455,6 @@ void HzbPyramid::record_build(VkCommandBuffer cmd, uint32_t frame_index,
                              VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0,
                              nullptr, 1, &bar);
     }
-
-    built_[frame_index] = true;
 }
 
 } // namespace gfx

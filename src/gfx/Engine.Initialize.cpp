@@ -65,6 +65,10 @@ bool gfx::Engine::init_vulkan() {
     if (!init_render_pass()) //
         return false;
 
+    // Depth-only prepass (same-frame Hi-Z source) before main targets.
+    if (!init_depth_prepass())
+        return false;
+
     // Initialize MSAA and depth images
     if (!init_msaa_color_image())
         return false;
@@ -87,6 +91,9 @@ bool gfx::Engine::init_vulkan() {
 
     // Initialize graphics pipeline
     if (!init_graphics_pipeline())
+        return false;
+
+    if (!init_depth_prepass_pipeline())
         return false;
 
     // Initialize command pool and buffers
@@ -202,7 +209,57 @@ bool gfx::Engine::init_resource_managers() {
     } else if (!renderer.hzb.resize(renderer.vk.device.device, renderer.allocator,
                                     renderer.vk.swap_chain_extent)) {
         LOG_ERROR("[Hzb] resize failed — occlusion culling disabled");
+    } else {
+        wire_hzb_descriptors();
     }
 
     return true;
+}
+
+void gfx::Engine::wire_hzb_descriptors() {
+    if (!renderer.hzb.is_ready())
+        return;
+
+    const uint32_t n = Renderer::MAX_FRAMES_IN_FLIGHT;
+    for (uint32_t f = 0; f < n; ++f) {
+        if (f < renderer.depth_prepass.depth_images.size() &&
+            renderer.depth_prepass.depth_images[f].view != VK_NULL_HANDLE) {
+            renderer.hzb.bind_depth_source(f, renderer.depth_prepass.depth_images[f].view);
+        }
+        if (renderer.gpu_culling.is_ready()) {
+            renderer.gpu_culling.bind_hzb(f, renderer.hzb.full_view(f),
+                                          renderer.hzb.sampler());
+        }
+    }
+
+    // Pyramid images start UNDEFINED; cull descriptors expect GENERAL. Transition
+    // once after resize so the first frame never references UNDEFINED HZB.
+    if (renderer.hzb.needs_layout_init() &&
+        renderer.vk.generic_command_pool != VK_NULL_HANDLE &&
+        renderer.vk.graphics_queue != VK_NULL_HANDLE) {
+        VkCommandBufferAllocateInfo alloc{};
+        alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        alloc.commandPool = renderer.vk.generic_command_pool;
+        alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        alloc.commandBufferCount = 1;
+        VkCommandBuffer cmd = VK_NULL_HANDLE;
+        if (vkAllocateCommandBuffers(renderer.vk.device, &alloc, &cmd) == VK_SUCCESS) {
+            VkCommandBufferBeginInfo begin{};
+            begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+            begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            if (vkBeginCommandBuffer(cmd, &begin) == VK_SUCCESS) {
+                renderer.hzb.record_init_layouts(cmd);
+                vkEndCommandBuffer(cmd);
+
+                VkSubmitInfo submit{};
+                submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+                submit.commandBufferCount = 1;
+                submit.pCommandBuffers = &cmd;
+                vkQueueSubmit(renderer.vk.graphics_queue, 1, &submit, VK_NULL_HANDLE);
+                vkQueueWaitIdle(renderer.vk.graphics_queue);
+            }
+            vkFreeCommandBuffers(renderer.vk.device, renderer.vk.generic_command_pool, 1,
+                                 &cmd);
+        }
+    }
 }

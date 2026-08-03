@@ -39,6 +39,8 @@ struct Renderer {
     VmaAllocator allocator{};
     VulkanContext vk{};
     PassContext main_pass{};
+    // Same-frame Hi-Z source: depth-only prepass (1x samples), one depth + FB per frame-in-flight.
+    PassContext depth_prepass{};
     ComputePassContext compute[MAX_FRAMES_IN_FLIGHT]{};
     FrameContext frames[MAX_FRAMES_IN_FLIGHT]{};
     MaterialManager material_manager{};
@@ -62,7 +64,7 @@ struct Renderer {
 
     uint32_t last_visible_instances = 0;
     uint32_t last_total_render_meshes = 0;
-    // Per frame-in-flight: whether that slot's last cull pass used Hi-Z (for [Cull] log).
+    // Per frame-in-flight: whether that slot's last shade cull used Hi-Z (for [Cull] log).
     std::array<bool, MAX_FRAMES_IN_FLIGHT> last_cull_used_hzb{};
 
     uint32_t current_frame = 0;

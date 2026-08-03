@@ -80,25 +80,31 @@ Until then, prefer keeping `glslc` and avoiding a mid-feature toolchain swap.
 - Namespaces: `core` (tiny universal utilities), `gfx` (all rendering/RHI/resources), `scene` (game object model + loading). See AGENTS.md for the current mapping.
 - **Include Guards:** always use `#pragma once` instead of `#ifndef` and `#define`
 
-### Hi-Z occlusion hysteresis (desktop interim)
+### Occlusion / Hi-Z architecture (decision)
 
-Previous-frame Hi-Z (`gfx::HzbPyramid` + `cull_frustum.comp`) is gated by **camera motion hysteresis** in `HzbPyramid::should_use_occlusion()`:
+**VR constraint:** the HMD pose changes every frame. There is **no stable camera**. Any design that requires “hold still” or previous-view depth without reprojection **cannot** be the shipping occlusion path for Quest/OpenXR.
 
-- **Any** inter-frame camera move/rotate (above small noise thresholds) → hard occlusion **off** immediately (frustum-only). This is what prevents mouse-look pop from stale depth.
-- Occlusion turns **back on** only after ~24 still frames **and** capture-camera match (~0.75° / 5 mm). After re-enable, depth bias is inflated for ~30 frames (warmup) so borderline culls do not flash.
-- Prefer false-negatives (draw extra) over false-positives (pop). Cull log: `[hzb=on]` / `[hzb=off]`.
-- Rationale: comparing current visibility to a 1–2 frame-old depth buffer false-culls under mouse-look; toggling HZB every frame without hysteresis caused visible pop-in/out.
+#### Current path (desktop, VR-ready shape)
 
-**This is an intentional desktop compromise**, not the long-term Quest/VR design.
+**Same-frame occlusion (depth prepass)** — hysteresis removed:
 
-**When VR / multiview work starts**, revisit and improve (do not ship hysteresis as the VR solution):
+1. Frustum cull → candidates (indirect draws)  
+2. **Depth-only prepass** at current pose (`depth_prepass` RP, 1x samples, vertex-only pipeline)  
+3. Build Hi-Z pyramid from **this frame’s** prepass depth (`HzbPyramid::record_build`)  
+4. Occlusion test + frustum → final visible set  
+5. Full shading pass (main RP, MSAA; independent depth clear)
 
-- Same-frame depth prepass → HZB → occlude → color (no temporal lag; preferred on TBDR if it stays on-tile).
-- Or reproject previous-eye / previous-frame HZB into the current view (and per-eye for stereo).
-- Multiview: one HZB strategy per eye or a shared conservative proxy; hysteresis is a poor fit for continuous head tracking.
-- **Migrate to reverse-Z** in the same depth/HZB redesign (see § Depth buffer model above).
+Depth prepass and HZB cull use the **same** `view_proj`. No camera-stability gate. Pyramid is double-buffered per frame-in-flight only to avoid concurrent submit stomps.
 
-Code anchors: `src/gfx/HzbPyramid.h` (`kMinStableFrames`, `should_use_occlusion`), `Engine.Render.cpp` (gate before `GpuCulling::record`), `docs/agents/current_state.md`.
+Pyramid quality: min-downsample full-res depth into mip0 (`hzb_copy.comp`), min-reduce mips (`hzb_reduce.comp`). Main-pass MSAA depth resolve remains available but is **not** the HZB source anymore.
+
+**Removed (dead end for VR):** previous-frame HZB + `should_use_occlusion` hysteresis.
+
+**Secondary option still on the shelf: reprojected previous-frame HZB** (if prepass cost is too high on device).
+
+**With reverse-Z / multiview:** redesign HZB compare (max vs min pyramid), per-eye or multiview-aware pyramid, GMEM-friendly subpass layout on Adreno — same phase as reverse-Z (see § Depth buffer model).
+
+Code anchors: `Engine.Render.cpp`, `HzbPyramid`, `depth_prepass` / `init_depth_prepass*`, `cull_frustum.comp`, `hzb_copy.comp`.
 
 ### Input & Camera
 The desktop `scene::Camera` is a quaternion-driven 6DOF camera intended for model/scene inspection during development.  

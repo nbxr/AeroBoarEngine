@@ -14,7 +14,7 @@ Desktop foundation is solid and past “first triangle.” The engine loads glTF
 - glTF loading via tinygltf (`GltfLoader`) including hierarchy, cameras, `KHR_lights_punctual`
 - Resource managers: Mesh, Texture, Material, Scene + shared `gfx::DoubleBufferedBuffer` helper
 - Complete bindless GPU upload path at load time (all data visible in shaders)
-- Render loop: acquire → GPU cull/HZB build → bindless draw → present
+- Render loop: acquire → frustum cull → depth prepass → HZB build → occlusion cull → shade → present
 - Basic PBR forward shader (`pbr.vert` / `pbr.frag`) that samples:
   - Albedo (baseColor)
   - Normal map
@@ -24,7 +24,7 @@ Desktop foundation is solid and past “first triangle.” The engine loads glTF
 - Proper vertex attribute input (`gfx::Vertex`, pipeline vertex state, `pbr.vert`) — legacy SSBO vertex pulling is no longer the active path
 - Materials SSBO correctly declared as a **single buffer + runtime array** in `pbr.frag` (not a descriptor array); `gfx::Material` is `alignas(16)` / 80-byte stride to match std430
 - Scene model: `GameObject` / `RenderMesh` / `TransformManager` (local + parent + `propagate()` at load)
-- GPU cull + Hi-Z + multi-draw indirect (`GpuCulling`, `HzbPyramid`; desktop HZB hysteresis — see tech_context)
+- GPU cull + same-frame Hi-Z + multi-draw indirect (`GpuCulling`, `HzbPyramid`, depth prepass — see tech_context)
 - Desktop `scene::Camera` system (fully documented in `src/scene/Camera.h`):
   - Quaternion-based 6DOF orientation (full roll support).
   - WASD: Move forward/back + strafe relative to current orientation.
@@ -51,7 +51,7 @@ Desktop foundation is solid and past “first triangle.” The engine loads glTF
 - Dirty-flag per-frame `propagate()` when animated transforms land
 - Spot light direction packing, dynamic lights, HDR env loading
 - **Future tooling:** migrate shader compile from `glslc` → **glslang** when cross-platform (Quest/Android) work starts — see `tech_context.md`
-- **VR depth / cull quality (roadmap):** reverse-Z + replace HZB hysteresis with same-frame / reprojected Hi-Z — see `tech_context.md`
+- **Same-frame occlusion (landed on desktop):** depth prepass → Hi-Z → shade at current pose; hysteresis removed. Quest still needs multiview/per-eye + reverse-Z HZB — see `tech_context.md` § Occlusion / Hi-Z architecture
 - **Physics (roadmap):** Jolt runtime + **glTF Khronos physics extensions** for model physics properties (`KHR_physics_rigid_bodies`, `KHR_implicit_shapes`) — see `tech_context.md` § Physics assets
 
 ## Known Gaps / Not Yet Implemented
@@ -71,15 +71,16 @@ Desktop foundation is solid and past “first triangle.” The engine loads glTF
   - BRDF integration LUT (128²) → binding 8 `sampler2D`
   - Split-sum specular in `pbr.frag` when IBL is ready
   Still deferred: load HDR equirect env assets, dynamic lights, clustered many-lights, complete spot packing.
-- **GPU frustum + Hi-Z occlusion cull + instancing + indirect (landed)**:
-  - `gfx::GpuCulling`: `cull_frustum.comp` frustum + previous-frame Hi-Z test; packs visible instances into fixed per-batch regions; `build_indirect.comp` writes draw commands
-  - `gfx::HzbPyramid`: half-res min-Z pyramid (double-buffered); built after the main pass from resolved depth
-  - MSAA path uses **depth stencil resolve** (attachment 3) so single-sample depth is available for HZB; MSAA depth stays transient/`DONT_CARE`
-  - Compute runs before the render pass; graphics uses binding 1 instance SSBO + **one** `vkCmdDrawIndexedIndirect` (multi-draw; `firstInstance = batch.base`)
+- **GPU frustum + same-frame Hi-Z occlusion + instancing + indirect (landed)**:
+  - Frame order: frustum cull → **depth-only prepass** (1x, vertex-only) → `HzbPyramid::record_build` → frustum+HZB cull → main shade (MSAA)
+  - `gfx::GpuCulling`: `cull_frustum.comp` frustum + optional same-frame Hi-Z; packs visible instances into fixed per-batch regions; `build_indirect.comp` writes draw commands
+  - `gfx::HzbPyramid`: half-res min-Z pyramid (double-buffered for frames-in-flight); built from prepass depth at the **current** `view_proj` (no hysteresis)
+  - Prepass resources: `renderer.depth_prepass` RP/FBs + `vk.depth_prepass_pipeline`; one depth target per frame-in-flight
+  - `hzb_copy` min-downsamples full-res prepass depth into mip0; `hzb_reduce` min-mips
+  - Graphics uses binding 1 instance SSBO + **one** `vkCmdDrawIndexedIndirect` per pass (multi-draw; `firstInstance = batch.base`)
   - **Instance index (Vulkan):** VS uses `gl_InstanceIndex` only — it already includes `firstInstance`. Never also add `gl_BaseInstance` or push base (double-count → wrong materials / missing draws).
-  - `[Cull]` log from host-visible counts after frame fence
-  - HZB occlusion uses **desktop hysteresis** (see `tech_context.md` § Hi-Z occlusion hysteresis): off on any camera motion; on after ~24 still frames + capture match + bias warmup; far objects largely exempt from hard HZB cull. Log tag `[hzb=on|off]`. **Interim only** for VR (same-frame / reprojected HZB + reverse-Z).
-  - Still TODO for cull quality: same-frame two-phase occlusion / reprojected HZB while the camera (or HMD) moves
+  - `[Cull]` log from host-visible counts after frame fence (`[hzb=on]` when same-frame path ran)
+  - Main-pass MSAA depth resolve may still exist but is **not** the HZB source
 - **Depth model:** standard Z today (0=near, 1=far, `LESS`). **Planned:** reverse-Z with VR/multiview depth work (`GREATER`/`GREATER_OR_EQUAL`, clear 0, max-depth Hi-Z) — official roadmap item in `tech_context.md`
 - No OpenXR / VR input layer (desktop GLFW only)
 - **Scene model (hierarchy landed)**: `GameObject` + `RenderMesh` + `TransformManager` with **local matrices + parent links + `propagate()`** at load. glTF load walks the node tree (`set_local` + `set_parent`), then `propagate()`, then `refresh_instance_worlds()` + `GpuCulling::build_scene` (world matrices). Legacy `SceneInstance` dual-written and re-synced after propagate.
@@ -101,10 +102,10 @@ Desktop foundation is solid and past “first triangle.” The engine loads glTF
 - [done] Frustum culling + multi-draw indirect
 - [done] GPU frustum cull compute (`GpuCulling`)
 - [done] Transform hierarchy: local matrix + parent + `propagate()` at load; dual-write refresh + GPU cull after propagate
-- [done] Occlusion culling / Hi-Z: depth resolve + `HzbPyramid` + cull shader test (previous-frame, double-buffered; desktop hysteresis documented)
+- [done] Occlusion culling / Hi-Z: same-frame depth prepass → pyramid → cull (hysteresis removed)
 - [done] Single multi-draw indirect: `build_indirect` writes `firstInstance = batch.base`; `pbr.vert` uses `gl_InstanceIndex` only (includes base on Vulkan); one `vkCmdDrawIndexedIndirect` for all batches
 - **Next immediate:** dirty-flag per-frame `propagate()` when animated transforms land; lighting polish (spot packing, HDR env)
-- **Roadmap (VR / Quest depth phase):** reverse-Z; same-frame or reprojected Hi-Z (drop desktop hysteresis); multiview stereo depth — see `tech_context.md` § Depth buffer model
+- **Roadmap (VR / Quest depth + occlusion):** reverse-Z + multiview stereo with per-eye/multiview HZB — see `tech_context.md` § Occlusion / Hi-Z architecture and § Depth buffer model
 - **Roadmap (physics):** Jolt integration + load physics from glTF Khronos extensions (`KHR_physics_rigid_bodies`, `KHR_implicit_shapes`) — see `tech_context.md` § Physics assets
 - Future tooling: glslang shader toolchain when cross-platform (Quest/Android) work starts — keep `glslc` until then (see `tech_context.md`)
 - [done] Desktop input layer: `core::InputManager` (callback-driven deltas + EWMA + acceleration + capture state) + full decoupling from `scene::Camera` (see `docs/architecture/desktop-inputs.md` and the implementation plan). Pitch sign convention restored to original comfortable default.
@@ -130,7 +131,7 @@ Active path:
 - Material index from **instance SSBO** (`DrawInstanceGPU.meta.x`), not push constants
 - Push constants: `viewProj` (+ reserved `extra`)
 - Multi-material scenes: materials as elements of a **single** SSBO (see below)
-- GPU frustum + Hi-Z cull → one `vkCmdDrawIndexedIndirect` multi-draw
+- Frustum → depth prepass → Hi-Z → occlusion cull → shade (multi-draw indirect)
 
 ### Materials SSBO (important)
 

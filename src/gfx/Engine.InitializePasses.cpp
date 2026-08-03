@@ -2,6 +2,7 @@
 #include "gfx/AllocatedBuffer.h"
 #include "gfx/AllocatedImage.h"
 #include "gfx/Renderer.h"
+#include "core/Log.h"
 
 bool gfx::Engine::init_render_pass() {
     // Attachments (MSAA path — default on desktop):
@@ -81,9 +82,28 @@ bool gfx::Engine::init_render_pass() {
     depth_resolve_ref.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     depth_resolve_ref.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
 
+    // Prefer MIN depth resolve for Hi-Z (closest surface, 0=near). Fall back to
+    // SAMPLE_ZERO if the device does not advertise MIN.
+    VkResolveModeFlagBits depth_resolve_mode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;
+    {
+        VkPhysicalDeviceDepthStencilResolveProperties ds_props{};
+        ds_props.sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_STENCIL_RESOLVE_PROPERTIES;
+        VkPhysicalDeviceProperties2 props2{};
+        props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+        props2.pNext = &ds_props;
+        vkGetPhysicalDeviceProperties2(renderer.vk.device.physical_device, &props2);
+        if (ds_props.supportedDepthResolveModes & VK_RESOLVE_MODE_MIN_BIT) {
+            depth_resolve_mode = VK_RESOLVE_MODE_MIN_BIT;
+            LOG_INFO("[HiZ] Depth MSAA resolve mode: MIN (best for occlusion)");
+        } else {
+            LOG_INFO("[HiZ] Depth MSAA resolve mode: SAMPLE_ZERO (MIN unsupported)");
+        }
+    }
+
     VkSubpassDescriptionDepthStencilResolve depth_resolve{};
     depth_resolve.sType = VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_DEPTH_STENCIL_RESOLVE;
-    depth_resolve.depthResolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;
+    depth_resolve.depthResolveMode = depth_resolve_mode;
     depth_resolve.stencilResolveMode = VK_RESOLVE_MODE_NONE;
     depth_resolve.pDepthStencilResolveAttachment = &depth_resolve_ref;
 
@@ -354,6 +374,149 @@ bool gfx::Engine::init_depth_image() {
     } else {
         renderer.main_pass.resolved_depth_images.clear();
     }
+    return true;
+}
+
+bool gfx::Engine::create_prepass_depth_image(VkExtent2D extent, AllocatedImage& out_image) {
+    // Single-sample depth for same-frame Hi-Z (attachment + sampled by hzb_copy).
+    VkImageCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    info.imageType = VK_IMAGE_TYPE_2D;
+    info.format = renderer.vk.depth_format;
+    info.extent = {extent.width, extent.height, 1};
+    info.mipLevels = 1;
+    info.arrayLayers = 1;
+    info.samples = VK_SAMPLE_COUNT_1_BIT;
+    info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    info.usage =
+        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    VmaAllocationCreateInfo alloc_info{};
+    alloc_info.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+    alloc_info.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+
+    if (vmaCreateImage(renderer.allocator, &info, &alloc_info, &out_image.handle,
+                       &out_image.allocation, &out_image.info) != VK_SUCCESS) {
+        LOG_ERROR("Failed to create depth-prepass image");
+        return false;
+    }
+
+    VkImageViewCreateInfo view_info{};
+    view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    view_info.image = out_image.handle;
+    view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view_info.format = renderer.vk.depth_format;
+    view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    view_info.subresourceRange.baseMipLevel = 0;
+    view_info.subresourceRange.levelCount = 1;
+    view_info.subresourceRange.baseArrayLayer = 0;
+    view_info.subresourceRange.layerCount = 1;
+
+    if (vkCreateImageView(renderer.vk.device, &view_info, nullptr, &out_image.view) !=
+        VK_SUCCESS) {
+        LOG_ERROR("Failed to create depth-prepass image view");
+        vmaDestroyImage(renderer.allocator, out_image.handle, out_image.allocation);
+        out_image = {};
+        return false;
+    }
+    return true;
+}
+
+bool gfx::Engine::init_depth_prepass() {
+    // Depth-only render pass → SHADER_READ_ONLY for Hi-Z copy (same frame).
+    VkAttachmentDescription2 depth_att{};
+    depth_att.sType = VK_STRUCTURE_TYPE_ATTACHMENT_DESCRIPTION_2;
+    depth_att.format = renderer.vk.depth_format;
+    depth_att.samples = VK_SAMPLE_COUNT_1_BIT;
+    depth_att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depth_att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    depth_att.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    depth_att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depth_att.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    depth_att.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    VkAttachmentReference2 depth_ref{};
+    depth_ref.sType = VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2;
+    depth_ref.attachment = 0;
+    depth_ref.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    depth_ref.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+
+    VkSubpassDescription2 subpass{};
+    subpass.sType = VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_2;
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 0;
+    subpass.pDepthStencilAttachment = &depth_ref;
+
+    VkSubpassDependency2 dep_in{};
+    dep_in.sType = VK_STRUCTURE_TYPE_SUBPASS_DEPENDENCY_2;
+    dep_in.srcSubpass = VK_SUBPASS_EXTERNAL;
+    dep_in.dstSubpass = 0;
+    dep_in.srcStageMask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |
+                          VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                          VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    dep_in.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT |
+                           VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    dep_in.dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                          VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    dep_in.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+                           VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+
+    VkSubpassDependency2 dep_out{};
+    dep_out.sType = VK_STRUCTURE_TYPE_SUBPASS_DEPENDENCY_2;
+    dep_out.srcSubpass = 0;
+    dep_out.dstSubpass = VK_SUBPASS_EXTERNAL;
+    dep_out.srcStageMask = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    dep_out.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    dep_out.dstStageMask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+    dep_out.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+    VkSubpassDependency2 deps[] = {dep_in, dep_out};
+
+    VkRenderPassCreateInfo2 rpci{};
+    rpci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO_2;
+    rpci.attachmentCount = 1;
+    rpci.pAttachments = &depth_att;
+    rpci.subpassCount = 1;
+    rpci.pSubpasses = &subpass;
+    rpci.dependencyCount = 2;
+    rpci.pDependencies = deps;
+
+    if (vkCreateRenderPass2(renderer.vk.device, &rpci, nullptr,
+                            &renderer.depth_prepass.render_pass) != VK_SUCCESS) {
+        LOG_ERROR("Failed to create depth-prepass render pass");
+        return false;
+    }
+
+    // One depth target + framebuffer per frame-in-flight (concurrent frames).
+    const uint32_t n = Renderer::MAX_FRAMES_IN_FLIGHT;
+    renderer.depth_prepass.depth_images.resize(n);
+    renderer.depth_prepass.framebuffers.resize(n);
+    for (uint32_t i = 0; i < n; ++i) {
+        if (!create_prepass_depth_image(renderer.vk.swap_chain_extent,
+                                        renderer.depth_prepass.depth_images[i])) {
+            return false;
+        }
+
+        VkImageView att = renderer.depth_prepass.depth_images[i].view;
+        VkFramebufferCreateInfo fbci{};
+        fbci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        fbci.renderPass = renderer.depth_prepass.render_pass;
+        fbci.attachmentCount = 1;
+        fbci.pAttachments = &att;
+        fbci.width = renderer.vk.swap_chain_extent.width;
+        fbci.height = renderer.vk.swap_chain_extent.height;
+        fbci.layers = 1;
+        if (vkCreateFramebuffer(renderer.vk.device, &fbci, nullptr,
+                                &renderer.depth_prepass.framebuffers[i]) != VK_SUCCESS) {
+            LOG_ERROR("Failed to create depth-prepass framebuffer");
+            return false;
+        }
+    }
+
+    LOG_INFO("[HiZ] Depth prepass ready (" << renderer.vk.swap_chain_extent.width
+             << "x" << renderer.vk.swap_chain_extent.height << ", 1x samples)");
     return true;
 }
 

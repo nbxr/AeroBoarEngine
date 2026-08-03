@@ -92,7 +92,7 @@ This project aims to develop a cross-platform game engine targeting VR via OpenX
 - Full OpenXR integration
 - VR-specific features
 - **Reverse-Z depth** (near→1 / far→0, `GREATER` compare, clear 0) coordinated with stereo/multiview
-- Hi-Z / occlusion upgrade for head tracking (same-frame or reprojected HZB; not desktop camera hysteresis)
+- Same-frame occlusion (depth prepass → Hi-Z → shade) is **landed on desktop** (no hysteresis). Quest work: multiview / per-eye prepass + reverse-Z HZB compares.
 - Performance optimization
 - Testing and debugging
 

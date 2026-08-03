@@ -40,6 +40,7 @@ class Engine {
     bool init_transfer_queue(vkb::Device &dev);
     bool init_swapchain(vkb::Device &dev);
     bool init_render_pass();
+    bool init_depth_prepass();
     bool init_msaa_color_image();
     bool init_depth_image();
 
@@ -47,6 +48,7 @@ class Engine {
     bool create_msaa_color_image(VkExtent2D extent, AllocatedImage& out_image);
     bool create_depth_image(VkExtent2D extent, AllocatedImage& out_image);
     bool create_resolved_depth_image(VkExtent2D extent, AllocatedImage& out_image);
+    bool create_prepass_depth_image(VkExtent2D extent, AllocatedImage& out_image);
     bool init_descriptor_pool();
     bool init_descriptor_set_layout();
     bool init_bindless_descriptor_set();
@@ -66,6 +68,10 @@ class Engine {
 
     bool init_pipeline_layout();
     bool init_graphics_pipeline();
+    bool init_depth_prepass_pipeline();
+
+    // Wire prepass depth → HZB copy sets and HZB → cull sets (idle only).
+    void wire_hzb_descriptors();
 
     void destroy_sync_primitives();
     void destroy_descriptor_pool();

@@ -63,14 +63,15 @@ class GpuCulling {
 
     void clear_scene(VkDevice device, VmaAllocator allocator);
 
-    // Record: zero counts, frustum (+ optional HZB) cull, build indirect.
-    // view_proj: current camera (frustum planes).
-    // hzb_view_proj: camera that wrote the HZB depth (must match pyramid slot).
-    // hzb_view/sampler may be null → frustum only.
+    // Bind Hi-Z image for this frame slot. Call only when the frame fence has
+    // been waited (set not in use). Not UPDATE_AFTER_BIND — never call mid-record.
+    void bind_hzb(uint32_t frame_index, VkImageView hzb_view, VkSampler hzb_sampler);
+
+    // Record: zero counts, frustum (+ optional same-frame HZB) cull, build indirect.
+    // view_proj: current camera. enable_hzb requires prior bind_hzb to the pyramid.
     void record(VkCommandBuffer cmd, uint32_t frame_index, const glm::mat4& view_proj,
-                VkImageView hzb_view = VK_NULL_HANDLE, VkSampler hzb_sampler = VK_NULL_HANDLE,
-                uint32_t hzb_width = 0, uint32_t hzb_height = 0, uint32_t hzb_mips = 0,
-                const glm::mat4* hzb_view_proj = nullptr, float hzb_bias_scale = 1.0f);
+                bool enable_hzb = false, uint32_t hzb_width = 0, uint32_t hzb_height = 0,
+                uint32_t hzb_mips = 0, float hzb_depth_bias = 0.003f);
 
     [[nodiscard]] bool is_ready() const { return ready_; }
     [[nodiscard]] uint32_t batch_count() const { return batch_count_; }

@@ -132,6 +132,28 @@ void Camera::reset_mouse_state() {
     core::InputManager::get_instance().reset_mouse_state();
 }
 
+void Camera::set_position_and_forward(const glm::vec3& pos, const glm::vec3& forward) {
+    position = pos;
+
+    // Convention: get_forward() == orientation * vec3(0,0,-1)  (local -Z).
+    // Camera-to-world basis columns: (right, up, -look).
+    glm::vec3 look = glm::normalize(forward);
+    if (glm::length(look) < 1e-8f)
+        look = glm::vec3(0.0f, 0.0f, -1.0f);
+
+    glm::vec3 world_up(0.0f, 1.0f, 0.0f);
+    if (std::abs(glm::dot(look, world_up)) > 0.999f)
+        world_up = glm::vec3(0.0f, 0.0f, 1.0f);
+
+    const glm::vec3 right = glm::normalize(glm::cross(look, world_up));
+    const glm::vec3 up = glm::normalize(glm::cross(right, look));
+    const glm::mat3 rot(right, up, -look);
+    orientation = glm::normalize(glm::quat_cast(rot));
+
+    yaw = glm::degrees(std::atan2(look.z, look.x));
+    pitch = glm::degrees(std::asin(std::clamp(look.y, -1.0f, 1.0f)));
+}
+
 void Camera::frame(const glm::vec3& center, float radius) {
     // Place the camera on a pleasant 3/4 view offset from the framing sphere.
     float distance = radius * 2.8f + 1.5f;
@@ -145,24 +167,7 @@ void Camera::frame(const glm::vec3& center, float radius) {
     near_plane = std::clamp(distance * 0.001f, 0.001f, 0.05f);
     far_plane = std::max(distance + r * 20.0f, near_plane * 1000.0f);
 
-    // Desired world-space look direction (camera forward).
-    // Convention: get_forward() == orientation * vec3(0,0,-1)  (local -Z).
-    // Camera-to-world basis columns must therefore be (right, up, -look).
-    glm::vec3 look = glm::normalize(center - position);
-    glm::vec3 world_up(0.0f, 1.0f, 0.0f);
-    if (std::abs(glm::dot(look, world_up)) > 0.999f) {
-        world_up = glm::vec3(0.0f, 0.0f, 1.0f); // look ~parallel to Y
-    }
-
-    glm::vec3 right = glm::normalize(glm::cross(look, world_up));
-    glm::vec3 up = glm::normalize(glm::cross(right, look));
-
-    glm::mat3 rot(right, up, -look);
-    orientation = glm::normalize(glm::quat_cast(rot));
-
-    // Legacy yaw/pitch (best-effort; quaternion is authoritative)
-    yaw = glm::degrees(std::atan2(look.z, look.x));
-    pitch = glm::degrees(std::asin(std::clamp(look.y, -1.0f, 1.0f)));
+    set_position_and_forward(position, center - position);
 }
 
 void Camera::set_from_camera_node(const glm::mat4& world_transform,

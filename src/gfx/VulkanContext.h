@@ -47,6 +47,8 @@ struct VulkanContext {
     uint32_t swap_chain_image_count = 0;   // Actual images returned by driver (can be > requested min)
 
     VkPipeline pipeline{VK_NULL_HANDLE};
+    // Depth-only prepass (vertex stage only) for same-frame Hi-Z.
+    VkPipeline depth_prepass_pipeline{VK_NULL_HANDLE};
     VkPushConstantRange push_constant_range{
         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, // stageFlags
         0, // offset

@@ -15,6 +15,62 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <array>
 
+namespace {
+
+void bind_draw_instances(gfx::Renderer& renderer, uint32_t frame_index) {
+    auto& inst = renderer.gpu_culling.out_instances(frame_index);
+    gfx::BufferUtils::update_descriptor(
+        renderer.vk.device.device, inst,
+        renderer.vk.bindless_descriptor_sets[frame_index],
+        inst.info.size, gfx::Renderer::BINDING_DRAW_INSTANCES);
+}
+
+void record_indirect_draws(VkCommandBuffer cmd, gfx::Renderer& renderer,
+                           VkPipeline pipeline, const glm::mat4& viewProj) {
+    auto& vk = renderer.vk;
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vk.pipeline_layout, 0, 1,
+                            &vk.bindless_descriptor_sets[renderer.current_frame], 0, nullptr);
+
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = static_cast<float>(vk.swap_chain_extent.width);
+    viewport.height = static_cast<float>(vk.swap_chain_extent.height);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+
+    VkRect2D scissor{};
+    scissor.offset = {0, 0};
+    scissor.extent = vk.swap_chain_extent;
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+    auto& index_buf = renderer.mesh_manager.get_render_index_buffer();
+    vkCmdBindIndexBuffer(cmd, index_buf.buffer, 0, VK_INDEX_TYPE_UINT32);
+
+    auto& vertex_buf = renderer.mesh_manager.get_render_vertex_buffer();
+    VkDeviceSize vbo_offset = 0;
+    vkCmdBindVertexBuffers(cmd, 0, 1, &vertex_buf.buffer, &vbo_offset);
+
+    gfx::PbrPush pushData{};
+    pushData.viewProj = viewProj;
+    pushData.extra = glm::uvec4{0u, 0u, 0u, 0u};
+
+    vkCmdPushConstants(cmd, vk.pipeline_layout,
+                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                       sizeof(gfx::PbrPush), &pushData);
+
+    const uint32_t batches = renderer.gpu_culling.batch_count();
+    auto& indirect = renderer.gpu_culling.indirect_cmds(renderer.current_frame);
+    if (batches > 0) {
+        vkCmdDrawIndexedIndirect(cmd, indirect.buffer, 0, batches, 20);
+    }
+}
+
+} // namespace
+
 void gfx::Engine::render() {
     auto& vk = renderer.vk;
     auto& frame = renderer.frames[renderer.current_frame];
@@ -100,38 +156,62 @@ void gfx::Engine::render() {
     proj[1][1] *= -1.0f;
     glm::mat4 viewProj = proj * view;
 
-    // GPU frustum + previous-frame Hi-Z cull, then build indirect (before graphics).
-    // HZB is gated with hysteresis: off on any camera motion, back on only after
-    // the view has been still long enough (avoids mid-look occlusion flicker/pop).
-    if (renderer.gpu_culling.is_ready()) {
-        const uint32_t fi = renderer.current_frame;
-        const glm::vec3 cam_pos = camera.get_position();
-        const glm::vec3 cam_fwd = camera.get_forward();
-        float hzb_bias_scale = 1.0f;
-        if (renderer.hzb.should_use_occlusion(fi, cam_pos, cam_fwd, &hzb_bias_scale)) {
-            const glm::mat4& hzb_vp = renderer.hzb.view_proj_for(fi);
-            renderer.gpu_culling.record(
-                frame.command_buffer, fi, viewProj, renderer.hzb.full_view(fi),
-                renderer.hzb.sampler(), renderer.hzb.width(), renderer.hzb.height(),
-                renderer.hzb.mip_count(), &hzb_vp, hzb_bias_scale);
-            renderer.last_cull_used_hzb[fi] = true;
-        } else {
-            renderer.gpu_culling.record(frame.command_buffer, fi, viewProj);
-            renderer.last_cull_used_hzb[fi] = false;
-        }
+    const uint32_t fi = renderer.current_frame;
+    const bool can_cull = renderer.gpu_culling.is_ready();
+    const bool can_hzb = can_cull && renderer.hzb.is_ready() &&
+                         fi < renderer.depth_prepass.framebuffers.size() &&
+                         fi < renderer.depth_prepass.depth_images.size() &&
+                         renderer.vk.depth_prepass_pipeline != VK_NULL_HANDLE;
+
+    // ------------------------------------------------------------------
+    // Same-frame occlusion:
+    //   1) frustum cull → 2) depth prepass → 3) HZB build
+    //   → 4) frustum+HZB cull → 5) shade
+    // ------------------------------------------------------------------
+    if (can_cull) {
+        // 1) Frustum-only candidates for the depth prepass.
+        renderer.gpu_culling.record(frame.command_buffer, fi, viewProj);
+        bind_draw_instances(renderer, fi);
     }
 
     write_frame_lighting(renderer.current_frame);
 
-    // Ensure graphics set binding 1 points at this frame's instance buffer.
-    if (renderer.gpu_culling.is_ready()) {
-        auto& inst = renderer.gpu_culling.out_instances(renderer.current_frame);
-        gfx::BufferUtils::update_descriptor(
-            renderer.vk.device.device, inst,
-            renderer.vk.bindless_descriptor_sets[renderer.current_frame],
-            inst.info.size, Renderer::BINDING_DRAW_INSTANCES);
+    if (can_hzb) {
+        // 2) Depth-only prepass at current pose.
+        VkClearValue clear_depth{};
+        clear_depth.depthStencil = {1.0f, 0};
+
+        VkRenderPassBeginInfo prepass_info{};
+        prepass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        prepass_info.renderPass = renderer.depth_prepass.render_pass;
+        prepass_info.framebuffer = renderer.depth_prepass.framebuffers[fi];
+        prepass_info.renderArea.offset = {0, 0};
+        prepass_info.renderArea.extent = vk.swap_chain_extent;
+        prepass_info.clearValueCount = 1;
+        prepass_info.pClearValues = &clear_depth;
+
+        vkCmdBeginRenderPass(frame.command_buffer, &prepass_info,
+                             VK_SUBPASS_CONTENTS_INLINE);
+        record_indirect_draws(frame.command_buffer, renderer,
+                              vk.depth_prepass_pipeline, viewProj);
+        vkCmdEndRenderPass(frame.command_buffer);
+
+        // 3) Build Hi-Z from prepass depth (same view_proj).
+        // Descriptors were wired at init/resize (bind_depth_source) — no updates here.
+        renderer.hzb.record_build(frame.command_buffer, fi, vk.swap_chain_extent);
+
+        // 4) Final cull with same-frame HZB (image already bound via bind_hzb).
+        renderer.gpu_culling.record(frame.command_buffer, fi, viewProj, true,
+                                    renderer.hzb.width(), renderer.hzb.height(),
+                                    renderer.hzb.mip_count());
+        bind_draw_instances(renderer, fi);
+        renderer.last_cull_used_hzb[fi] = true;
+    } else if (can_cull) {
+        // No HZB resources: frustum-only already recorded for shade.
+        renderer.last_cull_used_hzb[fi] = false;
     }
 
+    // 5) Main shade pass (MSAA color + depth; independent of prepass depth).
     VkRenderPassBeginInfo render_pass_info{};
     render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     render_pass_info.renderPass = renderer.main_pass.render_pass;
@@ -155,89 +235,11 @@ void gfx::Engine::render() {
 
     vkCmdBeginRenderPass(frame.command_buffer, &render_pass_info, VK_SUBPASS_CONTENTS_INLINE);
 
-    vkCmdBindPipeline(frame.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, vk.pipeline);
-
-    vkCmdBindDescriptorSets(
-        frame.command_buffer,
-        VK_PIPELINE_BIND_POINT_GRAPHICS,
-        vk.pipeline_layout,
-        0, 1,
-        &vk.bindless_descriptor_sets[renderer.current_frame],
-        0, nullptr
-    );
-
-    VkViewport viewport{};
-    viewport.x = 0.0f;
-    viewport.y = 0.0f;
-    viewport.width = static_cast<float>(vk.swap_chain_extent.width);
-    viewport.height = static_cast<float>(vk.swap_chain_extent.height);
-    viewport.minDepth = 0.0f;
-    viewport.maxDepth = 1.0f;
-    vkCmdSetViewport(frame.command_buffer, 0, 1, &viewport);
-
-    VkRect2D scissor{};
-    scissor.offset = {0, 0};
-    scissor.extent = vk.swap_chain_extent;
-    vkCmdSetScissor(frame.command_buffer, 0, 1, &scissor);
-
-    auto& index_buf = renderer.mesh_manager.get_render_index_buffer();
-    vkCmdBindIndexBuffer(frame.command_buffer, index_buf.buffer, 0, VK_INDEX_TYPE_UINT32);
-
-    auto& vertex_buf = renderer.mesh_manager.get_render_vertex_buffer();
-    VkDeviceSize vbo_offset = 0;
-    vkCmdBindVertexBuffers(frame.command_buffer, 0, 1, &vertex_buf.buffer, &vbo_offset);
-
-    gfx::PbrPush pushData{};
-    pushData.viewProj = viewProj;
-    pushData.extra = glm::uvec4{0u, 0u, 0u, 0u};
-
-    if (renderer.gpu_culling.is_ready()) {
-        const uint32_t batches = renderer.gpu_culling.batch_count();
-        auto& indirect = renderer.gpu_culling.indirect_cmds(renderer.current_frame);
-
-        // One push for the whole multi-draw; per-batch base is firstInstance
-        // (folded into gl_InstanceIndex on Vulkan — see pbr.vert).
-        vkCmdPushConstants(
-            frame.command_buffer,
-            vk.pipeline_layout,
-            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-            0,
-            sizeof(PbrPush),
-            &pushData);
-
-        // multiDrawIndirect + drawIndirectFirstInstance (required at device select).
-        // Stride 20 = sizeof(VkDrawIndexedIndirectCommand); empty batches have instanceCount=0.
-        if (batches > 0) {
-            vkCmdDrawIndexedIndirect(
-                frame.command_buffer,
-                indirect.buffer,
-                0,
-                batches,
-                20);
-        }
+    if (can_cull) {
+        record_indirect_draws(frame.command_buffer, renderer, vk.pipeline, viewProj);
     }
 
     vkCmdEndRenderPass(frame.command_buffer);
-
-    // Build previous-frame Hi-Z from resolved (or single-sample) depth.
-    {
-        VkImageView depth_view = VK_NULL_HANDLE;
-        VkImage depth_image = VK_NULL_HANDLE;
-        if (renderer.main_pass.uses_depth_resolve &&
-            image_index < renderer.main_pass.resolved_depth_images.size()) {
-            depth_view = renderer.main_pass.resolved_depth_images[image_index].view;
-            depth_image = renderer.main_pass.resolved_depth_images[image_index].handle;
-        } else if (image_index < renderer.main_pass.depth_images.size()) {
-            depth_view = renderer.main_pass.depth_images[image_index].view;
-            depth_image = renderer.main_pass.depth_images[image_index].handle;
-        }
-        if (depth_view != VK_NULL_HANDLE) {
-            renderer.hzb.record_build(frame.command_buffer, renderer.current_frame,
-                                      depth_view, depth_image,
-                                      renderer.vk.swap_chain_extent, viewProj,
-                                      camera.get_position(), camera.get_forward());
-        }
-    }
 
     if (vkEndCommandBuffer(frame.command_buffer) != VK_SUCCESS) {
         LOG_ERROR("Failed to end command buffer");

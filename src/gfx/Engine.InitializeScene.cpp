@@ -351,6 +351,8 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
             LOG_ERROR("[Draw] GPU cull build_scene failed");
             return false;
         }
+        // build_scene rewrites cull sets with dummy HZB — rebind real pyramid.
+        wire_hzb_descriptors();
 
         LOG_INFO("[Draw] GPU cull ready: " << n_rm << " renderMeshes / "
                  << renderer.scene_manager.game_object_count() << " gameObjects / "

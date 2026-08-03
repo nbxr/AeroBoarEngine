@@ -42,5 +42,12 @@
       "name": "gpuAssistedValidation",
       "enabled": false
     }
+  ],
+  "cameraOverride" : [
+    {
+      "position": [0.23877, 0.0715668, -0.257649],
+      "forward": [-0.566242, -0.136671, 0.812829],
+      "enabled": true
+    }
   ]
 }

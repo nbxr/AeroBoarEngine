@@ -571,9 +571,53 @@ void gfx::Engine::recreate_swapchain() {
         renderer.window.width = renderer.vk.swap_chain_extent.width;
         renderer.window.height = renderer.vk.swap_chain_extent.height;
 
-        // Rebuild Hi-Z pyramids for the new extent (history discarded).
+        // Rebuild depth-prepass targets (extent changed; frames-in-flight slots).
+        for (auto fb : renderer.depth_prepass.framebuffers) {
+            if (fb != VK_NULL_HANDLE)
+                vkDestroyFramebuffer(renderer.vk.device, fb, nullptr);
+        }
+        renderer.depth_prepass.framebuffers.clear();
+        for (auto &img : renderer.depth_prepass.depth_images) {
+            if (img.view != VK_NULL_HANDLE)
+                vkDestroyImageView(renderer.vk.device, img.view, nullptr);
+            if (img.handle != VK_NULL_HANDLE)
+                vmaDestroyImage(renderer.allocator, img.handle, img.allocation);
+        }
+        renderer.depth_prepass.depth_images.clear();
+
+        {
+            const uint32_t n = Renderer::MAX_FRAMES_IN_FLIGHT;
+            renderer.depth_prepass.depth_images.resize(n);
+            renderer.depth_prepass.framebuffers.resize(n);
+            for (uint32_t i = 0; i < n; ++i) {
+                if (!create_prepass_depth_image(renderer.vk.swap_chain_extent,
+                                                renderer.depth_prepass.depth_images[i])) {
+                    LOG_ERROR("[Swapchain] Failed to recreate depth-prepass image");
+                    break;
+                }
+                VkImageView att = renderer.depth_prepass.depth_images[i].view;
+                VkFramebufferCreateInfo fbci{};
+                fbci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+                fbci.renderPass = renderer.depth_prepass.render_pass;
+                fbci.attachmentCount = 1;
+                fbci.pAttachments = &att;
+                fbci.width = renderer.vk.swap_chain_extent.width;
+                fbci.height = renderer.vk.swap_chain_extent.height;
+                fbci.layers = 1;
+                if (vkCreateFramebuffer(renderer.vk.device, &fbci, nullptr,
+                                        &renderer.depth_prepass.framebuffers[i]) !=
+                    VK_SUCCESS) {
+                    LOG_ERROR("[Swapchain] Failed to recreate depth-prepass FB");
+                    break;
+                }
+            }
+        }
+
+        // Rebuild Hi-Z pyramids for the new extent, then rewire descriptors
+        // (prepass depth views + cull HZB bindings) while the device is idle.
         renderer.hzb.resize(renderer.vk.device.device, renderer.allocator,
                             renderer.vk.swap_chain_extent);
+        wire_hzb_descriptors();
 
         // Restart frame index after swapchain recreation. The per-frame fences
         // and image_available semaphores were not recreated here (they are

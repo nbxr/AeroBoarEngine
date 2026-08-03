@@ -10,18 +10,13 @@
 
 namespace gfx {
 
-// Hierarchical-Z (min-depth) pyramid for previous-frame occlusion culling.
-// Built after the main pass from the single-sample resolved depth.
-// Double-buffered: slot f is written at end of frame f and read after that
-// frame's fence is waited (next time slot f is used).
+// Hierarchical-Z (min-depth) pyramid for **same-frame** occlusion culling.
+// Built after a depth prepass at the current pose; cull immediately after
+// in the same command buffer. Double-buffered for frames-in-flight so
+// concurrent submissions do not stomp each other's pyramid.
 //
-// Occlusion tests MUST project AABBs with view_proj_for() of that slot — the
-// same matrix used when the depth was rendered — otherwise depth values are
-// not comparable and objects false-cull.
-//
-// Desktop hysteresis (should_use_occlusion): hard-off on camera motion, re-enable
-// only after kMinStableFrames of stillness. Intentional interim for mouse-look;
-// improve for VR (same-frame HZB or reprojection) — see docs/agents/tech_context.md.
+// Cull must use the **same** view_proj that rendered the prepass depth.
+// No camera-stability hysteresis (VR-ready).
 class HzbPyramid {
   public:
     static constexpr uint32_t kMaxFrames = 2;
@@ -30,42 +25,31 @@ class HzbPyramid {
     bool initialize(VkDevice device, VmaAllocator allocator);
     void destroy(VkDevice device, VmaAllocator allocator);
 
-    // Recreate pyramids for the current swapchain extent. Call on init + resize.
     bool resize(VkDevice device, VmaAllocator allocator, VkExtent2D extent);
 
-    // After main pass: sample resolved depth into mip0, reduce remaining mips.
-    // depth_view must be single-sample depth, layout SHADER_READ_ONLY_OPTIMAL.
-    // view_proj must be the exact matrix used for the main pass that wrote depth.
-    // cam_pos / cam_forward are used to gate occlusion when the camera has moved.
-    void record_build(VkCommandBuffer cmd, uint32_t frame_index, VkImageView depth_view,
-                      VkImage depth_image, VkExtent2D depth_extent,
-                      const glm::mat4& view_proj, const glm::vec3& cam_pos,
-                      const glm::vec3& cam_forward);
+    // Wire prepass depth into copy descriptors. Call when idle (init / resize),
+    // never while a command buffer that used these sets is still recording.
+    void bind_depth_source(uint32_t frame_index, VkImageView depth_view);
 
-    // Bindable for cull compute: combined sampler over full mip chain (R32F).
+    // UNDEFINED → GENERAL for every pyramid slot (record into a one-shot CB).
+    // Cull samples HZB in GENERAL; must run after resize before first frame.
+    // No-op if layouts were already initialized for this pyramid generation.
+    void record_init_layouts(VkCommandBuffer cmd);
+    [[nodiscard]] bool needs_layout_init() const { return needs_layout_init_; }
+
+    // After depth prepass: min-downsample full-res depth into mip0, reduce mips.
+    // Descriptors must already be bound (bind_depth_source + create_images).
+    // Pyramid stays in GENERAL for sampling (matches bind_hzb layout).
+    void record_build(VkCommandBuffer cmd, uint32_t frame_index, VkExtent2D depth_extent);
+
     [[nodiscard]] VkImageView full_view(uint32_t frame_index) const {
         return full_views_[frame_index];
     }
     [[nodiscard]] VkSampler sampler() const { return sampler_; }
 
-    // View-projection used when this slot's depth/HZB was generated.
-    [[nodiscard]] const glm::mat4& view_proj_for(uint32_t frame_index) const {
-        return view_proj_[frame_index];
-    }
-
-    // Hard occlusion for this frame? Combines:
-    //  - inter-frame motion hysteresis (mouse-look → off immediately; must sit
-    //    still for kMinStableFrames before on again),
-    //  - capture-camera compatibility for the HZB slot (depth-space match).
-    // bias_scale_out: >1 for the first frames after re-enable (safer / less pop).
-    [[nodiscard]] bool should_use_occlusion(uint32_t frame_index,
-                                            const glm::vec3& cam_pos,
-                                            const glm::vec3& cam_forward,
-                                            float* bias_scale_out = nullptr);
-
-    [[nodiscard]] bool is_ready(uint32_t frame_index) const {
-        return ready_ && built_[frame_index];
-    }
+    // Resources allocated (extent valid). Pyramid is valid after record_build
+    // in the same frame before occlusion cull.
+    [[nodiscard]] bool is_ready() const { return ready_; }
     [[nodiscard]] uint32_t mip_count() const { return mip_count_; }
     [[nodiscard]] uint32_t width() const { return width_; }
     [[nodiscard]] uint32_t height() const { return height_; }
@@ -85,34 +69,19 @@ class HzbPyramid {
     VkSampler sampler_ = VK_NULL_HANDLE;
     VkSampler depth_sampler_ = VK_NULL_HANDLE;
 
-    // One set for copy + (mip_count-1) reduce sets per frame (allocated on demand)
     std::array<VkDescriptorSet, kMaxFrames> copy_sets_{};
     std::array<std::vector<VkDescriptorSet>, kMaxFrames> reduce_sets_{};
 
     std::array<AllocatedImage, kMaxFrames> images_{};
     std::array<VkImageView, kMaxFrames> full_views_{};
     std::array<std::vector<VkImageView>, kMaxFrames> mip_views_{};
-    std::array<bool, kMaxFrames> built_{};
-    std::array<glm::mat4, kMaxFrames> view_proj_{};
-    std::array<glm::vec3, kMaxFrames> cam_pos_{};
-    std::array<glm::vec3, kMaxFrames> cam_forward_{};
-
-    // Hysteresis: inter-frame camera tracking (not the HZB capture camera).
-    // Instant OFF on motion; long settle before ON — mid-look HZB is what pops.
-    static constexpr uint32_t kMinStableFrames = 24; // ~400 ms at 60 Hz
-    static constexpr uint32_t kWarmupFrames = 30;    // extra-conservative bias after ON
-    glm::vec3 last_frame_pos_{0.0f};
-    glm::vec3 last_frame_forward_{0.0f, 0.0f, -1.0f};
-    bool have_last_frame_cam_ = false;
-    uint32_t stable_frames_ = 0;
-
-    [[nodiscard]] bool capture_compatible(uint32_t frame_index, const glm::vec3& cam_pos,
-                                          const glm::vec3& cam_forward) const;
 
     uint32_t width_ = 0;
     uint32_t height_ = 0;
     uint32_t mip_count_ = 0;
     bool ready_ = false;
+    // Set by resize(); cleared after record_init_layouts().
+    bool needs_layout_init_ = false;
 };
 
 } // namespace gfx

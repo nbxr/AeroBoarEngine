@@ -9,7 +9,10 @@
 #include "gfx/Renderer.h"
 #include "scene/Camera.h"
 #include "core/InputManager.h"
+#include "core/Configuration.h"
 #include "core/Log.h"
+#include <glm/glm.hpp>
+#include <nlohmann/json.hpp>
 #include <GLFW/glfw3.h>
 
 int AeroBoar::fly() {
@@ -77,9 +80,39 @@ int AeroBoar::fly() {
         return -1;
     }
 
+    // Optional config override for startup camera (Hi-Z / cull debug).
+    // Schema:
+    //   "cameraOverride": { "enabled": true, "position": [x,y,z], "forward": [x,y,z] }
+    // or an array of one such object (same as validationFeatures style).
+    {
+        const nlohmann::json& root = core::Configuration::get_root();
+        if (root.contains("cameraOverride") && !root["cameraOverride"].is_null()) {
+            const nlohmann::json* node = &root["cameraOverride"];
+            if (node->is_array() && !node->empty())
+                node = &(*node)[0];
+            if (node->is_object() && node->value("enabled", false) &&
+                node->contains("position") && (*node)["position"].is_array() &&
+                (*node)["position"].size() >= 3 &&
+                node->contains("forward") && (*node)["forward"].is_array() &&
+                (*node)["forward"].size() >= 3) {
+                const auto& p = (*node)["position"];
+                const auto& f = (*node)["forward"];
+                const glm::vec3 pos(p[0].get<float>(), p[1].get<float>(),
+                                    p[2].get<float>());
+                const glm::vec3 fwd(f[0].get<float>(), f[1].get<float>(),
+                                    f[2].get<float>());
+                engine.camera.set_position_and_forward(pos, fwd);
+                LOG_INFO("[Camera] Override from configuration.json: pos=("
+                         << pos.x << ", " << pos.y << ", " << pos.z
+                         << ") forward=(" << fwd.x << ", " << fwd.y << ", "
+                         << fwd.z << ")");
+            }
+        }
+    }
+
     // Save the exact camera pose that resulted from loading (glTF camera node
-    // or the initial AABB frame). The 'R' key (and Shift+R for generic framing)
-    // can restore it.
+    // or the initial AABB frame), after any cameraOverride. The 'R' key
+    // (and Shift+R for generic framing) can restore it.
     engine.camera.save_initial_pose();
 
     // Start with cursor visible (not captured). The user can move the mouse over the
@@ -180,6 +213,18 @@ int AeroBoar::fly() {
             }
         }
         r_was_pressed = r_pressed;
+
+        // P: log camera pose (debug aid for Hi-Z / framing / culling).
+        static bool p_was_pressed = false;
+        bool p_pressed = input.is_key_down(GLFW_KEY_P);
+        if (p_pressed && !p_was_pressed) {
+            const glm::vec3 pos = engine.camera.get_position();
+            const glm::vec3 fwd = engine.camera.get_forward();
+            LOG_INFO("[Camera] pos=(" << pos.x << ", " << pos.y << ", " << pos.z
+                     << ") forward=(" << fwd.x << ", " << fwd.y << ", " << fwd.z
+                     << ")");
+        }
+        p_was_pressed = p_pressed;
 
         engine.render();
     }

@@ -87,6 +87,10 @@ public:
     // Frames the camera to nicely view a sphere (center + radius)
     void frame(const glm::vec3& center, float radius);
 
+    // Set world position and look direction (forward = direction the camera faces).
+    // Used by configuration cameraOverride and debug tools.
+    void set_position_and_forward(const glm::vec3& pos, const glm::vec3& forward);
+
     // Minimal support: apply a glTF camera node's world transform + projection params.
     // aspect_ratio (if > 0) comes from camera.perspective.aspectRatio in the glTF.
     // When 0 we keep using the runtime window aspect in get_projection_matrix().

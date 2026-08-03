@@ -11,8 +11,8 @@ Goal: 72–120 FPS at 2064×2208 per eye with minimal CPU overhead and maximum d
 **This is target / aspirational guidance for the 2026 Quest 3 pipeline.**
 
 **Status snapshot (maintain details in `docs/agents/current_state.md`):**
-- Active path: bindless PBR (`pbr.vert` / `pbr.frag`), GPU frustum + Hi-Z cull, multi-draw indirect, scene lights + procedural IBL.
-- Desktop single-subpass with MSAA + depth resolve for Hi-Z source.
+- Active path: bindless PBR (`pbr.vert` / `pbr.frag`), **same-frame** GPU frustum + Hi-Z cull (depth prepass → HZB → shade), multi-draw indirect, scene lights + procedural IBL.
+- Desktop: depth-only prepass (1x) feeds Hi-Z; main shade is MSAA single-subpass (depth resolve still present but not the HZB source).
 - Still target/aspirational for Quest: multiview, reverse-Z, TBDR subpass layout, full production IBL assets, clustered lights.
 
 See `docs/agents/current_state.md` for the latest implementation status.
@@ -27,7 +27,7 @@ Multiview is mandatory. Leverage multiview for efficient left and right eye rend
 
 GPU-driven everywhere. Perform compute culling and occlusion, write indirect draw buffers, then issue a single indirect draw call.
 
-Compute-based culling: Before the rasterization pass, GPU compute shaders perform culling to reduce geometry throughput. This includes both view frustum culling and HZB (Hierarchical Z-Buffer) occlusion culling based on the previous frame depth buffer.
+Compute-based culling: Before the main shading pass, GPU compute + a depth prepass perform frustum + **same-frame** HZB occlusion. Flow: frustum candidates → depth prepass at current pose → build Hi-Z → occlusion cull → indirect shade. No previous-frame depth / hysteresis (VR-ready).
 
 **Depth (roadmap):** desktop currently uses standard Z (0=near, 1=far, `LESS`). The Quest/VR target path should use **reverse-Z** for better far-field precision under large far/near ratios, with Hi-Z and occlusion compares updated accordingly. See `docs/agents/tech_context.md` § Depth buffer model (current vs planned reverse-Z).
 
