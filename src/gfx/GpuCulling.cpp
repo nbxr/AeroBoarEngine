@@ -109,14 +109,16 @@ void GpuCulling::destroy(VkDevice device, VmaAllocator allocator) {
 }
 
 void GpuCulling::clear_scene(VkDevice device, VmaAllocator allocator) {
-    BufferUtils::destroy_buffer(device, allocator, cull_items_);
     BufferUtils::destroy_buffer(device, allocator, batch_metas_);
     for (uint32_t i = 0; i < kMaxFrames; ++i) {
+        BufferUtils::destroy_buffer(device, allocator, cull_items_[i]);
         BufferUtils::destroy_buffer(device, allocator, cull_globals_[i]);
         BufferUtils::destroy_buffer(device, allocator, batch_counts_[i]);
         BufferUtils::destroy_buffer(device, allocator, out_instances_[i]);
         BufferUtils::destroy_buffer(device, allocator, indirect_cmds_[i]);
     }
+    item_transform_indices_.clear();
+    cpu_items_.clear();
     item_count_ = 0;
     batch_count_ = 0;
     ready_ = false;
@@ -218,7 +220,8 @@ bool GpuCulling::build_scene(VkDevice device, VmaAllocator allocator,
     }
 
     std::vector<GpuBatchMeta> metas(batch_count_);
-    std::vector<GpuCullItem> items;
+    cpu_items_.clear();
+    item_transform_indices_.clear();
 
     uint32_t running_base = 0;
     for (uint32_t b = 0; b < batch_count_; ++b) {
@@ -237,14 +240,16 @@ bool GpuCulling::build_scene(VkDevice device, VmaAllocator allocator,
             item.aabb_min = glm::vec4(rm.local_aabb.min, 0.0f);
             item.aabb_max = glm::vec4(rm.local_aabb.max, 0.0f);
             item.meta = glm::uvec4(rm.material_index, b, running_base, cap);
-            items.push_back(item);
+            cpu_items_.push_back(item);
+            item_transform_indices_.push_back(rm.transform_index);
         }
         running_base += cap;
     }
-    item_count_ = static_cast<uint32_t>(items.size());
+    item_count_ = static_cast<uint32_t>(cpu_items_.size());
 
     const VkDeviceSize items_bytes =
-        std::max<VkDeviceSize>(sizeof(GpuCullItem), items.size() * sizeof(GpuCullItem));
+        std::max<VkDeviceSize>(sizeof(GpuCullItem),
+                               cpu_items_.size() * sizeof(GpuCullItem));
     const VkDeviceSize metas_bytes =
         std::max<VkDeviceSize>(sizeof(GpuBatchMeta), metas.size() * sizeof(GpuBatchMeta));
     const VkDeviceSize counts_bytes =
@@ -257,16 +262,15 @@ bool GpuCulling::build_scene(VkDevice device, VmaAllocator allocator,
         std::max<VkDeviceSize>(sizeof(uint32_t) * 5,
                                batch_count_ * 5 * sizeof(uint32_t));
 
-    if (!BufferUtils::initialize_buffer(device, allocator, items_bytes, cull_items_) ||
-        !BufferUtils::initialize_buffer(device, allocator, metas_bytes, batch_metas_)) {
-        LOG_ERROR("[GpuCulling] Failed to create static cull buffers");
+    if (!BufferUtils::initialize_buffer(device, allocator, metas_bytes, batch_metas_)) {
+        LOG_ERROR("[GpuCulling] Failed to create batch meta buffer");
         return false;
     }
-    memcpy(cull_items_.mapped_data, items.data(), items.size() * sizeof(GpuCullItem));
     memcpy(batch_metas_.mapped_data, metas.data(), metas.size() * sizeof(GpuBatchMeta));
 
     for (uint32_t f = 0; f < kMaxFrames; ++f) {
-        if (!BufferUtils::initialize_buffer(device, allocator, sizeof(GpuCullGlobals),
+        if (!BufferUtils::initialize_buffer(device, allocator, items_bytes, cull_items_[f]) ||
+            !BufferUtils::initialize_buffer(device, allocator, sizeof(GpuCullGlobals),
                                             cull_globals_[f],
                                             VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT) ||
             // TRANSFER_DST required for vkCmdFillBuffer zeroing each frame
@@ -282,11 +286,16 @@ bool GpuCulling::build_scene(VkDevice device, VmaAllocator allocator,
             return false;
         }
 
+        if (!cpu_items_.empty()) {
+            memcpy(cull_items_[f].mapped_data, cpu_items_.data(),
+                   cpu_items_.size() * sizeof(GpuCullItem));
+        }
+
         // Buffer bindings are static for the scene. HZB image is set via bind_hzb
         // (dummy until the pyramid is wired after resize / scene load).
         VkDescriptorBufferInfo infos[6]{};
         infos[0] = {cull_globals_[f].buffer, 0, sizeof(GpuCullGlobals)};
-        infos[1] = {cull_items_.buffer, 0, items_bytes};
+        infos[1] = {cull_items_[f].buffer, 0, items_bytes};
         infos[2] = {out_instances_[f].buffer, 0, out_bytes};
         infos[3] = {batch_counts_[f].buffer, 0, counts_bytes};
         infos[4] = {batch_metas_.buffer, 0, metas_bytes};
@@ -321,6 +330,21 @@ bool GpuCulling::build_scene(VkDevice device, VmaAllocator allocator,
     LOG_INFO("[GpuCulling] Ready: " << item_count_ << " items, " << batch_count_
              << " batches, " << running_base << " instance slots");
     return true;
+}
+
+void GpuCulling::update_models(uint32_t frame_index, const scene::SceneManager& scene) {
+    if (!ready_ || frame_index >= kMaxFrames || !cull_items_[frame_index].mapped_data)
+        return;
+    if (item_transform_indices_.size() != cpu_items_.size())
+        return;
+
+    auto* dst = static_cast<GpuCullItem*>(cull_items_[frame_index].mapped_data);
+    const auto& xforms = scene.transforms();
+    for (size_t i = 0; i < item_transform_indices_.size(); ++i) {
+        const glm::mat4& world = xforms.get_world_matrix(item_transform_indices_[i]);
+        dst[i].model = world;
+        cpu_items_[i].model = world;
+    }
 }
 
 void GpuCulling::bind_hzb(uint32_t frame_index, VkImageView hzb_view,

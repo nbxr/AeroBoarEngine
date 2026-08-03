@@ -164,10 +164,11 @@ The single bindless descriptor set (allocated once, UPDATE_AFTER_BIND) uses thes
 These are written once at scene load (after `update_buffers` + `toggle` + `bind_descriptor`). Shaders will access via the indices stored in the instance/material data.
 
 ## Compute Passes & Synchronization
-- Compute work (culling, animation, etc.) runs before the graphics pass in the same command buffer when possible.
+- Compute work (culling; future GPU animation if any) runs before the graphics pass in the same command buffer when possible.
 - Use pipeline barriers instead of extra semaphores between compute and graphics stages when feasible.
 - Double buffering (`MAX_FRAMES_IN_FLIGHT = 2`) is the baseline for avoiding CPU/GPU hazards.
 - Use deferred destruction for resources that may still be in use by the GPU.
+- **CPU animation (planned Phase 1):** sample clips → `set_local_matrix` → `sync_scene_transforms` after the frame fence (same path as other transform mutations). Do not write cull item models mid-CB without FIF-safe buffers. Full plan: `docs/architecture/animation-plan.md`.
 
 ## Resource managers
 - **CPU→GPU buffer managers** (`MaterialManager`, `SceneManager` instance SSBO, `MeshManager` vertex/index/meta): shared `gfx::DoubleBufferedBuffer` (upload/render pair, growth, memcpy, bind).

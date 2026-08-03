@@ -7,8 +7,12 @@
 #include "scene/RenderMesh.h"
 #include "gfx/Renderer.h"
 #include "gfx/Light.h"
+#include "core/Configuration.h"
+#include "core/Log.h"
 #include "VkBootstrap.h"
 #include "vk_mem_alloc.h"
+#include <filesystem>
+#include <string>
 
 bool gfx::Engine::initialize() {
     if (init_vulkan()) {
@@ -193,7 +197,41 @@ bool gfx::Engine::init_resource_managers() {
         return false;
     }
 
-    // Procedural IBL (SH + prefiltered cube + BRDF LUT). Non-fatal if bake fails.
+    // Optional HDR equirect for IBL (configuration.json "environmentHdr").
+    // Path is absolute, or relative to the active home path / cwd.
+    {
+        const auto& cfg = core::Configuration::get_instance();
+        if (cfg.is_loaded()) {
+            const auto& root = core::Configuration::get_root();
+            if (root.contains("environmentHdr") && root["environmentHdr"].is_string()) {
+                std::string hdr = root["environmentHdr"].get<std::string>();
+                if (!hdr.empty() && !std::filesystem::path(hdr).is_absolute()) {
+                    std::string home_path;
+                    std::string active_system =
+                        root.value("activeSystem", std::string{});
+                    if (root.contains("home") && root["home"].is_array()) {
+                        for (const auto& entry : root["home"]) {
+                            if (entry.contains("system") && entry.contains("path") &&
+                                entry["system"].get<std::string>() == active_system) {
+                                home_path = entry["path"].get<std::string>();
+                                break;
+                            }
+                        }
+                    }
+                    if (!home_path.empty()) {
+                        hdr = (std::filesystem::path(home_path) / hdr)
+                                  .make_preferred()
+                                  .string();
+                    }
+                }
+                renderer.ibl.equirect_hdr_path = hdr;
+                if (!hdr.empty())
+                    LOG_INFO("[IBL] environmentHdr = " << hdr);
+            }
+        }
+    }
+
+    // IBL (procedural or HDR equirect). Non-fatal if bake fails.
     if (!renderer.ibl.initialize(renderer.vk.device.device, renderer.allocator,
                                  renderer.vk.graphics_queue,
                                  renderer.vk.graphics_family_index)) {

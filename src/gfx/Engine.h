@@ -1,6 +1,7 @@
 #pragma once
 #include "VkBootstrap.h"
 #include "gfx/AllocatedImage.h"
+#include "gfx/Light.h"
 #include "gfx/Renderer.h"
 #include "scene/Camera.h"
 #include "core/Log.h"
@@ -25,6 +26,19 @@ class Engine {
     bool load_default_scene();
     bool load_scene(const std::string &scene_name);
     void cleanup_scene();
+
+    // Lighting runtime API (mutations take effect on the next frame write).
+    // Re-apply world pos/dir from TransformManager after propagate().
+    void refresh_lights_from_transforms();
+    bool set_light(uint32_t index, const gfx::Light& light);
+    uint32_t add_light(const gfx::Light& light); // returns index, or MAX_LIGHTS on fail
+    bool set_light_enabled(uint32_t index, bool enabled);
+
+    // Hierarchy: call after set_local_matrix / set_parent (or animation).
+    // Propagates dirty transforms, refreshes instances + GPU cull models for
+    // the current frame slot (must run after that frame's fence wait).
+    // Returns true if any world matrix changed.
+    bool sync_scene_transforms();
 
   private:
     // devices

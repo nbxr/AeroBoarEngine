@@ -4,14 +4,15 @@
 #include "gfx/Light.h"
 #include <array>
 #include <cstdint>
+#include <string>
 #include <glm/glm.hpp>
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan.h>
 
 namespace gfx {
 
-// Engine-level IBL resources (not part of glTF). Built once at init from a
-// procedural outdoor environment (no external HDR required).
+// Engine-level IBL resources (not part of glTF).
+// Default: procedural outdoor sky. Optional: Radiance .hdr equirect via path.
 //
 // Diffuse: 3-band SH in FrameConstants.shCoefficients
 // Specular: prefiltered GGX cubemap + 2D BRDF integration LUT (split-sum)
@@ -29,6 +30,11 @@ struct IblEnvironment {
     std::array<glm::vec4, 9> sh_coefficients{};
     uint32_t mip_count = 1;
     bool ready = false;
+    bool used_hdr_equirect = false;
+
+    // Optional absolute/relative path to a Radiance .hdr equirectangular map.
+    // Set before initialize(); empty → procedural environment.
+    std::string equirect_hdr_path;
 
     // Create GPU images, bake CPU-side, upload. Call once after VMA + queues exist.
     bool initialize(VkDevice device, VmaAllocator allocator, VkQueue graphics_queue,

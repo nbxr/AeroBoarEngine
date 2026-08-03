@@ -55,13 +55,17 @@ class GpuCulling {
     bool initialize(VkDevice device, VmaAllocator allocator);
     void destroy(VkDevice device, VmaAllocator allocator);
 
-    // Build static cull items / batch metas from mesh_draw_infos + scene.
-    // Call after scene load. Allocates per-frame output buffers.
+    // Build cull items / batch metas from mesh_draw_infos + scene.
+    // Call after scene load. Allocates per-frame item + output buffers.
     bool build_scene(VkDevice device, VmaAllocator allocator,
                      const std::vector<MeshDrawInfo>& mesh_draw_infos,
                      const scene::SceneManager& scene);
 
     void clear_scene(VkDevice device, VmaAllocator allocator);
+
+    // Rewrite model matrices for one frame slot from current TransformManager worlds.
+    // Call only after that frame's fence has been waited (buffer not in use on GPU).
+    void update_models(uint32_t frame_index, const scene::SceneManager& scene);
 
     // Bind Hi-Z image for this frame slot. Call only when the frame fence has
     // been waited (set not in use). Not UPDATE_AFTER_BIND — never call mid-record.
@@ -107,12 +111,18 @@ class GpuCulling {
     VkSampler dummy_sampler_ = VK_NULL_HANDLE;
     bool dummy_layout_ready_ = false;
 
-    AllocatedBuffer cull_items_{};
+    // Per-frame item buffers so model updates after fence wait are FIF-safe.
+    std::array<AllocatedBuffer, kMaxFrames> cull_items_{};
     AllocatedBuffer batch_metas_{};
     std::array<AllocatedBuffer, kMaxFrames> cull_globals_{};
     std::array<AllocatedBuffer, kMaxFrames> batch_counts_{};
     std::array<AllocatedBuffer, kMaxFrames> out_instances_{};
     std::array<AllocatedBuffer, kMaxFrames> indirect_cmds_{};
+
+    // Parallel to cull items: TransformManager index per item (for update_models).
+    std::vector<uint32_t> item_transform_indices_{};
+    // CPU template (aabb/meta fixed; models refreshed via update_models).
+    std::vector<GpuCullItem> cpu_items_{};
 
     uint32_t item_count_ = 0;
     uint32_t batch_count_ = 0;

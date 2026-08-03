@@ -1,6 +1,9 @@
 #include "gfx/IblEnvironment.h"
 #include "core/Log.h"
 
+// TextureManager.cpp defines STB_IMAGE_IMPLEMENTATION once for the link.
+#include <stb_image.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -10,6 +13,77 @@ namespace gfx {
 namespace {
 
 constexpr float PI = 3.14159265359f;
+
+// Optional HDR equirect (Radiance .hdr) loaded for the duration of initialize().
+struct EquirectEnv {
+    std::vector<float> rgb; // packed RGB float
+    int w = 0;
+    int h = 0;
+    [[nodiscard]] bool valid() const {
+        return w > 0 && h > 0 && rgb.size() >= size_t(w) * size_t(h) * 3u;
+    }
+} g_equirect;
+
+void clear_equirect() {
+    g_equirect = {};
+}
+
+bool load_equirect_hdr(const char* path) {
+    clear_equirect();
+    if (!path || !path[0])
+        return false;
+
+    int w = 0, h = 0, n = 0;
+    float* data = stbi_loadf(path, &w, &h, &n, 3);
+    if (!data || w <= 0 || h <= 0) {
+        if (data)
+            stbi_image_free(data);
+        LOG_ERROR("[IBL] Failed to load HDR equirect: " << path
+                  << " (" << (stbi_failure_reason() ? stbi_failure_reason() : "?")
+                  << ")");
+        return false;
+    }
+
+    g_equirect.w = w;
+    g_equirect.h = h;
+    g_equirect.rgb.assign(data, data + size_t(w) * size_t(h) * 3u);
+    stbi_image_free(data);
+    LOG_INFO("[IBL] Loaded HDR equirect " << w << "x" << h << " from " << path);
+    return true;
+}
+
+glm::vec3 sample_equirect(glm::vec3 dir) {
+    dir = glm::normalize(dir);
+    float phi = std::atan2(dir.z, dir.x);
+    float theta = std::acos(std::clamp(dir.y, -1.0f, 1.0f));
+    float u = phi * (0.5f / PI) + 0.5f;
+    float v = theta / PI;
+    u = u - std::floor(u);
+    v = std::clamp(v, 0.0f, 1.0f);
+
+    // Bilinear sample
+    float fx = u * float(g_equirect.w - 1);
+    float fy = v * float(g_equirect.h - 1);
+    int x0 = int(fx);
+    int y0 = int(fy);
+    int x1 = std::min(x0 + 1, g_equirect.w - 1);
+    int y1 = std::min(y0 + 1, g_equirect.h - 1);
+    float tx = fx - float(x0);
+    float ty = fy - float(y0);
+
+    auto fetch = [&](int x, int y) {
+        size_t i = (size_t(y) * size_t(g_equirect.w) + size_t(x)) * 3u;
+        return glm::vec3(g_equirect.rgb[i], g_equirect.rgb[i + 1], g_equirect.rgb[i + 2]);
+    };
+
+    glm::vec3 c00 = fetch(x0, y0);
+    glm::vec3 c10 = fetch(x1, y0);
+    glm::vec3 c01 = fetch(x0, y1);
+    glm::vec3 c11 = fetch(x1, y1);
+    glm::vec3 c0 = glm::mix(c00, c10, tx);
+    glm::vec3 c1 = glm::mix(c01, c11, tx);
+    return glm::mix(c0, c1, ty);
+}
 
 float radical_inverse_vdc(uint32_t bits) {
     bits = (bits << 16u) | (bits >> 16u);
@@ -48,8 +122,11 @@ float geometry_smith(float NdotV, float NdotL, float roughness) {
     return geometry_schlick_ggx(NdotV, roughness) * geometry_schlick_ggx(NdotL, roughness);
 }
 
-// Procedural outdoor environment (sky + sun). HDR-ish values for specular.
+// Environment radiance: HDR equirect if loaded, else procedural outdoor sky.
 glm::vec3 sample_environment(glm::vec3 dir) {
+    if (g_equirect.valid())
+        return sample_equirect(dir);
+
     dir = glm::normalize(dir);
     const glm::vec3 sun_dir = glm::normalize(glm::vec3(0.35f, 0.85f, 0.25f));
     const glm::vec3 zenith(0.18f, 0.28f, 0.55f);
@@ -65,7 +142,6 @@ glm::vec3 sample_environment(glm::vec3 dir) {
 
     float sun = std::pow(std::max(glm::dot(dir, sun_dir), 0.0f), 256.0f);
     sky += glm::vec3(1.0f, 0.95f, 0.85f) * sun * 8.0f;
-    // Soft sun glow
     float glow = std::pow(std::max(glm::dot(dir, sun_dir), 0.0f), 32.0f);
     sky += glm::vec3(1.0f, 0.9f, 0.7f) * glow * 0.35f;
     return sky;
@@ -179,9 +255,10 @@ void bake_sh(std::array<glm::vec4, 9>& out_sh) {
     for (int k = 4; k <= 8; ++k)
         out_sh[k] *= A[2];
 
-    // Scale down — procedural sky is fairly bright; keep ambient subtle under direct lights
+    // Tone ambient so analytic lights still dominate. HDR maps are brighter.
+    const float ambient_scale = g_equirect.valid() ? 0.08f : 0.15f;
     for (auto& c : out_sh)
-        c *= 0.15f;
+        c *= ambient_scale;
 }
 
 bool create_staging(VkDevice device, VmaAllocator allocator, VkDeviceSize size,
@@ -230,6 +307,16 @@ bool IblEnvironment::initialize(VkDevice device, VmaAllocator allocator,
                                 VkQueue graphics_queue,
                                 uint32_t graphics_queue_family) {
     destroy(device, allocator);
+    clear_equirect();
+    used_hdr_equirect = false;
+
+    if (!equirect_hdr_path.empty()) {
+        if (load_equirect_hdr(equirect_hdr_path.c_str())) {
+            used_hdr_equirect = true;
+        } else {
+            LOG_ERROR("[IBL] Falling back to procedural environment");
+        }
+    }
 
     mip_count = 1;
     uint32_t s = kCubeSize;
@@ -238,8 +325,9 @@ bool IblEnvironment::initialize(VkDevice device, VmaAllocator allocator,
         ++mip_count;
     }
 
-    LOG_INFO("[IBL] Baking procedural environment (cube " << kCubeSize << "^2, "
-             << mip_count << " mips, BRDF " << kBrdfSize << "^2)...");
+    LOG_INFO("[IBL] Baking " << (used_hdr_equirect ? "HDR equirect" : "procedural")
+             << " environment (cube " << kCubeSize << "^2, " << mip_count
+             << " mips, BRDF " << kBrdfSize << "^2)...");
 
     bake_sh(sh_coefficients);
 
@@ -509,10 +597,13 @@ bool IblEnvironment::initialize(VkDevice device, VmaAllocator allocator,
     if (vkCreateSampler(device, &lut_samp, nullptr, &lut_sampler) != VK_SUCCESS)
         return false;
 
+    clear_equirect(); // free CPU HDR after bake
+
     ready = true;
     LOG_INFO("[IBL] Ready (SH L0 rgb ≈ "
              << sh_coefficients[0].r << ", " << sh_coefficients[0].g << ", "
-             << sh_coefficients[0].b << ")");
+             << sh_coefficients[0].b << ")"
+             << (used_hdr_equirect ? " [hdr]" : " [procedural]"));
     return true;
 }
 

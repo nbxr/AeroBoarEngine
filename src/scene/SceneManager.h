@@ -46,6 +46,10 @@ class SceneManager {
     // propagate(). Call before update_buffers() / GpuCulling::build_scene.
     void refresh_instance_worlds();
 
+    // If any transform is dirty: propagate hierarchy, refresh SceneInstance
+    // worlds. Returns true if worlds changed (caller should refresh GPU cull).
+    bool sync_transforms();
+
     [[nodiscard]] uint32_t game_object_count() const {
         return static_cast<uint32_t>(game_objects_.size());
     }

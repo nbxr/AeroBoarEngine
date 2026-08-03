@@ -34,8 +34,8 @@ class GltfLoader {
     // Phase 2 lighting: extract KHR_lights_punctual lights (if present)
     static std::vector<gfx::Light> extract_light_data(const tinygltf::Model &model);
 
-    // Apply the node's world transform to a light (position for point/spot, direction for directional).
-    // This must be consistent with how camera nodes are interpreted (see set_from_camera_node).
+    // Apply node world transform (KHR_lights_punctual):
+    // directional → direction = to-light (+Z); point → position; spot → position + emission (−Z).
     static void apply_world_transform_to_light(gfx::Light& light, const glm::mat4& worldTransform);
 
   private:

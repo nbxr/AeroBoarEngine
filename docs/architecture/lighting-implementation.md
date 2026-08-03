@@ -31,7 +31,10 @@ Per-frame double-buffering: `write_frame_lighting()` + `bind_frame_lighting_to_a
 - **Primary:** glTF `KHR_lights_punctual` (directional / point / spot), world transforms from the node hierarchy at load (same walk as meshes/cameras).
 - **Fallback:** engine `renderer.globalLight` (directional) when the scene has no punctual lights.
 - **Point lights:** KHR inverse-square falloff when `range == 0`.
-- **Auto-exposure:** accounts for point-light distance vs scene center so high candela exports remain visible.
+- **Spot lights:** world **position** + emission **direction** (node −Z); cone params packed as `cos(inner)` / `cos(outer)`; falloff via `smoothstep`.
+- **GPU record (`GpuLight`, 64 B):** `position`, `direction`, `colorIntensity`, `params` (type, range, cosInner, cosOuter).
+- **Auto-exposure:** accounts for point/spot distance vs scene center so high candela exports remain visible.
+- **Dynamic:** `write_frame_lighting()` every frame; mutate `renderer.lights` or use `Engine::set_light` / `add_light` / `set_light_enabled`. After hierarchy `propagate()`, call `refresh_lights_from_transforms()` for lights that stored a `transform_index` at load.
 
 ### 1.3 Shading
 
@@ -41,8 +44,10 @@ Per-frame double-buffering: `write_frame_lighting()` + `bind_frame_lighting_to_a
 
 ### 1.4 IBL (`gfx::IblEnvironment`)
 
-Baked at engine init (procedural outdoor sky; no external HDR required yet):
+Baked at engine init:
 
+- Default: procedural outdoor sky
+- Optional: Radiance **`.hdr` equirect** via `configuration.json` → `"environmentHdr": "path/to/map.hdr"` (absolute, or relative to active `home` path)
 - 3-band SH → `FrameConstants.shCoefficients`
 - Prefiltered cubemap (e.g. 32², few mips) → binding 7
 - BRDF LUT (e.g. 128²) → binding 8
@@ -52,8 +57,9 @@ Baked at engine init (procedural outdoor sky; no external HDR required yet):
 ## 2. glTF lights & transforms
 
 - Light nodes use the same composed world matrix as mesh/camera nodes after hierarchy `propagate()`.
-- **Directional** (KHR): local emission −Z; stored direction for the shader is the world-space local +Z of the node (`normalize(rot[2])`) so `L` matches `NdotL`.
-- **Point / spot** position: translation of the world matrix; rotation/scale ignored for position (per KHR).
+- **Directional** (KHR): emission −Z; stored **to-light** `direction` = world +Z (`normalize(rot[2])`) for `NdotL`.
+- **Point:** `position` = translation of world matrix.
+- **Spot:** `position` = translation; `direction` = emission = world −Z (`normalize(-rot[2])`).
 - Policy: **strict glTF fidelity** — no global exporter correction matrices. Fix assets at export if needed.
 
 ---
@@ -61,23 +67,17 @@ Baked at engine init (procedural outdoor sky; no external HDR required yet):
 ## 3. Known limitations (current)
 
 - Fixed light count (`MAX_LIGHTS = 8`); no clustered/tiled many-lights.
-- Lights are largely **static after load** (no full dynamic mutation / dirty path yet).
-- **Spot** direction / cone packing is incomplete (see packing in `Light.h` / shader).
 - No shadows (`PassType::Shadow` scaffolding only).
-- No HDR equirect env load path yet (procedural IBL only).
 - Lights live as a flat list on `Renderer`, not yet first-class GameObject components.
+- HDR bake is CPU-side at init (not runtime hot-swap without re-init).
 
 ---
 
 ## 4. Next lighting work
 
-Priority order aligns with `current_state.md`:
-
-1. Complete spot direction packing and cone math  
-2. HDR equirect environment load into the existing IBL pipeline  
-3. Dynamic light mutation (dirty tracking + safe double-buffer updates)  
-4. Larger light counts / clustering suitable for Quest  
-5. Shadows and richer GI as later phases  
+1. Larger light counts / clustering suitable for Quest  
+2. Shadows and richer GI as later phases  
+3. Runtime IBL hot-reload / higher-res prefilter when needed  
 
 ---
 

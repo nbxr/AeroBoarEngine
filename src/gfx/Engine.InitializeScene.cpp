@@ -133,15 +133,15 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     renderer.lights = scene::GltfLoader::extract_light_data(model);
 
     // Engine fallback directional (used when the glTF has no KHR_lights_punctual).
-    // positionOrDirection is the *to-light* vector (shader L for NdotL).
-    // Prefer a slightly angled overhead sun so top surfaces light correctly.
+    // direction is the *to-light* vector (shader L for NdotL).
     if (renderer.globalLight.type == gfx::LightType::Directional &&
-        glm::length(renderer.globalLight.positionOrDirection) < 0.001f) {
-        renderer.globalLight = {
-            gfx::LightType::Directional,
-            glm::normalize(glm::vec3(0.35f, 1.0f, 0.25f)),
-            glm::vec3(1.0f, 0.98f, 0.95f),
-            3.0f};
+        glm::length(renderer.globalLight.direction) < 0.001f) {
+        renderer.globalLight = {};
+        renderer.globalLight.type = gfx::LightType::Directional;
+        renderer.globalLight.direction = glm::normalize(glm::vec3(0.35f, 1.0f, 0.25f));
+        renderer.globalLight.color = glm::vec3(1.0f, 0.98f, 0.95f);
+        renderer.globalLight.intensity = 3.0f;
+        renderer.globalLight.enabled = true;
     }
 
     // calculate offsets for material lookup based on primitives
@@ -276,12 +276,14 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
         }
     }
 
-    // Compose world = parent_world * local for every node.
+    // Compose world = parent_world * local for every node (load-time full dirty).
+    xforms.mark_all_dirty();
     xforms.propagate();
     LOG_INFO("[Transform] Propagated hierarchy (" << xforms.count()
              << " transform slots)");
 
     // Apply world transforms to lights / camera from the hierarchy.
+    // Store TransformManager index so runtime can re-sync dynamic light nodes.
     for (size_t i = 0; i < renderer.lights.size(); ++i) {
         const int nidx = light_node_for_light[i];
         if (nidx < 0 || static_cast<size_t>(nidx) >= node_to_xform.size())
@@ -289,6 +291,7 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
         const uint32_t xi = node_to_xform[static_cast<size_t>(nidx)];
         if (xi == scene::TransformManager::kInvalid)
             continue;
+        renderer.lights[i].transform_index = xi;
         scene::GltfLoader::apply_world_transform_to_light(
             renderer.lights[i], xforms.get_world_matrix(xi));
     }
@@ -431,10 +434,12 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
         for (size_t i = 0; i < renderer.lights.size(); ++i) {
             const auto& L = renderer.lights[i];
             LOG_INFO("[Lights]   [" << i << "] type=" << static_cast<uint32_t>(L.type)
-                     << " pos/dir=(" << L.positionOrDirection.x << ", "
-                     << L.positionOrDirection.y << ", " << L.positionOrDirection.z
+                     << " pos=(" << L.position.x << ", " << L.position.y << ", "
+                     << L.position.z << ") dir=(" << L.direction.x << ", "
+                     << L.direction.y << ", " << L.direction.z
                      << ") intensity=" << L.intensity << " range=" << L.range
-                     << " contrib~"
+                     << " cone=[" << L.innerConeAngle << "," << L.outerConeAngle
+                     << "] xform=" << L.transform_index << " contrib~"
                      << gfx::estimate_light_contribution(L, renderer.scene_center));
         }
         LOG_INFO("[Lights] auto exposure="
@@ -468,7 +473,7 @@ void gfx::Engine::write_frame_lighting(uint32_t frame_index) {
     memset(constants, 0, sizeof(gfx::FrameConstants));
     memset(gpu_lights, 0, sizeof(gfx::GpuLight) * gfx::MAX_LIGHTS);
 
-    // Diffuse IBL: SH from procedural environment (or modest fallback).
+    // Diffuse IBL: SH from procedural / HDR environment (or modest fallback).
     if (renderer.ibl.ready) {
         for (int i = 0; i < 9; ++i)
             constants->shCoefficients[i] = renderer.ibl.sh_coefficients[i];
@@ -479,13 +484,18 @@ void gfx::Engine::write_frame_lighting(uint32_t frame_index) {
         constants->iblIndices = glm::uvec4(0u, 0u, 0u, 0u);
     }
 
+    // Active lights: scene list (enabled only), else global directional.
+    // Rebuilt every frame so CPU-side mutation (dynamic lights) is free.
     std::vector<gfx::Light> active;
     active.reserve(gfx::MAX_LIGHTS);
     if (!renderer.lights.empty()) {
-        for (size_t i = 0; i < renderer.lights.size() && active.size() < gfx::MAX_LIGHTS; ++i) {
-            active.push_back(renderer.lights[i]);
+        for (size_t i = 0; i < renderer.lights.size() && active.size() < gfx::MAX_LIGHTS;
+             ++i) {
+            if (renderer.lights[i].enabled)
+                active.push_back(renderer.lights[i]);
         }
-    } else {
+    }
+    if (active.empty() && renderer.globalLight.enabled) {
         active.push_back(renderer.globalLight);
     }
 
@@ -515,6 +525,67 @@ void gfx::Engine::write_frame_lighting(uint32_t frame_index) {
         static_cast<VkDeviceSize>(gfx::MAX_LIGHTS) * sizeof(gfx::GpuLight),
         Renderer::BINDING_LIGHTS,
         VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+}
+
+void gfx::Engine::refresh_lights_from_transforms() {
+    auto& xforms = renderer.scene_manager.transforms();
+    for (auto& L : renderer.lights) {
+        if (L.transform_index == gfx::kInvalidLightTransform)
+            continue;
+        if (L.transform_index >= xforms.count())
+            continue;
+        scene::GltfLoader::apply_world_transform_to_light(
+            L, xforms.get_world_matrix(L.transform_index));
+    }
+}
+
+bool gfx::Engine::sync_scene_transforms() {
+    // CPU hierarchy: propagate dirty locals → worlds + dual-write SceneInstance.
+    const bool worlds_changed = renderer.scene_manager.sync_transforms();
+    if (worlds_changed) {
+        refresh_lights_from_transforms();
+        // Both frame slots must see new models; each uploads after its own fence wait.
+        renderer.transform_upload_mask = (1u << Renderer::MAX_FRAMES_IN_FLIGHT) - 1u;
+    }
+
+    const uint32_t bit = 1u << renderer.current_frame;
+    if ((renderer.transform_upload_mask & bit) == 0)
+        return worlds_changed;
+
+    if (renderer.gpu_culling.is_ready()) {
+        renderer.gpu_culling.update_models(renderer.current_frame,
+                                           renderer.scene_manager);
+    }
+    renderer.transform_upload_mask &= ~bit;
+    return true;
+}
+
+bool gfx::Engine::set_light(uint32_t index, const gfx::Light& light) {
+    if (index >= renderer.lights.size())
+        return false;
+    // Preserve transform link unless caller set a new one.
+    const uint32_t prev_xform = renderer.lights[index].transform_index;
+    renderer.lights[index] = light;
+    if (light.transform_index == gfx::kInvalidLightTransform)
+        renderer.lights[index].transform_index = prev_xform;
+    return true;
+}
+
+uint32_t gfx::Engine::add_light(const gfx::Light& light) {
+    if (renderer.lights.size() >= gfx::MAX_LIGHTS) {
+        LOG_ERROR("[Lights] add_light failed: already at MAX_LIGHTS ("
+                  << gfx::MAX_LIGHTS << ")");
+        return gfx::MAX_LIGHTS; // invalid
+    }
+    renderer.lights.push_back(light);
+    return static_cast<uint32_t>(renderer.lights.size() - 1);
+}
+
+bool gfx::Engine::set_light_enabled(uint32_t index, bool enabled) {
+    if (index >= renderer.lights.size())
+        return false;
+    renderer.lights[index].enabled = enabled;
+    return true;
 }
 
 void gfx::Engine::bind_frame_lighting_to_all_sets() {

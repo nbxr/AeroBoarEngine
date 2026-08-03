@@ -14,6 +14,8 @@ This file is the primary contract for all AI coding agents (Grok Build, Continue
 - `docs/project-plan.md` — Goals and roadmap
 - `docs/architecture/pipeline-implementation.md`
 - `docs/architecture/game-object-implementation.md`
+- `docs/architecture/animation-plan.md` — glTF animation phases (node TRS → skin → morph)
+- `docs/architecture/lighting-implementation.md` — lighting / IBL
 
 When making lasting decisions, update the documentation above rather than tool-private memory.
 

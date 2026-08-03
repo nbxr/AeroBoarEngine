@@ -141,6 +141,10 @@ void gfx::Engine::render() {
     vkResetFences(vk.device, 1, &frame.in_flight_fence);
     vkResetCommandBuffer(frame.command_buffer, 0);
 
+    // After this frame slot's fence wait: safe to rewrite its GPU cull models.
+    // Dirty hierarchy → propagate worlds, dual-write instances, update cull items.
+    sync_scene_transforms();
+
     VkCommandBufferBeginInfo begin_info{};
     begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;

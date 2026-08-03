@@ -6,13 +6,17 @@ Lightweight, cache-friendly data structures designed for a C++ Vulkan engine usi
 ## Status
 **Hierarchy + GPU cull path landed (see `docs/agents/current_state.md` for latest).**  
 
-- `TransformManager` — local matrices + parent links + `propagate()` to world (load-time; dirty per-frame propagate still TODO).
+- `TransformManager` — local matrices + parent links + **dirty-flag** `propagate()` (load + runtime via `Engine::sync_scene_transforms`).
 - `GameObject` — root transform + render-mesh range; one per glTF mesh node at load.
 - `RenderMesh` — mesh/material/transform indices + **mesh-local** AABB; one per primitive.
 - `SceneManager` — registry (`create_game_object`, `add_render_mesh`); framing and GPU cull read this model.
 - Legacy `SceneInstance` is dual-written / refreshed after `propagate()` for compatibility.
 
-Still TODO: dirty upload of transforms per frame, skinning, full TRS SOA if needed.
+**Animation (planned — not implemented):** See **`docs/architecture/animation-plan.md`**.
+
+- **Phase 1 (next):** node TRS clips (rigid hierarchy). Reuse dirty `propagate` + `sync_scene_transforms`. Need durable `gltf_node → transform`, clip load/sample, player; prefer decomposed TRS for partial path updates.
+- **Phase 2:** skinned meshes (JOINTS/WEIGHTS, IBM, joint palette, skin in shade **and** depth prepass).
+- **Later:** morph targets. `skin_index` / vertex blend fields are stubs until Phase 2.
 
 **Physics (planned, not implemented):** Collision and rigid-body properties for models will be **authored in glTF** using Khronos extensions (`KHR_physics_rigid_bodies`, `KHR_implicit_shapes`, and related as they finalize). Runtime simulation is **Jolt**. Extension data should map into engine physics components associated with `GameObject` / nodes (not a parallel proprietary physics asset format for production content). See `docs/agents/tech_context.md` § Physics assets.
 
@@ -44,9 +48,10 @@ Supports both rigid and skinned pieces.
 ## Management Systems
 
 ### TransformManager
-Manages a dense, contiguous array of transforms in SOA format.
+Manages a dense, contiguous array of transforms with hierarchy.
 - Provides `transform_index` used by `GameObject` and `RenderMesh`.
-- Handles CPU-side updates and efficient GPU buffer uploads (SSBO).
+- `set_local_matrix` / `set_parent` mark dirty; `propagate()` recomposes dirty nodes and cascades to children.
+- `SceneManager::sync_transforms()` + `Engine::sync_scene_transforms()` run after the frame fence: CPU worlds, lights, per-frame GPU cull models.
 
 ### SceneManager (The Glue)
 Orchestrates the lifecycle of all renderable data.
@@ -72,8 +77,22 @@ Orchestrates the lifecycle of all renderable data.
 ## Rendering Pipeline Fit
 - `RenderMesh` list feeds GPU culling compute (frustum / occlusion).
 - Surviving items build indirect draw buffer or task shader input.
-- Skinning applied in mesh/vertex shader using joint matrices.
+- **Today:** rigid `model * position` only. **Planned skinning:** joint palette in VS (shade + depth prepass) — see animation-plan Phase 2.
 - Optimized for Quest 3: minimal bandwidth, few render passes, bindless resources.
+
+## Animation data flow (target)
+
+```
+glTF animations → clip/sampler tables (load)
+       ↓
+player time + sample T/R/S → set_local_matrix (dirty)
+       ↓
+sync_scene_transforms (after fence) → worlds / cull models / lights
+       ↓
+(frustum → depth prepass → HZB → cull → shade)  // existing
+```
+
+Skinned path adds joint palette rebuild after worlds, then VS skin (both prepass and shade).
 
 ## Potential Friction Points to Monitor
 - Ensure that the "Buffer Orchestration" in the SceneManager only uploads changed transforms (dirty flagging) to prevent pipeline stalls.

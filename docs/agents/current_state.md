@@ -23,7 +23,7 @@ Desktop foundation is solid and past “first triangle.” The engine loads glTF
   - Ambient Occlusion (separate texture)
 - Proper vertex attribute input (`gfx::Vertex`, pipeline vertex state, `pbr.vert`) — legacy SSBO vertex pulling is no longer the active path
 - Materials SSBO correctly declared as a **single buffer + runtime array** in `pbr.frag` (not a descriptor array); `gfx::Material` is `alignas(16)` / 80-byte stride to match std430
-- Scene model: `GameObject` / `RenderMesh` / `TransformManager` (local + parent + `propagate()` at load)
+- Scene model: `GameObject` / `RenderMesh` / `TransformManager` (local + parent + dirty-flag `propagate`)
 - GPU cull + same-frame Hi-Z + multi-draw indirect (`GpuCulling`, `HzbPyramid`, depth prepass — see tech_context)
 - Desktop `scene::Camera` system (fully documented in `src/scene/Camera.h`):
   - Quaternion-based 6DOF orientation (full roll support).
@@ -48,8 +48,9 @@ Desktop foundation is solid and past “first triangle.” The engine loads glTF
 
 ## Current Focus Areas
 
-- Dirty-flag per-frame `propagate()` when animated transforms land
-- Spot light direction packing, dynamic lights, HDR env loading
+- Dirty-flag transform `propagate()` landed (runtime ready for anim writes)
+- Lighting polish landed: spot packing, dynamic light API, optional HDR equirect IBL
+- **Next implement:** glTF **node TRS animation** (Phase 1) — see `docs/architecture/animation-plan.md`
 - **Future tooling:** migrate shader compile from `glslc` → **glslang** when cross-platform (Quest/Android) work starts — see `tech_context.md`
 - **Same-frame occlusion (landed on desktop):** depth prepass → Hi-Z → shade at current pose; hysteresis removed. Quest still needs multiview/per-eye + reverse-Z HZB — see `tech_context.md` § Occlusion / Hi-Z architecture
 - **Physics (roadmap):** Jolt runtime + **glTF Khronos physics extensions** for model physics properties (`KHR_physics_rigid_bodies`, `KHR_implicit_shapes`) — see `tech_context.md` § Physics assets
@@ -70,7 +71,7 @@ Desktop foundation is solid and past “first triangle.” The engine loads glTF
   - Prefiltered GGX cubemap (32², ~4 mips) → binding 7 `samplerCube`
   - BRDF integration LUT (128²) → binding 8 `sampler2D`
   - Split-sum specular in `pbr.frag` when IBL is ready
-  Still deferred: load HDR equirect env assets, dynamic lights, clustered many-lights, complete spot packing.
+  Spot packing complete (pos + emission dir + cos cones). Dynamic lights via per-frame upload + `Engine::set_light` / `refresh_lights_from_transforms`. Optional HDR equirect IBL (`environmentHdr` in configuration.json). Still deferred: clustered many-lights, shadows.
 - **GPU frustum + same-frame Hi-Z occlusion + instancing + indirect (landed)**:
   - Frame order: frustum cull → **depth-only prepass** (1x, vertex-only) → `HzbPyramid::record_build` → frustum+HZB cull → main shade (MSAA)
   - `gfx::GpuCulling`: `cull_frustum.comp` frustum + optional same-frame Hi-Z; packs visible instances into fixed per-batch regions; `build_indirect.comp` writes draw commands
@@ -83,7 +84,8 @@ Desktop foundation is solid and past “first triangle.” The engine loads glTF
   - Main-pass MSAA depth resolve may still exist but is **not** the HZB source
 - **Depth model:** standard Z today (0=near, 1=far, `LESS`). **Planned:** reverse-Z with VR/multiview depth work (`GREATER`/`GREATER_OR_EQUAL`, clear 0, max-depth Hi-Z) — official roadmap item in `tech_context.md`
 - No OpenXR / VR input layer (desktop GLFW only)
-- **Scene model (hierarchy landed)**: `GameObject` + `RenderMesh` + `TransformManager` with **local matrices + parent links + `propagate()`** at load. glTF load walks the node tree (`set_local` + `set_parent`), then `propagate()`, then `refresh_instance_worlds()` + `GpuCulling::build_scene` (world matrices). Legacy `SceneInstance` dual-written and re-synced after propagate.
+- **Scene model (hierarchy + dirty propagate)**: `GameObject` + `RenderMesh` + `TransformManager` with local matrices, parent links, **dirty flags**, and selective `propagate()`. Load builds hierarchy then `mark_all_dirty` + `propagate`. Runtime: `set_local_matrix` / `set_parent` mark dirty; each frame `Engine::sync_scene_transforms()` (after fence wait) propagates, refreshes instances/lights, and updates per-frame GPU cull models. Legacy `SceneInstance` dual-written.
+- **glTF animation (not loaded yet):** tinygltf may parse `animations`/`skins`, but the engine never reads them. No clip store, no sampling, no durable `gltf_node → transform` after load, no JOINTS/WEIGHTS fill, no skinning in VS. **Plan:** Phase 1 node TRS → Phase 2 skinned → morph later — full breakdown in `docs/architecture/animation-plan.md`.
 - **No physics yet** (runtime or asset). **Planned:** Jolt for simulation; physics properties on models via **Khronos glTF extensions** (`KHR_physics_rigid_bodies`, `KHR_implicit_shapes` and related as ratified) loaded through the glTF pipeline — see `docs/agents/tech_context.md` § Physics assets and `docs/project-plan.md`.
 - No audio, or higher-level input abstraction beyond the desktop layer (desktop input is complete via `core::InputManager`)
 
@@ -91,7 +93,7 @@ Desktop foundation is solid and past “first triangle.” The engine loads glTF
 
 - [done] Scene light visual correctness: distance-aware auto-exposure + physical inverse-square; load-time light logging
 - [done] Proper lighting layout: `FrameConstants` UBO + lights SSBO (textures moved to binding 7)
-- Remaining lighting polish: spot direction packing, HDR env load, dynamic lights
+- [done] Lighting polish: spot direction packing, dynamic light API, HDR equirect IBL
 - [done] Production IBL (procedural env + SH + prefiltered cube + BRDF LUT)
 - [done] Switch from raw SSBO vertex pulling to proper vertex attribute input
 - [done] Materials SSBO GLSL shape + C++ 80-byte stride
@@ -102,9 +104,11 @@ Desktop foundation is solid and past “first triangle.” The engine loads glTF
 - [done] Frustum culling + multi-draw indirect
 - [done] GPU frustum cull compute (`GpuCulling`)
 - [done] Transform hierarchy: local matrix + parent + `propagate()` at load; dual-write refresh + GPU cull after propagate
+- [done] Dirty-flag propagate + per-frame `sync_scene_transforms` (FIF-safe GPU cull model update)
 - [done] Occlusion culling / Hi-Z: same-frame depth prepass → pyramid → cull (hysteresis removed)
 - [done] Single multi-draw indirect: `build_indirect` writes `firstInstance = batch.base`; `pbr.vert` uses `gl_InstanceIndex` only (includes base on Vulkan); one `vkCmdDrawIndexedIndirect` for all batches
-- **Next immediate:** dirty-flag per-frame `propagate()` when animated transforms land; lighting polish (spot packing, HDR env)
+- **Next immediate:** glTF **node TRS animation (Phase 1)** — persist node→transform, load clips, sample LINEAR/STEP, player tick → `set_local_matrix` → existing sync. See `docs/architecture/animation-plan.md`. Test with AnimatedCube (or similar).
+- **After Phase 1:** skinned meshes (JOINTS/WEIGHTS, IBM, joint palette, skin in shade + depth prepass) — animation-plan Phase 2
 - **Roadmap (VR / Quest depth + occlusion):** reverse-Z + multiview stereo with per-eye/multiview HZB — see `tech_context.md` § Occlusion / Hi-Z architecture and § Depth buffer model
 - **Roadmap (physics):** Jolt integration + load physics from glTF Khronos extensions (`KHR_physics_rigid_bodies`, `KHR_implicit_shapes`) — see `tech_context.md` § Physics assets
 - Future tooling: glslang shader toolchain when cross-platform (Quest/Android) work starts — keep `glslc` until then (see `tech_context.md`)
@@ -119,7 +123,7 @@ The one-time scene upload at load is now fully wired:
 - Double-buffered managers (Scene, Material, Mesh via `gfx::DoubleBufferedBuffer`) flip + bind after GltfLoader populates CPU side.
 - Textures create images + upload via transfer queue + bind into the array.
 
-Future dynamic updates will need per-frame-in-flight fencing + dirty tracking (transforms, lights).
+Dynamic transforms: dirty flags + fence-gated per-frame cull model upload (`sync_scene_transforms`). Lights re-uploaded every frame.
 
 Per-frame bindless descriptor sets (one per `MAX_FRAMES_IN_FLIGHT`) cover all bindings including binding 0 (`FrameConstants` UBO). Static resources are bound to all sets at load; per-frame data is updated on the matching set for `current_frame` (`bind_frame_lighting_to_all_sets` / `write_frame_lighting`).
 

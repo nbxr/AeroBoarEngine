@@ -243,7 +243,8 @@ scene::GltfLoader::extract_light_data(const tinygltf::Model &model) {
         const std::string& t = tinyLight.type;
         if (t == "directional") {
             l.type = gfx::LightType::Directional;
-            l.positionOrDirection = glm::vec3(0.0f, -1.0f, 0.0f); // will be rotated by node if attached
+            // Default to-light; overwritten by node world transform when attached.
+            l.direction = glm::normalize(glm::vec3(0.35f, 1.0f, 0.25f));
         } else if (t == "point") {
             l.type = gfx::LightType::Point;
             l.range = static_cast<float>(tinyLight.range);
@@ -252,6 +253,8 @@ scene::GltfLoader::extract_light_data(const tinygltf::Model &model) {
             l.range = static_cast<float>(tinyLight.range);
             l.innerConeAngle = static_cast<float>(tinyLight.spot.innerConeAngle);
             l.outerConeAngle = static_cast<float>(tinyLight.spot.outerConeAngle);
+            // Emission −Z until a node transform is applied.
+            l.direction = glm::vec3(0.0f, 0.0f, -1.0f);
         }
 
         lights.push_back(l);
@@ -260,18 +263,24 @@ scene::GltfLoader::extract_light_data(const tinygltf::Model &model) {
     return lights;
 }
 
-void scene::GltfLoader::apply_world_transform_to_light(gfx::Light& light, const glm::mat4& worldTransform) {
-    glm::mat3 rot = glm::mat3(worldTransform);
+void scene::GltfLoader::apply_world_transform_to_light(gfx::Light& light,
+                                                      const glm::mat4& worldTransform) {
+    const glm::mat3 rot = glm::mat3(worldTransform);
+    // KHR_lights_punctual: lights emit along the node's local −Z.
+    const glm::vec3 emission =
+        glm::normalize(glm::vec3(-rot[2])); // world −Z column
+
     if (light.type == gfx::LightType::Directional) {
-        // Consistent with camera node handling (see set_from_camera_node and gltfLookDir derivation there):
-        // glTF orients the light so that it emits along the node's local -Z axis.
-        // The engine stores the to-light vector (L in the shader) for directional lights.
-        // to-light = - (emission dir) = the node's +Z axis in world space.
-        light.positionOrDirection = glm::normalize(rot[2]);
+        // Shader L (to-light) = −emission = world +Z of the node.
+        light.direction = glm::normalize(rot[2]);
+        light.position = glm::vec3(0.0f);
+    } else if (light.type == gfx::LightType::Point) {
+        // Position only (rotation/scale ignored per KHR for position).
+        light.position = glm::vec3(worldTransform[3]);
     } else {
-        // For point and spot lights, per spec only the translation of the node matters for position
-        // (rotation and scale are ignored for the light's position).
-        light.positionOrDirection = glm::vec3(worldTransform[3]);
+        // Spot: position + emission direction for the cone.
+        light.position = glm::vec3(worldTransform[3]);
+        light.direction = emission;
     }
 }
 

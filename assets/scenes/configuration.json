@@ -49,5 +49,6 @@
       "forward": [-0.566242, -0.136671, 0.812829],
       "enabled": true
     }
-  ]
+  ],
+  "environmentHdr": ""
 }

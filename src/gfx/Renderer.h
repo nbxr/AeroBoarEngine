@@ -66,6 +66,8 @@ struct Renderer {
     uint32_t last_total_render_meshes = 0;
     // Per frame-in-flight: whether that slot's last shade cull used Hi-Z (for [Cull] log).
     std::array<bool, MAX_FRAMES_IN_FLIGHT> last_cull_used_hzb{};
+    // Bit i set → cull_items_[i] still needs model rewrite after a hierarchy change.
+    uint32_t transform_upload_mask = 0;
 
     uint32_t current_frame = 0;
 

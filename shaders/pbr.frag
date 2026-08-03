@@ -64,11 +64,12 @@ layout(set = 0, binding = 0) uniform FrameConstants {
     uvec4 iblIndices;       // x = specularEnvMapIndex, y = brdfLutIndex
 } globals;
 
-// Single SSBO + runtime array (std430). Matches gfx::GpuLight.
+// Single SSBO + runtime array (std430). Matches gfx::GpuLight (64 bytes).
 struct GpuLight {
-    vec4 positionOrDirection;
+    vec4 position;       // xyz = world pos (point/spot)
+    vec4 direction;      // xyz = to-light (dir) or emission dir (spot)
     vec4 colorIntensity; // rgb + intensity
-    vec4 params;         // x=type, y=range, z=innerCone, w=outerCone
+    vec4 params;         // x=type, y=range, z=cos(inner), w=cos(outer)
 };
 
 layout(set = 0, binding = 6) readonly buffer Lights {
@@ -176,11 +177,11 @@ void main() {
         float attenuation = 1.0;
 
         if (lightType == 0u) {
-            // Directional: positionOrDirection is to-light vector
-            L = normalize(light.positionOrDirection.xyz);
+            // Directional: direction.xyz is to-light (L)
+            L = normalize(light.direction.xyz);
         } else {
-            // Point or Spot
-            vec3 lightPos = light.positionOrDirection.xyz;
+            // Point or Spot: position.xyz is world light origin
+            vec3 lightPos = light.position.xyz;
             vec3 toLight = lightPos - inWorldPos;
             float dist = length(toLight);
             L = toLight / max(dist, 1e-4);
@@ -196,14 +197,14 @@ void main() {
             }
 
             if (lightType == 2u) {
-                // Spot: direction packing incomplete (uses same field as position).
-                // Treat cone against -L until a dedicated direction is stored.
-                vec3 spotDir = normalize(light.positionOrDirection.xyz);
-                float theta = dot(L, -spotDir);
-                float outer = light.params.w;
-                float inner = light.params.z;
-                float epsilon = inner - outer;
-                float spotAtten = clamp((theta - outer) / max(epsilon, 0.0001), 0.0, 1.0);
+                // Spot: emission direction D (KHR −Z). Angle between D and
+                // light→surface (−L). params.zw = cos(inner), cos(outer).
+                vec3 D = normalize(light.direction.xyz);
+                float cosTheta = dot(-L, D);
+                float cosInner = light.params.z;
+                float cosOuter = light.params.w;
+                // Smooth falloff from full at inner to zero at outer.
+                float spotAtten = smoothstep(cosOuter, cosInner, cosTheta);
                 attenuation *= spotAtten;
             }
         }

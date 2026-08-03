@@ -83,6 +83,10 @@ This project aims to develop a cross-platform game engine targeting VR via OpenX
 - Develop debugging tools
 - Integrate with development workflow
 - Implement GLM for math operations
+- **glTF animation (desktop; plan in `docs/architecture/animation-plan.md`):**
+  - **Phase 1 (next):** node TRS clips — node→transform map, load/sample channels, player → dirty `set_local_matrix` + existing `sync_scene_transforms`
+  - **Phase 2:** skinned meshes — JOINTS/WEIGHTS, inverse bind, joint palette, skin in shade + depth prepass
+  - Later: morph targets
 - **Physics foundation (when rendering path is stable enough):**
   - Jolt integration (world step, rigid bodies, collision layers)
   - glTF load path for Khronos physics extensions (`KHR_physics_rigid_bodies`, `KHR_implicit_shapes` / successors as ratified)
