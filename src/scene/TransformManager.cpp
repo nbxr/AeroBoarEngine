@@ -2,14 +2,52 @@
 #include "core/Log.h"
 
 #include <algorithm>
+#include <glm/gtc/matrix_transform.hpp>
 
 namespace scene {
+namespace {
+
+LocalTrs identity_trs() {
+    return {};
+}
+
+// Best-effort TRS extract for set_local_matrix (uniform scale / pure rotation).
+LocalTrs decompose_matrix(const glm::mat4& m) {
+    LocalTrs trs{};
+    trs.translation = glm::vec3(m[3]);
+    glm::vec3 col0(m[0]);
+    glm::vec3 col1(m[1]);
+    glm::vec3 col2(m[2]);
+    trs.scale = glm::vec3(glm::length(col0), glm::length(col1), glm::length(col2));
+    if (trs.scale.x > 1e-8f)
+        col0 /= trs.scale.x;
+    if (trs.scale.y > 1e-8f)
+        col1 /= trs.scale.y;
+    if (trs.scale.z > 1e-8f)
+        col2 /= trs.scale.z;
+    glm::mat3 rot(col0, col1, col2);
+    trs.rotation = glm::normalize(glm::quat_cast(rot));
+    return trs;
+}
+
+} // namespace
+
+glm::mat4 TransformManager::compose_trs(const LocalTrs& trs) {
+    return glm::translate(glm::mat4(1.0f), trs.translation) *
+           glm::mat4_cast(glm::normalize(trs.rotation)) *
+           glm::scale(glm::mat4(1.0f), trs.scale);
+}
+
+void TransformManager::rebuild_local_matrix(uint32_t index) {
+    local_matrices_[index] = compose_trs(local_trs_[index]);
+}
 
 uint32_t TransformManager::allocate() {
     uint32_t index = kInvalid;
     if (!free_list_.empty()) {
         index = free_list_.back();
         free_list_.pop_back();
+        local_trs_[index] = identity_trs();
         local_matrices_[index] = glm::mat4(1.0f);
         world_matrices_[index] = glm::mat4(1.0f);
         parents_[index] = kInvalid;
@@ -20,6 +58,7 @@ uint32_t TransformManager::allocate() {
         return index;
     }
     index = static_cast<uint32_t>(world_matrices_.size());
+    local_trs_.push_back(identity_trs());
     local_matrices_.emplace_back(1.0f);
     world_matrices_.emplace_back(1.0f);
     parents_.push_back(kInvalid);
@@ -43,7 +82,6 @@ void TransformManager::free(uint32_t index) {
     if (!is_alive(index))
         return;
 
-    // Orphan children to roots; their worlds become local until re-parented.
     for (uint32_t child : children_[index]) {
         if (child < parents_.size()) {
             parents_[child] = kInvalid;
@@ -55,6 +93,7 @@ void TransformManager::free(uint32_t index) {
 
     alive_[index] = 0;
     dirty_[index] = 0;
+    local_trs_[index] = identity_trs();
     local_matrices_[index] = glm::mat4(1.0f);
     world_matrices_[index] = glm::mat4(1.0f);
     free_list_.push_back(index);
@@ -67,12 +106,64 @@ void TransformManager::mark_dirty(uint32_t index) {
     any_dirty_ = true;
 }
 
+void TransformManager::set_local_trs(uint32_t index, const LocalTrs& trs) {
+    if (!is_alive(index)) {
+        LOG_ERROR("[TransformManager] set_local_trs on invalid index " << index);
+        return;
+    }
+    local_trs_[index] = trs;
+    local_trs_[index].rotation = glm::normalize(local_trs_[index].rotation);
+    rebuild_local_matrix(index);
+    mark_dirty(index);
+}
+
+void TransformManager::set_local_trs(uint32_t index, const glm::vec3& t,
+                                     const glm::quat& r, const glm::vec3& s) {
+    LocalTrs trs{};
+    trs.translation = t;
+    trs.rotation = r;
+    trs.scale = s;
+    set_local_trs(index, trs);
+}
+
+const LocalTrs& TransformManager::get_local_trs(uint32_t index) const {
+    static const LocalTrs kIdent{};
+    if (!is_alive(index))
+        return kIdent;
+    return local_trs_[index];
+}
+
+void TransformManager::set_local_translation(uint32_t index, const glm::vec3& t) {
+    if (!is_alive(index))
+        return;
+    local_trs_[index].translation = t;
+    rebuild_local_matrix(index);
+    mark_dirty(index);
+}
+
+void TransformManager::set_local_rotation(uint32_t index, const glm::quat& r) {
+    if (!is_alive(index))
+        return;
+    local_trs_[index].rotation = glm::normalize(r);
+    rebuild_local_matrix(index);
+    mark_dirty(index);
+}
+
+void TransformManager::set_local_scale(uint32_t index, const glm::vec3& s) {
+    if (!is_alive(index))
+        return;
+    local_trs_[index].scale = s;
+    rebuild_local_matrix(index);
+    mark_dirty(index);
+}
+
 void TransformManager::set_local_matrix(uint32_t index, const glm::mat4& local) {
     if (!is_alive(index)) {
         LOG_ERROR("[TransformManager] set_local_matrix on invalid index " << index);
         return;
     }
     local_matrices_[index] = local;
+    local_trs_[index] = decompose_matrix(local);
     mark_dirty(index);
 }
 
@@ -89,11 +180,10 @@ void TransformManager::set_world_matrix(uint32_t index, const glm::mat4& world) 
         return;
     }
     world_matrices_[index] = world;
-    // Keep local in sync if root; if parented, local becomes stale until set_local.
-    if (parents_[index] == kInvalid)
+    if (parents_[index] == kInvalid) {
         local_matrices_[index] = world;
-    // Descendants still depend on this world — mark self dirty so propagate
-    // cascades to children (world already set; propagate will re-apply and push).
+        local_trs_[index] = decompose_matrix(world);
+    }
     mark_dirty(index);
 }
 
@@ -153,7 +243,6 @@ void TransformManager::propagate_recursive(uint32_t index) {
             world_matrices_[index] = world_matrices_[p] * local_matrices_[index];
         }
         dirty_[index] = 0;
-        // Parent world changed relative to children — force them to recompose.
         for (uint32_t child : children_[index]) {
             if (is_alive(child))
                 dirty_[child] = 1;
@@ -168,8 +257,6 @@ bool TransformManager::propagate() {
     if (!any_dirty_)
         return false;
 
-    // Roots only — recursion covers descendants; independently dirty children
-    // under a clean parent are still visited because we always walk children.
     for (uint32_t i = 0; i < world_matrices_.size(); ++i) {
         if (!is_alive(i))
             continue;
@@ -178,7 +265,6 @@ bool TransformManager::propagate() {
     }
 
     any_dirty_ = false;
-    // Defensive: if anything remained dirty (cycles / bugs), keep the flag.
     for (uint32_t i = 0; i < dirty_.size(); ++i) {
         if (alive_[i] && dirty_[i]) {
             any_dirty_ = true;
@@ -193,6 +279,7 @@ bool TransformManager::is_alive(uint32_t index) const {
 }
 
 void TransformManager::clear() {
+    local_trs_.clear();
     local_matrices_.clear();
     world_matrices_.clear();
     parents_.clear();

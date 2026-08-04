@@ -1,9 +1,12 @@
 #pragma once
 
 #include "gfx/DoubleBufferedBuffer.h"
+#include "scene/Animation.h"
 #include "scene/GameObject.h"
+#include "scene/Morph.h"
 #include "scene/RenderMesh.h"
 #include "scene/SceneInstance.h"
+#include "scene/Skin.h"
 #include "scene/TransformManager.h"
 #include <cstdint>
 #include <glm/glm.hpp>
@@ -31,11 +34,27 @@ class SceneManager {
     TransformManager& transforms() { return transforms_; }
     const TransformManager& transforms() const { return transforms_; }
 
+    AnimationSystem& animations() { return animations_; }
+    const AnimationSystem& animations() const { return animations_; }
+
+    SkinSystem& skins() { return skins_; }
+    const SkinSystem& skins() const { return skins_; }
+
+    MorphSystem& morphs() { return morphs_; }
+    const MorphSystem& morphs() const { return morphs_; }
+
+    // glTF node index → TransformManager index (kInvalid if none). Filled at load.
+    std::vector<uint32_t>& gltf_node_to_transform() { return gltf_node_to_transform_; }
+    const std::vector<uint32_t>& gltf_node_to_transform() const {
+        return gltf_node_to_transform_;
+    }
+
     // Create a GameObject that owns `root_transform_index` (already allocated in
     // TransformManager with local + parent). Call transforms().propagate() after
     // the full hierarchy is built.
     uint32_t create_game_object(uint32_t root_transform_index,
-                                uint32_t gltf_node_index = ~0u);
+                                uint32_t gltf_node_index = ~0u,
+                                uint32_t skin_index = ~0u);
 
     // Append a RenderMesh owned by game_object_index (shares GO root transform by default).
     uint32_t add_render_mesh(uint32_t game_object_index, uint32_t mesh_index,
@@ -97,6 +116,10 @@ class SceneManager {
     uint32_t growth_step_size_ = 50;
 
     TransformManager transforms_{};
+    AnimationSystem animations_{};
+    SkinSystem skins_{};
+    MorphSystem morphs_{};
+    std::vector<uint32_t> gltf_node_to_transform_{};
     std::vector<GameObject> game_objects_{};
     std::vector<RenderMesh> render_meshes_{};
 

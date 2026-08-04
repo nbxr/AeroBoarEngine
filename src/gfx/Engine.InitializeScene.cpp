@@ -182,10 +182,10 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     }
 
     // Build TransformManager hierarchy (local + parent), then propagate() once.
-    // node_to_xform[gltf_node] → TransformManager index.
+    // Persist gltf_node → transform for animation channel targeting.
     auto& xforms = renderer.scene_manager.transforms();
-    std::vector<uint32_t> node_to_xform(model.nodes.size(),
-                                        scene::TransformManager::kInvalid);
+    auto& node_to_xform = renderer.scene_manager.gltf_node_to_transform();
+    node_to_xform.assign(model.nodes.size(), scene::TransformManager::kInvalid);
 
     // Light/camera nodes capture transform indices; world applied after propagate.
     std::vector<int> light_node_for_light(renderer.lights.size(), -1);
@@ -196,10 +196,10 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
             if (node_idx < 0 || node_idx >= (int)model.nodes.size())
                 return;
             const auto &node = model.nodes[node_idx];
-            const glm::mat4 local = scene::GltfLoader::extract_node_transform(node);
+            const scene::LocalTrs local_trs = scene::GltfLoader::extract_node_trs(node);
 
             const uint32_t xform = xforms.allocate();
-            xforms.set_local_matrix(xform, local);
+            xforms.set_local_trs(xform, local_trs);
             xforms.set_parent(xform, parent_xform);
             node_to_xform[static_cast<size_t>(node_idx)] = xform;
 
@@ -233,9 +233,18 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
                 size_t prim_i = 0;
                 size_t mat_offset = prim_material_offsets[mesh_idx];
 
+                // glTF node.skin index maps to SkinSystem order (same as model.skins).
+                uint32_t skin_index = ~0u;
+                if (node.skin >= 0)
+                    skin_index = static_cast<uint32_t>(node.skin);
+
                 // One GameObject per mesh node; share the node's transform.
                 const uint32_t go_id = renderer.scene_manager.create_game_object(
-                    xform, static_cast<uint32_t>(node_idx));
+                    xform, static_cast<uint32_t>(node_idx), skin_index);
+
+                // Mesh node transform for inv(meshWorld) * joint * IBM skinning.
+                // SkinSystem is filled after the hierarchy walk; stash on GO for now
+                // via skin_index + xform pairing applied after skins load.
 
                 for (const auto &prim : model.meshes[mesh_idx].primitives) {
                     if (prim_i + mat_offset >= mesh_lookup.size())
@@ -282,6 +291,53 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     LOG_INFO("[Transform] Propagated hierarchy (" << xforms.count()
              << " transform slots)");
 
+    // Morph targets (blend shapes) then skins then animations.
+    {
+        std::vector<uint32_t> mesh_ids;
+        mesh_ids.reserve(mesh_lookup.size());
+        for (const auto& id : mesh_lookup)
+            mesh_ids.push_back(static_cast<uint32_t>(id));
+
+        auto& morphs = renderer.scene_manager.morphs();
+        morphs.load_from_gltf(model, mesh_ids);
+        morphs.bind_nodes(model);
+    }
+
+    // Skins (joint maps + IBM) then animations (node TRS + morph weights).
+    {
+        auto& skins = renderer.scene_manager.skins();
+        skins.destroy(renderer.vk.device.device, renderer.allocator);
+        const uint32_t nskins = skins.load_from_gltf(model, node_to_xform);
+        if (nskins > 0) {
+            // Bind mesh node world to each skin (for inv(meshWorld) formula).
+            const uint32_t n_go = renderer.scene_manager.game_object_count();
+            for (uint32_t gi = 0; gi < n_go; ++gi) {
+                const auto& go = renderer.scene_manager.get_game_object(gi);
+                if (go.skin_index != ~0u)
+                    skins.set_mesh_transform(go.skin_index, go.root_transform_index);
+            }
+            if (!skins.create_gpu_buffers(renderer.vk.device.device,
+                                          renderer.allocator)) {
+                LOG_ERROR("[Skin] GPU joint buffers failed");
+            }
+        }
+
+        auto& anims = renderer.scene_manager.animations();
+        const uint32_t nclips = anims.load_from_gltf(
+            model, node_to_xform, &renderer.scene_manager.morphs());
+        if (nclips > 0) {
+            // Exclusive default (Walk preferred) — multi-clip assets like Fox
+            // must not play all channels at once.
+            anims.play_default_clip(/*loop=*/true);
+            if (nclips > 1) {
+                LOG_INFO("[Anim] " << nclips
+                         << " clips loaded — press N to cycle (exclusive play)");
+            }
+        } else {
+            LOG_INFO("[Anim] No node animations in this scene");
+        }
+    }
+
     // Apply world transforms to lights / camera from the hierarchy.
     // Store TransformManager index so runtime can re-sync dynamic light nodes.
     for (size_t i = 0; i < renderer.lights.size(); ++i) {
@@ -314,53 +370,9 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     renderer.texture_manager.upload_textures();
 
     // Mesh templates + GPU cull resources (fixed per-batch instance regions).
-    {
-        renderer.mesh_draw_infos.clear();
-        const uint32_t n_rm = renderer.scene_manager.render_mesh_count();
-        std::unordered_map<uint32_t, std::vector<uint32_t>> by_mesh;
-        by_mesh.reserve(n_rm);
-        for (uint32_t i = 0; i < n_rm; ++i) {
-            const auto& rm = renderer.scene_manager.get_render_mesh(i);
-            by_mesh[rm.mesh_index].push_back(i);
-        }
-
-        std::vector<uint32_t> mesh_keys;
-        mesh_keys.reserve(by_mesh.size());
-        for (const auto& [mesh_idx, ids] : by_mesh) {
-            if (!ids.empty() &&
-                renderer.mesh_manager.get_primitive_index_count(mesh_idx) > 0)
-                mesh_keys.push_back(mesh_idx);
-        }
-        std::sort(mesh_keys.begin(), mesh_keys.end());
-
-        for (uint32_t mesh_idx : mesh_keys) {
-            MeshDrawInfo info{};
-            info.mesh_index = mesh_idx;
-            info.index_count =
-                renderer.mesh_manager.get_primitive_index_count(mesh_idx);
-            info.index_offset =
-                renderer.mesh_manager.get_primitive_index_offset(mesh_idx);
-            info.vertex_offset = static_cast<int32_t>(
-                renderer.mesh_manager.get_primitive_vertex_offset(mesh_idx));
-            info.render_mesh_ids = std::move(by_mesh[mesh_idx]);
-            renderer.mesh_draw_infos.push_back(std::move(info));
-        }
-
-        renderer.last_total_render_meshes = n_rm;
-        if (!renderer.gpu_culling.build_scene(renderer.vk.device.device,
-                                              renderer.allocator,
-                                              renderer.mesh_draw_infos,
-                                              renderer.scene_manager)) {
-            LOG_ERROR("[Draw] GPU cull build_scene failed");
-            return false;
-        }
-        // build_scene rewrites cull sets with dummy HZB — rebind real pyramid.
-        wire_hzb_descriptors();
-
-        LOG_INFO("[Draw] GPU cull ready: " << n_rm << " renderMeshes / "
-                 << renderer.scene_manager.game_object_count() << " gameObjects / "
-                 << renderer.mesh_draw_infos.size() << " batches");
-    }
+    // (Descriptors for instances rebinding happens after toggle below as well.)
+    if (!rebuild_draw_batches())
+        return false;
 
     {
         LOG_INFO("[Scene] Loaded scene '" << scene_name << "':"
@@ -548,16 +560,43 @@ bool gfx::Engine::sync_scene_transforms() {
         renderer.transform_upload_mask = (1u << Renderer::MAX_FRAMES_IN_FLIGHT) - 1u;
     }
 
+    // Joint palettes always refresh when anything is dirty or any skin is playing.
+    // Use transform_upload_mask so each FIF slot gets a coherent palette write.
     const uint32_t bit = 1u << renderer.current_frame;
-    if ((renderer.transform_upload_mask & bit) == 0)
+    const bool need_upload = (renderer.transform_upload_mask & bit) != 0 ||
+                             worlds_changed ||
+                             renderer.scene_manager.skins().has_skins();
+
+    if (need_upload && renderer.scene_manager.skins().has_skins()) {
+        renderer.scene_manager.skins().update_joint_matrices(
+            renderer.current_frame, renderer.scene_manager.transforms());
+        // Bind this frame's joint buffer (host-visible, updated above).
+        auto& jb = renderer.scene_manager.skins().joint_buffer(renderer.current_frame);
+        gfx::BufferUtils::update_descriptor(
+            renderer.vk.device.device, jb,
+            renderer.vk.bindless_descriptor_sets[renderer.current_frame],
+            renderer.scene_manager.skins().joint_buffer_size(),
+            Renderer::BINDING_JOINT_MATRICES);
+    }
+
+    if ((renderer.transform_upload_mask & bit) == 0 && !worlds_changed)
         return worlds_changed;
 
-    if (renderer.gpu_culling.is_ready()) {
+    if (renderer.gpu_culling.is_ready() &&
+        (renderer.transform_upload_mask & bit) != 0) {
         renderer.gpu_culling.update_models(renderer.current_frame,
                                            renderer.scene_manager);
     }
     renderer.transform_upload_mask &= ~bit;
     return true;
+}
+
+void gfx::Engine::update_animations(float delta_time) {
+    auto& sm = renderer.scene_manager;
+    sm.animations().update(delta_time, sm.transforms(), &sm.morphs());
+    // CPU morph: blend deltas into MeshManager vertex buffers (both FIF sides).
+    if (sm.morphs().has_morphs())
+        sm.morphs().apply(renderer.mesh_manager);
 }
 
 bool gfx::Engine::set_light(uint32_t index, const gfx::Light& light) {
@@ -610,6 +649,14 @@ void gfx::Engine::bind_frame_lighting_to_all_sets() {
                                           Renderer::BINDING_IBL_SPECULAR,
                                           Renderer::BINDING_IBL_BRDF_LUT);
         }
+        if (renderer.scene_manager.skins().has_skins()) {
+            auto& jb = renderer.scene_manager.skins().joint_buffer(i);
+            gfx::BufferUtils::update_descriptor(
+                renderer.vk.device.device, jb,
+                renderer.vk.bindless_descriptor_sets[i],
+                renderer.scene_manager.skins().joint_buffer_size(),
+                Renderer::BINDING_JOINT_MATRICES);
+        }
     }
 }
 
@@ -617,6 +664,10 @@ void gfx::Engine::cleanup_scene() {
     if (renderer.vk.device.device != VK_NULL_HANDLE) {
         vkDeviceWaitIdle(renderer.vk.device.device);
     }
+
+    // Drop rigid bodies so transform links are not dangling after clear.
+    if (physics.is_initialized())
+        physics.shutdown();
 
     renderer.lights.clear();
     renderer.mesh_draw_infos.clear();

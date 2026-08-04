@@ -11,11 +11,12 @@ struct CullItem {
     vec4  aabb_min; // xyz = local AABB min
     vec4  aabb_max; // xyz = local AABB max
     uvec4 meta;     // x = material_index, y = batch_index, z = base, w = capacity
+    uvec4 skin;     // x = joint_base, y = joint_count (0 = rigid)
 };
 
 struct DrawInstance {
     mat4  model;
-    uvec4 meta; // x = material_index
+    uvec4 meta; // x = material, y = joint_base, z = joint_count, w = reserved
 };
 
 layout(set = 0, binding = 0, std140) uniform CullGlobals {
@@ -200,6 +201,6 @@ void main() {
 
     DrawInstance di;
     di.model = item.model;
-    di.meta = uvec4(item.meta.x, 0u, 0u, 0u);
+    di.meta = uvec4(item.meta.x, item.skin.x, item.skin.y, 0u);
     out_instances[base + slot] = di;
 }

@@ -1,5 +1,6 @@
 #include "gfx/MeshManager.h"
 #include "gfx/BufferUtils.h"
+#include <algorithm>
 #include <cstring>
 #include <mutex>
 
@@ -100,10 +101,15 @@ void MeshManager::bind_descriptor(uint32_t ssbo, uint32_t vertex, uint32_t index
     std::shared_lock lock(mesh_mutex_);
     ssbo_buffers_.bind_render_descriptor(
         device_, target_set, ssbo, mesh_count_ * sizeof(MeshPrimitiveSSBO));
+    // Never pass range=0 (validation VUID-VkDescriptorBufferInfo-range-00341).
+    const VkDeviceSize vbytes =
+        std::max<VkDeviceSize>(sizeof(Vertex), vertex_count_ * sizeof(Vertex));
+    const VkDeviceSize ibytes =
+        std::max<VkDeviceSize>(sizeof(Index), index_count_ * sizeof(Index));
     BufferUtils::update_descriptor(device_, vertex_buffers_.render(), target_set,
-                                   vertex_count_ * sizeof(Vertex), vertex);
+                                   vbytes, vertex);
     BufferUtils::update_descriptor(device_, index_buffers_.render(), target_set,
-                                   index_count_ * sizeof(Index), index);
+                                   ibytes, index);
 }
 
 void MeshManager::shutdown() {
@@ -206,6 +212,49 @@ core::AABB MeshManager::get_primitive_local_aabb(uint32_t index) const {
     if (index >= mesh_cache_.size())
         return core::AABB{};
     return mesh_cache_[index].local_aabb;
+}
+
+bool MeshManager::copy_primitive_vertices(uint32_t index, Vertex* out,
+                                          uint32_t count) const {
+    std::shared_lock lock(mesh_mutex_);
+    if (!out || index >= mesh_cache_.size())
+        return false;
+    const auto& mesh = mesh_cache_[index];
+    if (mesh.vertices.size() < count)
+        return false;
+    std::memcpy(out, mesh.vertices.data(), count * sizeof(Vertex));
+    return true;
+}
+
+bool MeshManager::write_primitive_vertices(uint32_t index, const Vertex* data,
+                                           uint32_t count) {
+    std::scoped_lock lock(mesh_mutex_);
+    if (!data || index >= mesh_cache_.size())
+        return false;
+    auto& mesh = mesh_cache_[index];
+    if (mesh.vertices.size() < count)
+        return false;
+    std::memcpy(mesh.vertices.data(), data, count * sizeof(Vertex));
+
+    // Patch both FIF sides so either buffer is up to date after toggle.
+    uint32_t offset = 0;
+    if (index < mesh_ssbo_cache_.size())
+        offset = mesh_ssbo_cache_[index].vertex_offset;
+    else {
+        // Reconstruct offset if SSBO cache not built yet.
+        for (uint32_t i = 0; i < index; ++i)
+            offset += static_cast<uint32_t>(mesh_cache_[i].vertices.size());
+    }
+
+    const VkDeviceSize bytes = static_cast<VkDeviceSize>(count) * sizeof(Vertex);
+    for (uint32_t side = 0; side < 2; ++side) {
+        auto& buf = (side == 0) ? vertex_buffers_.render() : vertex_buffers_.upload();
+        if (!buf.mapped_data)
+            continue;
+        auto* dst = static_cast<Vertex*>(buf.mapped_data) + offset;
+        std::memcpy(dst, data, static_cast<size_t>(bytes));
+    }
+    return true;
 }
 
 } // namespace gfx

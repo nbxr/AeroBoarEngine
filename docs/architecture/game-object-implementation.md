@@ -12,13 +12,13 @@ Lightweight, cache-friendly data structures designed for a C++ Vulkan engine usi
 - `SceneManager` — registry (`create_game_object`, `add_render_mesh`); framing and GPU cull read this model.
 - Legacy `SceneInstance` is dual-written / refreshed after `propagate()` for compatibility.
 
-**Animation (planned — not implemented):** See **`docs/architecture/animation-plan.md`**.
+**Animation:** See **`docs/architecture/animation-plan.md`**.
 
-- **Phase 1 (next):** node TRS clips (rigid hierarchy). Reuse dirty `propagate` + `sync_scene_transforms`. Need durable `gltf_node → transform`, clip load/sample, player; prefer decomposed TRS for partial path updates.
+- **Phase 1 (landed):** node TRS clips — `AnimationSystem`, `gltf_node_to_transform`, TRS locals, auto-play loop.
 - **Phase 2:** skinned meshes (JOINTS/WEIGHTS, IBM, joint palette, skin in shade **and** depth prepass).
-- **Later:** morph targets. `skin_index` / vertex blend fields are stubs until Phase 2.
+- **Morph (CPU):** `MorphSystem` + animation `weights`. Advanced pointer/material extensions: see `gltf-extensions.md`.
 
-**Physics (planned, not implemented):** Collision and rigid-body properties for models will be **authored in glTF** using Khronos extensions (`KHR_physics_rigid_bodies`, `KHR_implicit_shapes`, and related as they finalize). Runtime simulation is **Jolt**. Extension data should map into engine physics components associated with `GameObject` / nodes (not a parallel proprietary physics asset format for production content). See `docs/agents/tech_context.md` § Physics assets.
+**Physics:** Runtime **Jolt** foundation is in (`physics::PhysicsWorld`, body → `TransformManager` link). Collision / rigid-body **authoring** for production models will use Khronos glTF extensions (`KHR_physics_rigid_bodies`, `KHR_implicit_shapes`, …) mapped into engine components on `GameObject` / nodes — not a long-term proprietary physics asset format. See `docs/architecture/physics-plan.md` and `docs/agents/tech_context.md` § Physics assets.
 
 ## Core Principles
 - Flat SOA-style layouts for high cache efficiency and low CPU overhead.

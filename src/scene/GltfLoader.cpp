@@ -8,6 +8,8 @@
 #include <cmath>
 #include <filesystem>
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
 #include <map>
@@ -141,6 +143,7 @@ scene::GltfLoader::extract_material_data(const std::string &filename,
         material.ao_texture_index = gfx::Material::NO_TEXTURE;
         material.sampler_index = gfx::Material::NO_TEXTURE;
         material.flags = 0;
+        material.set_alpha_cutoff(0.5f);
 
         // --- PBR base values (with correct glTF 2.0 defaults) ---
         const auto& pbr = mat.pbrMetallicRoughness;
@@ -166,6 +169,7 @@ scene::GltfLoader::extract_material_data(const std::string &filename,
             if (!uri.empty()) {
                 material.albedo_texture_index =
                     renderer.texture_manager.get_texture_handle(img_name, uri.string(), /*is_srgb=*/true);
+                material.flags |= gfx::Material::kFlagHasAlbedoTex;
             }
         }
 
@@ -175,6 +179,7 @@ scene::GltfLoader::extract_material_data(const std::string &filename,
             if (!uri.empty()) {
                 material.roughness_texture_index =
                     renderer.texture_manager.get_texture_handle(img_name, uri.string());
+                material.flags |= gfx::Material::kFlagHasOrmTex;
             }
         }
 
@@ -184,6 +189,7 @@ scene::GltfLoader::extract_material_data(const std::string &filename,
             if (!uri.empty()) {
                 material.normal_texture_index =
                     renderer.texture_manager.get_texture_handle(img_name, uri.string());
+                material.flags |= gfx::Material::kFlagHasNormalMap;
                 // If we want to honor scale: material.normalStrength = static_cast<float>(mat.normalTexture.scale);
             }
         }
@@ -194,6 +200,7 @@ scene::GltfLoader::extract_material_data(const std::string &filename,
             if (!uri.empty()) {
                 material.emissive_texture_index =
                     renderer.texture_manager.get_texture_handle(img_name, uri.string());
+                material.flags |= gfx::Material::kFlagHasEmissiveTex;
             }
         }
 
@@ -212,7 +219,23 @@ scene::GltfLoader::extract_material_data(const std::string &filename,
                          static_cast<float>(mat.emissiveFactor[1]) +
                          static_cast<float>(mat.emissiveFactor[2])) / 3.0f;
             material.emissive = avg;
+            if (avg > 0.0f)
+                material.flags |= gfx::Material::kFlagIsEmissive;
         }
+
+        // glTF alphaMode: OPAQUE (default) | MASK | BLEND
+        // tinygltf: empty string means OPAQUE; alphaCutoff defaults to 0.5 when MASK.
+        if (mat.alphaMode == "MASK") {
+            material.flags |= gfx::Material::kFlagAlphaMask;
+            const float cutoff =
+                (mat.alphaCutoff > 0.0) ? static_cast<float>(mat.alphaCutoff) : 0.5f;
+            material.set_alpha_cutoff(cutoff);
+        } else if (mat.alphaMode == "BLEND") {
+            material.flags |= gfx::Material::kFlagAlphaBlend;
+        }
+
+        if (mat.doubleSided)
+            material.flags |= gfx::Material::kFlagDoubleSided;
 
         gfx::MaterialID id = renderer.material_manager.create_material(material);
         material_lookup.push_back(id);
@@ -314,12 +337,18 @@ scene::GltfLoader::extract_mesh_data(const tinygltf::Model &model,
 
             auto norm_it = primitive.attributes.find("NORMAL");
             auto tex_it = primitive.attributes.find("TEXCOORD_0");
+            auto joints_it = primitive.attributes.find("JOINTS_0");
+            auto weights_it = primitive.attributes.find("WEIGHTS_0");
 
             bool has_normal = (norm_it != primitive.attributes.end());
             bool has_tex0   = (tex_it != primitive.attributes.end());
+            bool has_joints = (joints_it != primitive.attributes.end());
+            bool has_weights = (weights_it != primitive.attributes.end());
 
             const tinygltf::Accessor *norm_acc_ptr = nullptr;
             const tinygltf::Accessor *tex_acc_ptr  = nullptr;
+            const tinygltf::Accessor *joints_acc_ptr = nullptr;
+            const tinygltf::Accessor *weights_acc_ptr = nullptr;
 
             if (has_normal) {
                 norm_acc_ptr = &model.accessors[norm_it->second];
@@ -342,6 +371,31 @@ scene::GltfLoader::extract_mesh_data(const tinygltf::Model &model,
                 if (!texcoord_ok) {
                     has_tex0 = false;
                     tex_acc_ptr = nullptr;
+                }
+            }
+
+            if (has_joints) {
+                joints_acc_ptr = &model.accessors[joints_it->second];
+                if (joints_acc_ptr->type != TINYGLTF_TYPE_VEC4 ||
+                    (joints_acc_ptr->componentType !=
+                         TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE &&
+                     joints_acc_ptr->componentType !=
+                         TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT)) {
+                    has_joints = false;
+                    joints_acc_ptr = nullptr;
+                }
+            }
+            if (has_weights) {
+                weights_acc_ptr = &model.accessors[weights_it->second];
+                if (weights_acc_ptr->type != TINYGLTF_TYPE_VEC4 ||
+                    weights_acc_ptr->componentType != TINYGLTF_COMPONENT_TYPE_FLOAT) {
+                    // Also allow normalized u8 weights if present
+                    if (!(weights_acc_ptr->type == TINYGLTF_TYPE_VEC4 &&
+                          weights_acc_ptr->componentType ==
+                              TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE)) {
+                        has_weights = false;
+                        weights_acc_ptr = nullptr;
+                    }
                 }
             }
 
@@ -374,6 +428,11 @@ scene::GltfLoader::extract_mesh_data(const tinygltf::Model &model,
 
             const uint8_t *pos_ptr = get_accessor_data(pos_acc);
             const uint8_t *norm_ptr = has_normal && norm_acc_ptr ? get_accessor_data(*norm_acc_ptr) : nullptr;
+            const uint8_t *joints_ptr =
+                has_joints && joints_acc_ptr ? get_accessor_data(*joints_acc_ptr) : nullptr;
+            const uint8_t *weights_ptr =
+                has_weights && weights_acc_ptr ? get_accessor_data(*weights_acc_ptr)
+                                               : nullptr;
 
             int pos_stride =
                 pos_acc.ByteStride(model.bufferViews[pos_acc.bufferView]);
@@ -381,6 +440,30 @@ scene::GltfLoader::extract_mesh_data(const tinygltf::Model &model,
             if (has_normal && norm_acc_ptr) {
                 norm_stride = norm_acc_ptr->ByteStride(model.bufferViews[norm_acc_ptr->bufferView]);
                 if (norm_stride == 0) norm_stride = 12;
+            }
+            int joints_stride = 0;
+            if (has_joints && joints_acc_ptr) {
+                joints_stride = joints_acc_ptr->ByteStride(
+                    model.bufferViews[joints_acc_ptr->bufferView]);
+                if (joints_stride == 0) {
+                    joints_stride =
+                        (joints_acc_ptr->componentType ==
+                         TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT)
+                            ? 8
+                            : 4;
+                }
+            }
+            int weights_stride = 0;
+            if (has_weights && weights_acc_ptr) {
+                weights_stride = weights_acc_ptr->ByteStride(
+                    model.bufferViews[weights_acc_ptr->bufferView]);
+                if (weights_stride == 0) {
+                    weights_stride =
+                        (weights_acc_ptr->componentType ==
+                         TINYGLTF_COMPONENT_TYPE_FLOAT)
+                            ? 16
+                            : 4;
+                }
             }
 
             if (pos_stride == 0)
@@ -475,48 +558,132 @@ scene::GltfLoader::extract_mesh_data(const tinygltf::Model &model,
                 v.uv[5] = v.uv[1];
                 v.uv[6] = v.uv[2];
                 v.uv[7] = v.uv[3];
-                // Skinning defaults
+
+                // Skinning: JOINTS_0 + WEIGHTS_0 (up to 4 influences)
                 v.blend_weights[0] = 255;
-                v.blend_weights[1] = v.blend_weights[2] = v.blend_weights[3] =
-                    0;
+                v.blend_weights[1] = v.blend_weights[2] = v.blend_weights[3] = 0;
                 v.blend_indices[0] = v.blend_indices[1] = v.blend_indices[2] =
                     v.blend_indices[3] = 0;
+
+                if (has_joints && joints_ptr && joints_acc_ptr) {
+                    const uint8_t* jp = joints_ptr + i * joints_stride;
+                    if (joints_acc_ptr->componentType ==
+                        TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE) {
+                        for (int k = 0; k < 4; ++k)
+                            v.blend_indices[k] = jp[k];
+                    } else {
+                        const uint16_t* js = reinterpret_cast<const uint16_t*>(jp);
+                        for (int k = 0; k < 4; ++k)
+                            v.blend_indices[k] =
+                                static_cast<uint8_t>(std::min<uint16_t>(js[k], 255));
+                    }
+                }
+                if (has_weights && weights_ptr && weights_acc_ptr) {
+                    float w[4] = {1.f, 0.f, 0.f, 0.f};
+                    const uint8_t* wp = weights_ptr + i * weights_stride;
+                    if (weights_acc_ptr->componentType ==
+                        TINYGLTF_COMPONENT_TYPE_FLOAT) {
+                        const float* wf = reinterpret_cast<const float*>(wp);
+                        for (int k = 0; k < 4; ++k)
+                            w[k] = wf[k];
+                    } else {
+                        for (int k = 0; k < 4; ++k)
+                            w[k] = float(wp[k]) / 255.0f;
+                    }
+                    float sum = w[0] + w[1] + w[2] + w[3];
+                    if (sum > 1e-6f) {
+                        for (int k = 0; k < 4; ++k)
+                            w[k] /= sum;
+                    } else {
+                        w[0] = 1.f;
+                        w[1] = w[2] = w[3] = 0.f;
+                    }
+                    for (int k = 0; k < 4; ++k) {
+                        v.blend_weights[k] = static_cast<uint8_t>(
+                            std::clamp(w[k], 0.0f, 1.0f) * 255.0f + 0.5f);
+                    }
+                }
             }
 
-            // === ADD THIS: Index buffer support (mandatory for real assets)
-            // ===
+            // Index buffer. glTF allows non-indexed primitives (e.g. Fox) —
+            // synthesize 0..N-1 so the rest of the pipeline can stay indexed.
             if (primitive.indices >= 0) {
                 const auto &idx_acc = model.accessors[primitive.indices];
-                if (idx_acc.componentType ==
-                        TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT ||
-                    idx_acc.componentType ==
-                        TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT) {
-
+                const int ctype = idx_acc.componentType;
+                const bool ok_type =
+                    ctype == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE ||
+                    ctype == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT ||
+                    ctype == TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT;
+                if (ok_type && idx_acc.bufferView >= 0) {
                     const uint8_t *idx_ptr = get_accessor_data(idx_acc);
                     int idx_stride = idx_acc.ByteStride(
                         model.bufferViews[idx_acc.bufferView]);
                     if (idx_stride == 0) {
-                        idx_stride = (idx_acc.componentType ==
-                                      TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT)
-                                         ? 2
-                                         : 4;
+                        idx_stride =
+                            tinygltf::GetComponentSizeInBytes(ctype);
                     }
 
                     mesh_data.indices.resize(idx_acc.count);
-                    if (idx_acc.componentType ==
-                        TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
-                        for (size_t i = 0; i < idx_acc.count; ++i) {
-                            mesh_data.indices[i] =
-                                reinterpret_cast<const uint16_t *>(
-                                    idx_ptr + i * idx_stride)[0];
+                    for (size_t i = 0; i < idx_acc.count; ++i) {
+                        const uint8_t* ip = idx_ptr + i * static_cast<size_t>(idx_stride);
+                        uint32_t v = 0;
+                        switch (ctype) {
+                        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
+                            v = ip[0];
+                            break;
+                        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
+                            v = reinterpret_cast<const uint16_t*>(ip)[0];
+                            break;
+                        default:
+                            v = reinterpret_cast<const uint32_t*>(ip)[0];
+                            break;
                         }
-                    } else {
-                        for (size_t i = 0; i < idx_acc.count; ++i) {
-                            mesh_data.indices[i] =
-                                reinterpret_cast<const uint32_t *>(
-                                    idx_ptr + i * idx_stride)[0];
-                        }
+                        mesh_data.indices[i] = v;
                     }
+                }
+            }
+            if (mesh_data.indices.empty() && num_vertices >= 3) {
+                // Non-indexed TRIANGLES (default mode): sequential indices.
+                // mode 4 = TRIANGLES; other modes rare in our samples.
+                mesh_data.indices.resize(num_vertices);
+                for (size_t i = 0; i < num_vertices; ++i)
+                    mesh_data.indices[i] = static_cast<uint32_t>(i);
+            }
+
+            // Assets like Fox omit NORMAL — accumulate face normals for lit shading.
+            if (!has_normal && mesh_data.indices.size() >= 3) {
+                std::vector<glm::vec3> accum(num_vertices, glm::vec3(0.0f));
+                for (size_t t = 0; t + 2 < mesh_data.indices.size(); t += 3) {
+                    const uint32_t i0 = mesh_data.indices[t];
+                    const uint32_t i1 = mesh_data.indices[t + 1];
+                    const uint32_t i2 = mesh_data.indices[t + 2];
+                    if (i0 >= num_vertices || i1 >= num_vertices ||
+                        i2 >= num_vertices)
+                        continue;
+                    const glm::vec3 p0(mesh_data.vertices[i0].position[0],
+                                       mesh_data.vertices[i0].position[1],
+                                       mesh_data.vertices[i0].position[2]);
+                    const glm::vec3 p1(mesh_data.vertices[i1].position[0],
+                                       mesh_data.vertices[i1].position[1],
+                                       mesh_data.vertices[i1].position[2]);
+                    const glm::vec3 p2(mesh_data.vertices[i2].position[0],
+                                       mesh_data.vertices[i2].position[1],
+                                       mesh_data.vertices[i2].position[2]);
+                    const glm::vec3 fn = glm::cross(p1 - p0, p2 - p0);
+                    accum[i0] += fn;
+                    accum[i1] += fn;
+                    accum[i2] += fn;
+                }
+                for (size_t i = 0; i < num_vertices; ++i) {
+                    glm::vec3 n = accum[i];
+                    const float len2 = glm::dot(n, n);
+                    if (len2 > 1e-12f)
+                        n *= 1.0f / std::sqrt(len2);
+                    else
+                        n = glm::vec3(0.0f, 1.0f, 0.0f);
+                    mesh_data.vertices[i].normal[0] = n.x;
+                    mesh_data.vertices[i].normal[1] = n.y;
+                    mesh_data.vertices[i].normal[2] = n.z;
                 }
             }
 
@@ -528,43 +695,52 @@ scene::GltfLoader::extract_mesh_data(const tinygltf::Model &model,
     return meshes;
 }
 
-glm::mat4 scene::GltfLoader::extract_node_transform(const tinygltf::Node &node) {
-    // glTF nodes may specify either a 4x4 matrix or separate TRS.
-    // Matrix takes precedence when present and has 16 elements.
+scene::LocalTrs scene::GltfLoader::extract_node_trs(const tinygltf::Node &node) {
+    LocalTrs trs{};
+
     if (node.matrix.size() == 16) {
-        // tinygltf stores column-major (matches glm default)
-        return glm::make_mat4(node.matrix.data());
+        // Matrix form: store composed matrix path via decompose for anim base.
+        const glm::mat4 m = glm::make_mat4(node.matrix.data());
+        trs.translation = glm::vec3(m[3]);
+        glm::vec3 col0(m[0]), col1(m[1]), col2(m[2]);
+        trs.scale = glm::vec3(glm::length(col0), glm::length(col1), glm::length(col2));
+        if (trs.scale.x > 1e-8f)
+            col0 /= trs.scale.x;
+        if (trs.scale.y > 1e-8f)
+            col1 /= trs.scale.y;
+        if (trs.scale.z > 1e-8f)
+            col2 /= trs.scale.z;
+        trs.rotation = glm::normalize(glm::quat_cast(glm::mat3(col0, col1, col2)));
+        return trs;
     }
 
-    // glTF spec: absent TRS components mean identity (trans=0, rot=unit quat, scale=1).
-    // The old value_or_ident always supplied 1.0 which was wrong for translation
-    // (and for quaternion when rotation key omitted). Fixed to be glTF-compliant.
-    glm::vec3 t(0.0f);
     if (node.translation.size() >= 3) {
-        t = glm::vec3(static_cast<float>(node.translation[0]),
-                      static_cast<float>(node.translation[1]),
-                      static_cast<float>(node.translation[2]));
+        trs.translation = glm::vec3(static_cast<float>(node.translation[0]),
+                                    static_cast<float>(node.translation[1]),
+                                    static_cast<float>(node.translation[2]));
     }
-
-    glm::quat r(1.0f, 0.0f, 0.0f, 0.0f); // identity (w,x,y,z)
     if (node.rotation.size() >= 4) {
-        // glTF stores rotation as [x, y, z, w]; glm::quat(w, x, y, z)
-        float rx = static_cast<float>(node.rotation[0]);
-        float ry = static_cast<float>(node.rotation[1]);
-        float rz = static_cast<float>(node.rotation[2]);
-        float rw = static_cast<float>(node.rotation[3]);
-        r = glm::quat(rw, rx, ry, rz);
+        // glTF [x,y,z,w] → glm(w,x,y,z)
+        trs.rotation = glm::quat(static_cast<float>(node.rotation[3]),
+                                 static_cast<float>(node.rotation[0]),
+                                 static_cast<float>(node.rotation[1]),
+                                 static_cast<float>(node.rotation[2]));
+        trs.rotation = glm::normalize(trs.rotation);
     }
-
-    glm::vec3 s(1.0f);
     if (node.scale.size() >= 3) {
-        s = glm::vec3(static_cast<float>(node.scale[0]),
-                      static_cast<float>(node.scale[1]),
-                      static_cast<float>(node.scale[2]));
+        trs.scale = glm::vec3(static_cast<float>(node.scale[0]),
+                              static_cast<float>(node.scale[1]),
+                              static_cast<float>(node.scale[2]));
     }
+    return trs;
+}
 
-    return glm::translate(glm::mat4(1.0f), t) *
-           glm::mat4_cast(r) *
-           glm::scale(glm::mat4(1.0f), s);
+glm::mat4 scene::GltfLoader::extract_node_transform(const tinygltf::Node &node) {
+    if (node.matrix.size() == 16)
+        return glm::make_mat4(node.matrix.data());
+    const LocalTrs trs = extract_node_trs(node);
+    return glm::translate(glm::mat4(1.0f), trs.translation) *
+           glm::mat4_cast(trs.rotation) *
+           glm::scale(glm::mat4(1.0f), trs.scale);
 }
 

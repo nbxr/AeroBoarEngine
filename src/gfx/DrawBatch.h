@@ -10,7 +10,11 @@ namespace gfx {
 // One contiguous array; each DrawBatch references [first_instance, first_instance + count).
 struct DrawInstanceGPU {
     glm::mat4 model{1.0f};
-    glm::uvec4 meta{0}; // x = material_index
+    // x = material_index
+    // y = joint palette base (into joint matrix SSBO); ~0u if rigid
+    // z = joint count (0 = rigid / no skinning)
+    // w = reserved
+    glm::uvec4 meta{0};
 };
 static_assert(sizeof(DrawInstanceGPU) == 80, "DrawInstanceGPU must be 80 bytes");
 

@@ -40,6 +40,10 @@ class TextureManager {
 
     uint32_t uploaded_count = 0;
 
+    // 1x1 fallback for empty scenes (SimpleSkin etc.) — never write null imageView.
+    AllocatedImage dummy_image_{};
+    bool dummy_ready_ = false;
+
     mutable std::shared_mutex texture_mutex;
 
   public:
@@ -63,5 +67,6 @@ class TextureManager {
   private:
     static void load_pixel_data(std::vector<uint8_t> &pixels,
                                 gfx::TextureInfo &info);
+    bool create_dummy_texture();
 };
 } // namespace gfx

@@ -9,6 +9,7 @@
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_RADIANS
 
+#include "scene/TransformManager.h"
 #include <glm/glm.hpp>
 #include <string>
 
@@ -30,6 +31,8 @@ class GltfLoader {
     static std::vector<gfx::MeshPrimitiveID>
     extract_mesh_data(const tinygltf::Model &model, gfx::Renderer &renderer);
     static glm::mat4 extract_node_transform(const tinygltf::Node &node);
+    // Decomposed TRS for animation (matrix nodes best-effort decompose).
+    static LocalTrs extract_node_trs(const tinygltf::Node &node);
 
     // Phase 2 lighting: extract KHR_lights_punctual lights (if present)
     static std::vector<gfx::Light> extract_light_data(const tinygltf::Model &model);

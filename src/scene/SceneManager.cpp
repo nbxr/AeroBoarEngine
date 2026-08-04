@@ -30,13 +30,15 @@ bool SceneManager::initialize(VkDevice device, VmaAllocator allocator,
 }
 
 uint32_t SceneManager::create_game_object(uint32_t root_transform_index,
-                                          uint32_t gltf_node_index) {
+                                          uint32_t gltf_node_index,
+                                          uint32_t skin_index) {
     std::scoped_lock lock(instance_mutex_);
     if (!transforms_.is_alive(root_transform_index))
         return ~0u;
 
     GameObject go{};
     go.root_transform_index = root_transform_index;
+    go.skin_index = skin_index;
     go.first_render_mesh = ~0u;
     go.render_mesh_count = 0;
     go.gltf_node_index = gltf_node_index;
@@ -178,6 +180,10 @@ void SceneManager::shutdown() {
 void SceneManager::clear_scene_data() {
     std::scoped_lock lock(instance_mutex_);
     transforms_.clear();
+    animations_.clear();
+    skins_.clear();
+    morphs_.clear();
+    gltf_node_to_transform_.clear();
     game_objects_.clear();
     render_meshes_.clear();
     cpu_instances_.clear();

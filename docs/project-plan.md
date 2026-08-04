@@ -84,19 +84,21 @@ This project aims to develop a cross-platform game engine targeting VR via OpenX
 - Integrate with development workflow
 - Implement GLM for math operations
 - **glTF animation (desktop; plan in `docs/architecture/animation-plan.md`):**
-  - **Phase 1 (next):** node TRS clips — node→transform map, load/sample channels, player → dirty `set_local_matrix` + existing `sync_scene_transforms`
-  - **Phase 2:** skinned meshes — JOINTS/WEIGHTS, inverse bind, joint palette, skin in shade + depth prepass
-  - Later: morph targets
-- **Physics foundation (when rendering path is stable enough):**
-  - Jolt integration (world step, rigid bodies, collision layers)
-  - glTF load path for Khronos physics extensions (`KHR_physics_rigid_bodies`, `KHR_implicit_shapes` / successors as ratified)
-  - Map authored shapes + body properties → Jolt colliders / bodies
+  - **Phase 1 (done):** node TRS clips
+  - **Phase 2 (done):** skinned meshes (joint palette + VS skin)
+  - **Phase 3 (done, CPU):** morph target weights
+  - **Later:** `KHR_animation_pointer` + `KHR_texture_transform` (see `gltf-extensions.md`; sample: AnimationPointerUVs)
+- **Physics foundation (landed runtime; asset path open):**
+  - Jolt world step, rigid boxes, transform links (`physics-plan.md`)
+  - **Next product arc:** ABeautifulGame piece physics → shrink player → OpenXR knock-over — `docs/architecture/vr-chess-physics-plan.md`
+  - glTF load path for Khronos physics extensions (`KHR_physics_rigid_bodies`, `KHR_implicit_shapes`) still TODO
 
 ### Phase 3: VR Features (Weeks 9-12)
 - Full OpenXR integration
 - VR-specific features
 - **Reverse-Z depth** (near→1 / far→0, `GREATER` compare, clear 0) coordinated with stereo/multiview
 - Same-frame occlusion (depth prepass → Hi-Z → shade) is **landed on desktop** (no hysteresis). Quest work: multiview / per-eye prepass + reverse-Z HZB compares.
+- **VR chess / tabletop scale demo** (see `vr-chess-physics-plan.md`)
 - Performance optimization
 - Testing and debugging
 

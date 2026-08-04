@@ -28,13 +28,14 @@ struct Renderer {
     // Bindless set layout (textures must be highest binding for VARIABLE_COUNT):
     // 0 FrameConstants | 1 draw instances | 2 materials | 3 mesh meta
     // 4 verts | 5 indices | 6 lights SSBO
-    // 7 prefiltered env cubemap | 8 BRDF LUT | 9 textures[]
+    // 7 prefiltered env cubemap | 8 BRDF LUT | 9 joint matrices | 10 textures[]
     static constexpr uint32_t BINDING_FRAME_CONSTANTS = 0;
     static constexpr uint32_t BINDING_DRAW_INSTANCES = 1;
     static constexpr uint32_t BINDING_LIGHTS = 6;
     static constexpr uint32_t BINDING_IBL_SPECULAR = 7;
     static constexpr uint32_t BINDING_IBL_BRDF_LUT = 8;
-    static constexpr uint32_t BINDING_TEXTURES = 9;
+    static constexpr uint32_t BINDING_JOINT_MATRICES = 9;
+    static constexpr uint32_t BINDING_TEXTURES = 10;
 
     VmaAllocator allocator{};
     VulkanContext vk{};

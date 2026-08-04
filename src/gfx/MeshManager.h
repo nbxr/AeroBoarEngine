@@ -40,6 +40,11 @@ class MeshManager {
     [[nodiscard]] uint32_t get_primitive_index_count(uint32_t index) const;
     [[nodiscard]] core::AABB get_primitive_local_aabb(uint32_t index) const;
 
+    // Runtime morph / skinning helpers: read/write full Vertex arrays for a prim.
+    // write patches CPU cache + both double-buffer sides (host-visible).
+    bool copy_primitive_vertices(uint32_t index, Vertex* out, uint32_t count) const;
+    bool write_primitive_vertices(uint32_t index, const Vertex* data, uint32_t count);
+
     [[nodiscard]] AllocatedBuffer& get_render_index_buffer() {
         return index_buffers_.render();
     }

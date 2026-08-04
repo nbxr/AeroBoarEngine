@@ -32,7 +32,7 @@ layout(set = 0, binding = 7) uniform samplerCube prefilteredEnv;
 layout(set = 0, binding = 8) uniform sampler2D brdfLut;
 
 // Bindless textures — must be highest binding (VARIABLE_DESCRIPTOR_COUNT).
-layout(set = 0, binding = 9) uniform sampler2D bindlessTextures[];
+layout(set = 0, binding = 10) uniform sampler2D bindlessTextures[];
 
 layout(location = 0) in vec3 inWorldPos;
 layout(location = 1) in vec3 inNormal;
@@ -135,11 +135,25 @@ void main() {
     uint  aoIdx       = materials[matIdx].ao_texture_index;
     float normalStr   = materials[matIdx].normalStrength;
 
-    // Sample albedo
+    // Sample albedo (glTF: baseColorTexture * baseColorFactor, including alpha)
     vec4 albedo = baseColor;
     if (albedoIdx != NO_TEXTURE) {
-        albedo = texture(bindlessTextures[nonuniformEXT(albedoIdx)], inUV);
+        albedo *= texture(bindlessTextures[nonuniformEXT(albedoIdx)], inUV);
     }
+
+    // glTF alphaMode
+    // Bit 5 = BLEND, bit 7 = MASK. padding[0] = floatBitsToUint(alphaCutoff).
+    const uint matFlags = materials[matIdx].flags;
+    const float alphaCutoff = uintBitsToFloat(materials[matIdx].padding[0]);
+    if ((matFlags & 0x80u) != 0u) { // MASK
+        if (albedo.a < alphaCutoff)
+            discard;
+        albedo.a = 1.0; // binary coverage after test
+    } else if ((matFlags & 0x20u) == 0u) {
+        // OPAQUE
+        albedo.a = 1.0;
+    }
+    // BLEND: keep albedo.a for pipeline alpha blending
 
     // Sample metallic-roughness (typical glTF layout: R=unused, G=roughness, B=metallic)
     float sampledRough = roughness;

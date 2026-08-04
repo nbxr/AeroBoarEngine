@@ -15,6 +15,9 @@ This file is the primary contract for all AI coding agents (Grok Build, Continue
 - `docs/architecture/pipeline-implementation.md`
 - `docs/architecture/game-object-implementation.md`
 - `docs/architecture/animation-plan.md` — glTF animation phases (node TRS → skin → morph)
+- `docs/architecture/gltf-extensions.md` — Khronos extension support matrix (animation pointer, materials, physics)
+- `docs/architecture/physics-plan.md` — Jolt foundation
+- `docs/architecture/vr-chess-physics-plan.md` — ABeautifulGame + VR shrink-to-board knock-over plan
 - `docs/architecture/lighting-implementation.md` — lighting / IBL
 
 When making lasting decisions, update the documentation above rather than tool-private memory.

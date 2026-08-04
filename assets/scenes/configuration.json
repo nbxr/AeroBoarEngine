@@ -1,6 +1,7 @@
 {
   "defaultScene": "ABeautifulGame",
   "activeSystem": "Windows",
+  "physicsDemo": true,
   "home": [
     {
       "system": "Windows",
@@ -13,41 +14,621 @@
   ],
   "scenes": [
     {
-      "name": "Sponza",
-      "filename": "glTF-Sample-Assets/Models/Sponza/glTF/Sponza.gltf"
+      "name": "ABeautifulGame",
+      "filename": "glTF-Sample-Assets/Models/ABeautifulGame/glTF/ABeautifulGame.gltf"
     },
     {
-      "name": "DamagedHelmet",
-      "filename": "glTF-Sample-Assets/Models/DamagedHelmet/glTF/DamagedHelmet.gltf"
+      "name": "AlphaBlendModeTest",
+      "filename": "glTF-Sample-Assets/Models/AlphaBlendModeTest/glTF/AlphaBlendModeTest.gltf"
     },
     {
-      "name": "Dev",
-      "filename": "glTF-Sample-Assets/Models/Suzanne/glTF/Suzanne.gltf"
+      "name": "AnimatedColorsCube",
+      "filename": "glTF-Sample-Assets/Models/AnimatedColorsCube/glTF/AnimatedColorsCube.gltf"
     },
     {
-      "name": "DamagedHelmetScene",
-      "filename": "glTF-Sample-Assets/Models/DamagedHelmet/glTF-Scene/DamagedHelmetScene.gltf"
+      "name": "AnimatedCube",
+      "filename": "glTF-Sample-Assets/Models/AnimatedCube/glTF/AnimatedCube.gltf"
+    },
+    {
+      "name": "AnimatedMorphCube",
+      "filename": "glTF-Sample-Assets/Models/AnimatedMorphCube/glTF/AnimatedMorphCube.gltf"
+    },
+    {
+      "name": "AnimatedTriangle",
+      "filename": "glTF-Sample-Assets/Models/AnimatedTriangle/glTF/AnimatedTriangle.gltf"
+    },
+    {
+      "name": "AnimationPointerUVs",
+      "filename": "glTF-Sample-Assets/Models/AnimationPointerUVs/glTF/AnimationPointerUVs.gltf"
+    },
+    {
+      "name": "AnisotropyBarnLamp",
+      "filename": "glTF-Sample-Assets/Models/AnisotropyBarnLamp/glTF/AnisotropyBarnLamp.gltf"
+    },
+    {
+      "name": "AnisotropyDiscTest",
+      "filename": "glTF-Sample-Assets/Models/AnisotropyDiscTest/glTF/AnisotropyDiscTest.gltf"
+    },
+    {
+      "name": "AnisotropyRotationTest",
+      "filename": "glTF-Sample-Assets/Models/AnisotropyRotationTest/glTF/AnisotropyRotationTest.gltf"
+    },
+    {
+      "name": "AnisotropyStrengthTest",
+      "filename": "glTF-Sample-Assets/Models/AnisotropyStrengthTest/glTF/AnisotropyStrengthTest.gltf"
+    },
+    {
+      "name": "AntiqueCamera",
+      "filename": "glTF-Sample-Assets/Models/AntiqueCamera/glTF/AntiqueCamera.gltf"
+    },
+    {
+      "name": "AttenuationTest",
+      "filename": "glTF-Sample-Assets/Models/AttenuationTest/glTF/AttenuationTest.gltf"
+    },
+    {
+      "name": "Avocado",
+      "filename": "glTF-Sample-Assets/Models/Avocado/glTF/Avocado.gltf"
+    },
+    {
+      "name": "BarramundiFish",
+      "filename": "glTF-Sample-Assets/Models/BarramundiFish/glTF/BarramundiFish.gltf"
+    },
+    {
+      "name": "BoomBox",
+      "filename": "glTF-Sample-Assets/Models/BoomBox/glTF/BoomBox.gltf"
+    },
+    {
+      "name": "BoomBoxWithAxes",
+      "filename": "glTF-Sample-Assets/Models/BoomBoxWithAxes/glTF/BoomBoxWithAxes.gltf"
+    },
+    {
+      "name": "Box",
+      "filename": "glTF-Sample-Assets/Models/Box/glTF/Box.gltf"
+    },
+    {
+      "name": "Box With Spaces",
+      "filename": "glTF-Sample-Assets/Models/Box With Spaces/glTF/Box With Spaces.gltf"
+    },
+    {
+      "name": "BoxAnimated",
+      "filename": "glTF-Sample-Assets/Models/BoxAnimated/glTF/BoxAnimated.gltf"
+    },
+    {
+      "name": "BoxInterleaved",
+      "filename": "glTF-Sample-Assets/Models/BoxInterleaved/glTF/BoxInterleaved.gltf"
+    },
+    {
+      "name": "BoxTextured",
+      "filename": "glTF-Sample-Assets/Models/BoxTextured/glTF/BoxTextured.gltf"
+    },
+    {
+      "name": "BoxTexturedNonPowerOfTwo",
+      "filename": "glTF-Sample-Assets/Models/BoxTexturedNonPowerOfTwo/glTF/BoxTexturedNonPowerOfTwo.gltf"
+    },
+    {
+      "name": "BoxVertexColors",
+      "filename": "glTF-Sample-Assets/Models/BoxVertexColors/glTF/BoxVertexColors.gltf"
+    },
+    {
+      "name": "BrainStem",
+      "filename": "glTF-Sample-Assets/Models/BrainStem/glTF/BrainStem.gltf"
     },
     {
       "name": "Cameras",
       "filename": "glTF-Sample-Assets/Models/Cameras/glTF/Cameras.gltf"
     },
     {
-      "name": "ABeautifulGame",
-      "filename": "glTF-Sample-Assets/Models/ABeautifulGame/glTF/ABeautifulGame.gltf"
+      "name": "CarbonFibre",
+      "filename": "glTF-Sample-Assets/Models/CarbonFibre/glTF/CarbonFibre.gltf"
+    },
+    {
+      "name": "CarConcept",
+      "filename": "glTF-Sample-Assets/Models/CarConcept/glTF/CarConcept.gltf"
+    },
+    {
+      "name": "CesiumMan",
+      "filename": "glTF-Sample-Assets/Models/CesiumMan/glTF/CesiumMan.gltf"
+    },
+    {
+      "name": "CesiumMilkTruck",
+      "filename": "glTF-Sample-Assets/Models/CesiumMilkTruck/glTF/CesiumMilkTruck.gltf"
+    },
+    {
+      "name": "ChairDamaskPurplegold",
+      "filename": "glTF-Sample-Assets/Models/ChairDamaskPurplegold/glTF/ChairDamaskPurplegold.gltf"
+    },
+    {
+      "name": "ChronographWatch",
+      "filename": "glTF-Sample-Assets/Models/ChronographWatch/glTF/ChronographWatch.gltf"
+    },
+    {
+      "name": "ClearCoatCarPaint",
+      "filename": "glTF-Sample-Assets/Models/ClearCoatCarPaint/glTF/ClearCoatCarPaint.gltf"
+    },
+    {
+      "name": "ClearCoatTest",
+      "filename": "glTF-Sample-Assets/Models/ClearCoatTest/glTF/ClearCoatTest.gltf"
+    },
+    {
+      "name": "ClearcoatWicker",
+      "filename": "glTF-Sample-Assets/Models/ClearcoatWicker/glTF/ClearcoatWicker.gltf"
+    },
+    {
+      "name": "CommercialRefrigerator",
+      "filename": "glTF-Sample-Assets/Models/CommercialRefrigerator/glTF/CommercialRefrigerator.gltf"
+    },
+    {
+      "name": "CompareAlphaCoverage",
+      "filename": "glTF-Sample-Assets/Models/CompareAlphaCoverage/glTF/CompareAlphaCoverage.gltf"
+    },
+    {
+      "name": "CompareAmbientOcclusion",
+      "filename": "glTF-Sample-Assets/Models/CompareAmbientOcclusion/glTF/CompareAmbientOcclusion.gltf"
+    },
+    {
+      "name": "CompareAnisotropy",
+      "filename": "glTF-Sample-Assets/Models/CompareAnisotropy/glTF/CompareAnisotropy.gltf"
+    },
+    {
+      "name": "CompareBaseColor",
+      "filename": "glTF-Sample-Assets/Models/CompareBaseColor/glTF/CompareBaseColor.gltf"
+    },
+    {
+      "name": "CompareClearcoat",
+      "filename": "glTF-Sample-Assets/Models/CompareClearcoat/glTF/CompareClearcoat.gltf"
+    },
+    {
+      "name": "CompareDispersion",
+      "filename": "glTF-Sample-Assets/Models/CompareDispersion/glTF/CompareDispersion.gltf"
+    },
+    {
+      "name": "CompareEmissiveStrength",
+      "filename": "glTF-Sample-Assets/Models/CompareEmissiveStrength/glTF/CompareEmissiveStrength.gltf"
+    },
+    {
+      "name": "CompareIor",
+      "filename": "glTF-Sample-Assets/Models/CompareIor/glTF/CompareIor.gltf"
+    },
+    {
+      "name": "CompareIridescence",
+      "filename": "glTF-Sample-Assets/Models/CompareIridescence/glTF/CompareIridescence.gltf"
+    },
+    {
+      "name": "CompareMetallic",
+      "filename": "glTF-Sample-Assets/Models/CompareMetallic/glTF/CompareMetallic.gltf"
+    },
+    {
+      "name": "CompareNormal",
+      "filename": "glTF-Sample-Assets/Models/CompareNormal/glTF/CompareNormal.gltf"
+    },
+    {
+      "name": "CompareRoughness",
+      "filename": "glTF-Sample-Assets/Models/CompareRoughness/glTF/CompareRoughness.gltf"
+    },
+    {
+      "name": "CompareSheen",
+      "filename": "glTF-Sample-Assets/Models/CompareSheen/glTF/CompareSheen.gltf"
+    },
+    {
+      "name": "CompareSpecular",
+      "filename": "glTF-Sample-Assets/Models/CompareSpecular/glTF/CompareSpecular.gltf"
+    },
+    {
+      "name": "CompareTransmission",
+      "filename": "glTF-Sample-Assets/Models/CompareTransmission/glTF/CompareTransmission.gltf"
+    },
+    {
+      "name": "CompareVolume",
+      "filename": "glTF-Sample-Assets/Models/CompareVolume/glTF/CompareVolume.gltf"
+    },
+    {
+      "name": "Corset",
+      "filename": "glTF-Sample-Assets/Models/Corset/glTF/Corset.gltf"
+    },
+    {
+      "name": "Cube",
+      "filename": "glTF-Sample-Assets/Models/Cube/glTF/Cube.gltf"
+    },
+    {
+      "name": "CubeVisibility",
+      "filename": "glTF-Sample-Assets/Models/CubeVisibility/glTF/CubeVisibility.gltf"
+    },
+    {
+      "name": "DamagedHelmet",
+      "filename": "glTF-Sample-Assets/Models/DamagedHelmet/glTF/DamagedHelmet.gltf"
+    },
+    {
+      "name": "DamagedHelmetScene",
+      "filename": "glTF-Sample-Assets/Models/DamagedHelmet/glTF-Scene/DamagedHelmetScene.gltf"
+    },
+    {
+      "name": "DiffuseTransmissionPlant",
+      "filename": "glTF-Sample-Assets/Models/DiffuseTransmissionPlant/glTF/DiffuseTransmissionPlant.gltf"
+    },
+    {
+      "name": "DiffuseTransmissionTeacup",
+      "filename": "glTF-Sample-Assets/Models/DiffuseTransmissionTeacup/glTF/DiffuseTransmissionTeacup.gltf"
+    },
+    {
+      "name": "DiffuseTransmissionTest",
+      "filename": "glTF-Sample-Assets/Models/DiffuseTransmissionTest/glTF/DiffuseTransmissionTest.gltf"
+    },
+    {
+      "name": "DirectionalLight",
+      "filename": "glTF-Sample-Assets/Models/DirectionalLight/glTF/DirectionalLight.gltf"
+    },
+    {
+      "name": "DispersionTest",
+      "filename": "glTF-Sample-Assets/Models/DispersionTest/glTF/DispersionTest.gltf"
+    },
+    {
+      "name": "DragonAttenuation",
+      "filename": "glTF-Sample-Assets/Models/DragonAttenuation/glTF/DragonAttenuation.gltf"
+    },
+    {
+      "name": "DragonDispersion",
+      "filename": "glTF-Sample-Assets/Models/DragonDispersion/glTF/DragonDispersion.gltf"
+    },
+    {
+      "name": "Duck",
+      "filename": "glTF-Sample-Assets/Models/Duck/glTF/Duck.gltf"
+    },
+    {
+      "name": "EmissiveStrengthTest",
+      "filename": "glTF-Sample-Assets/Models/EmissiveStrengthTest/glTF/EmissiveStrengthTest.gltf"
+    },
+    {
+      "name": "EnvironmentTest",
+      "filename": "glTF-Sample-Assets/Models/EnvironmentTest/glTF/EnvironmentTest.gltf"
+    },
+    {
+      "name": "FlightHelmet",
+      "filename": "glTF-Sample-Assets/Models/FlightHelmet/glTF/FlightHelmet.gltf"
+    },
+    {
+      "name": "Fox",
+      "filename": "glTF-Sample-Assets/Models/Fox/glTF/Fox.gltf"
+    },
+    {
+      "name": "GlamVelvetSofa",
+      "filename": "glTF-Sample-Assets/Models/GlamVelvetSofa/glTF/GlamVelvetSofa.gltf"
+    },
+    {
+      "name": "GlassBrokenWindow",
+      "filename": "glTF-Sample-Assets/Models/GlassBrokenWindow/glTF/GlassBrokenWindow.gltf"
+    },
+    {
+      "name": "GlassHurricaneCandleHolder",
+      "filename": "glTF-Sample-Assets/Models/GlassHurricaneCandleHolder/glTF/GlassHurricaneCandleHolder.gltf"
+    },
+    {
+      "name": "GlassVaseFlowers",
+      "filename": "glTF-Sample-Assets/Models/GlassVaseFlowers/glTF/GlassVaseFlowers.gltf"
+    },
+    {
+      "name": "InterpolationTest",
+      "filename": "glTF-Sample-Assets/Models/InterpolationTest/glTF/InterpolationTest.gltf"
+    },
+    {
+      "name": "IORTestGrid",
+      "filename": "glTF-Sample-Assets/Models/IORTestGrid/glTF/IORTestGrid.gltf"
+    },
+    {
+      "name": "IridescenceAbalone",
+      "filename": "glTF-Sample-Assets/Models/IridescenceAbalone/glTF/IridescenceAbalone.gltf"
+    },
+    {
+      "name": "IridescenceDielectricSpheres",
+      "filename": "glTF-Sample-Assets/Models/IridescenceDielectricSpheres/glTF/IridescenceDielectricSpheres.gltf"
+    },
+    {
+      "name": "IridescenceLamp",
+      "filename": "glTF-Sample-Assets/Models/IridescenceLamp/glTF/IridescenceLamp.gltf"
+    },
+    {
+      "name": "IridescenceMetallicSpheres",
+      "filename": "glTF-Sample-Assets/Models/IridescenceMetallicSpheres/glTF/IridescenceMetallicSpheres.gltf"
+    },
+    {
+      "name": "IridescenceSuzanne",
+      "filename": "glTF-Sample-Assets/Models/IridescenceSuzanne/glTF/IridescenceSuzanne.gltf"
+    },
+    {
+      "name": "IridescentDishWithOlives",
+      "filename": "glTF-Sample-Assets/Models/IridescentDishWithOlives/glTF/IridescentDishWithOlives.gltf"
+    },
+    {
+      "name": "Lantern",
+      "filename": "glTF-Sample-Assets/Models/Lantern/glTF/Lantern.gltf"
+    },
+    {
+      "name": "LightsPunctualLamp",
+      "filename": "glTF-Sample-Assets/Models/LightsPunctualLamp/glTF/LightsPunctualLamp.gltf"
+    },
+    {
+      "name": "LightVisibility",
+      "filename": "glTF-Sample-Assets/Models/LightVisibility/glTF/LightVisibility.gltf"
+    },
+    {
+      "name": "MandarinOrange",
+      "filename": "glTF-Sample-Assets/Models/MandarinOrange/glTF/MandarinOrange.gltf"
+    },
+    {
+      "name": "MaterialsVariantsShoe",
+      "filename": "glTF-Sample-Assets/Models/MaterialsVariantsShoe/glTF/MaterialsVariantsShoe.gltf"
+    },
+    {
+      "name": "MeshoptCubeTest",
+      "filename": "glTF-Sample-Assets/Models/MeshoptCubeTest/glTF/MeshoptCubeTest.gltf"
+    },
+    {
+      "name": "MeshPrimitiveModes",
+      "filename": "glTF-Sample-Assets/Models/MeshPrimitiveModes/glTF/MeshPrimitiveModes.gltf"
+    },
+    {
+      "name": "MetalRoughSpheres",
+      "filename": "glTF-Sample-Assets/Models/MetalRoughSpheres/glTF/MetalRoughSpheres.gltf"
+    },
+    {
+      "name": "MetalRoughSpheresNoTextures",
+      "filename": "glTF-Sample-Assets/Models/MetalRoughSpheresNoTextures/glTF/MetalRoughSpheresNoTextures.gltf"
+    },
+    {
+      "name": "MorphPrimitivesTest",
+      "filename": "glTF-Sample-Assets/Models/MorphPrimitivesTest/glTF/MorphPrimitivesTest.gltf"
+    },
+    {
+      "name": "MorphStressTest",
+      "filename": "glTF-Sample-Assets/Models/MorphStressTest/glTF/MorphStressTest.gltf"
+    },
+    {
+      "name": "MosquitoInAmber",
+      "filename": "glTF-Sample-Assets/Models/MosquitoInAmber/glTF/MosquitoInAmber.gltf"
+    },
+    {
+      "name": "MultipleScenes",
+      "filename": "glTF-Sample-Assets/Models/MultipleScenes/glTF/MultipleScenes.gltf"
+    },
+    {
+      "name": "MultiUVTest",
+      "filename": "glTF-Sample-Assets/Models/MultiUVTest/glTF/MultiUVTest.gltf"
+    },
+    {
+      "name": "NegativeScaleTest",
+      "filename": "glTF-Sample-Assets/Models/NegativeScaleTest/glTF/NegativeScaleTest.gltf"
+    },
+    {
+      "name": "NodePerformanceTest",
+      "filename": "glTF-Sample-Assets/Models/NodePerformanceTest/glTF/NodePerformanceTest.gltf"
+    },
+    {
+      "name": "NormalTangentMirrorTest",
+      "filename": "glTF-Sample-Assets/Models/NormalTangentMirrorTest/glTF/NormalTangentMirrorTest.gltf"
+    },
+    {
+      "name": "NormalTangentTest",
+      "filename": "glTF-Sample-Assets/Models/NormalTangentTest/glTF/NormalTangentTest.gltf"
+    },
+    {
+      "name": "OrientationTest",
+      "filename": "glTF-Sample-Assets/Models/OrientationTest/glTF/OrientationTest.gltf"
+    },
+    {
+      "name": "PlaysetLightTest",
+      "filename": "glTF-Sample-Assets/Models/PlaysetLightTest/glTF/PlaysetLightTest.gltf"
+    },
+    {
+      "name": "PointLightIntensityTest",
+      "filename": "glTF-Sample-Assets/Models/PointLightIntensityTest/glTF/PointLightIntensityTest.gltf"
+    },
+    {
+      "name": "PotOfCoals",
+      "filename": "glTF-Sample-Assets/Models/PotOfCoals/glTF/PotOfCoals.gltf"
+    },
+    {
+      "name": "PotOfCoalsAnimationPointer",
+      "filename": "glTF-Sample-Assets/Models/PotOfCoalsAnimationPointer/glTF/PotOfCoalsAnimationPointer.gltf"
+    },
+    {
+      "name": "PrimitiveModeNormalsTest",
+      "filename": "glTF-Sample-Assets/Models/PrimitiveModeNormalsTest/glTF/PrimitiveModeNormalsTest.gltf"
+    },
+    {
+      "name": "RecursiveSkeletons",
+      "filename": "glTF-Sample-Assets/Models/RecursiveSkeletons/glTF/RecursiveSkeletons.gltf"
+    },
+    {
+      "name": "RiggedFigure",
+      "filename": "glTF-Sample-Assets/Models/RiggedFigure/glTF/RiggedFigure.gltf"
+    },
+    {
+      "name": "RiggedSimple",
+      "filename": "glTF-Sample-Assets/Models/RiggedSimple/glTF/RiggedSimple.gltf"
+    },
+    {
+      "name": "ScatteringSkull",
+      "filename": "glTF-Sample-Assets/Models/ScatteringSkull/glTF/ScatteringSkull.gltf"
+    },
+    {
+      "name": "SciFiHelmet",
+      "filename": "glTF-Sample-Assets/Models/SciFiHelmet/glTF/SciFiHelmet.gltf"
+    },
+    {
+      "name": "SheenChair",
+      "filename": "glTF-Sample-Assets/Models/SheenChair/glTF/SheenChair.gltf"
+    },
+    {
+      "name": "SheenCloth",
+      "filename": "glTF-Sample-Assets/Models/SheenCloth/glTF/SheenCloth.gltf"
+    },
+    {
+      "name": "SheenTestGrid",
+      "filename": "glTF-Sample-Assets/Models/SheenTestGrid/glTF/SheenTestGrid.gltf"
+    },
+    {
+      "name": "SheenWoodLeatherSofa",
+      "filename": "glTF-Sample-Assets/Models/SheenWoodLeatherSofa/glTF/SheenWoodLeatherSofa.gltf"
+    },
+    {
+      "name": "SimpleInstancing",
+      "filename": "glTF-Sample-Assets/Models/SimpleInstancing/glTF/SimpleInstancing.gltf"
+    },
+    {
+      "name": "SimpleMaterial",
+      "filename": "glTF-Sample-Assets/Models/SimpleMaterial/glTF/SimpleMaterial.gltf"
+    },
+    {
+      "name": "SimpleMeshes",
+      "filename": "glTF-Sample-Assets/Models/SimpleMeshes/glTF/SimpleMeshes.gltf"
+    },
+    {
+      "name": "SimpleMorph",
+      "filename": "glTF-Sample-Assets/Models/SimpleMorph/glTF/SimpleMorph.gltf"
+    },
+    {
+      "name": "SimpleSkin",
+      "filename": "glTF-Sample-Assets/Models/SimpleSkin/glTF/SimpleSkin.gltf"
+    },
+    {
+      "name": "SimpleSparseAccessor",
+      "filename": "glTF-Sample-Assets/Models/SimpleSparseAccessor/glTF/SimpleSparseAccessor.gltf"
+    },
+    {
+      "name": "SimpleTexture",
+      "filename": "glTF-Sample-Assets/Models/SimpleTexture/glTF/SimpleTexture.gltf"
+    },
+    {
+      "name": "SpecGlossVsMetalRough",
+      "filename": "glTF-Sample-Assets/Models/SpecGlossVsMetalRough/glTF/SpecGlossVsMetalRough.gltf"
+    },
+    {
+      "name": "SpecularSilkPouf",
+      "filename": "glTF-Sample-Assets/Models/SpecularSilkPouf/glTF/SpecularSilkPouf.gltf"
+    },
+    {
+      "name": "SpecularTest",
+      "filename": "glTF-Sample-Assets/Models/SpecularTest/glTF/SpecularTest.gltf"
+    },
+    {
+      "name": "Sponza",
+      "filename": "glTF-Sample-Assets/Models/Sponza/glTF/Sponza.gltf"
+    },
+    {
+      "name": "StainedGlassLamp",
+      "filename": "glTF-Sample-Assets/Models/StainedGlassLamp/glTF/StainedGlassLamp.gltf"
+    },
+    {
+      "name": "SunglassesKhronos",
+      "filename": "glTF-Sample-Assets/Models/SunglassesKhronos/glTF/SunglassesKhronos.gltf"
+    },
+    {
+      "name": "Suzanne",
+      "filename": "glTF-Sample-Assets/Models/Suzanne/glTF/Suzanne.gltf"
+    },
+    {
+      "name": "TextureCoordinateTest",
+      "filename": "glTF-Sample-Assets/Models/TextureCoordinateTest/glTF/TextureCoordinateTest.gltf"
+    },
+    {
+      "name": "TextureEncodingTest",
+      "filename": "glTF-Sample-Assets/Models/TextureEncodingTest/glTF/TextureEncodingTest.gltf"
+    },
+    {
+      "name": "TextureLinearInterpolationTest",
+      "filename": "glTF-Sample-Assets/Models/TextureLinearInterpolationTest/glTF/TextureLinearInterpolationTest.gltf"
+    },
+    {
+      "name": "TextureSettingsTest",
+      "filename": "glTF-Sample-Assets/Models/TextureSettingsTest/glTF/TextureSettingsTest.gltf"
+    },
+    {
+      "name": "TextureTransformMultiTest",
+      "filename": "glTF-Sample-Assets/Models/TextureTransformMultiTest/glTF/TextureTransformMultiTest.gltf"
+    },
+    {
+      "name": "TextureTransformTest",
+      "filename": "glTF-Sample-Assets/Models/TextureTransformTest/glTF/TextureTransformTest.gltf"
+    },
+    {
+      "name": "ToyCar",
+      "filename": "glTF-Sample-Assets/Models/ToyCar/glTF/ToyCar.gltf"
+    },
+    {
+      "name": "TransmissionOrderTest",
+      "filename": "glTF-Sample-Assets/Models/TransmissionOrderTest/glTF/TransmissionOrderTest.gltf"
+    },
+    {
+      "name": "TransmissionRoughnessTest",
+      "filename": "glTF-Sample-Assets/Models/TransmissionRoughnessTest/glTF/TransmissionRoughnessTest.gltf"
+    },
+    {
+      "name": "TransmissionTest",
+      "filename": "glTF-Sample-Assets/Models/TransmissionTest/glTF/TransmissionTest.gltf"
+    },
+    {
+      "name": "TransmissionThinwallTestGrid",
+      "filename": "glTF-Sample-Assets/Models/TransmissionThinwallTestGrid/glTF/TransmissionThinwallTestGrid.gltf"
+    },
+    {
+      "name": "Triangle",
+      "filename": "glTF-Sample-Assets/Models/Triangle/glTF/Triangle.gltf"
+    },
+    {
+      "name": "TriangleWithoutIndices",
+      "filename": "glTF-Sample-Assets/Models/TriangleWithoutIndices/glTF/TriangleWithoutIndices.gltf"
+    },
+    {
+      "name": "TwoSidedPlane",
+      "filename": "glTF-Sample-Assets/Models/TwoSidedPlane/glTF/TwoSidedPlane.gltf"
+    },
+    {
+      "name": "Unicode❤♻Test",
+      "filename": "glTF-Sample-Assets/Models/Unicode❤♻Test/glTF/Unicode❤♻Test.gltf"
+    },
+    {
+      "name": "UnlitTest",
+      "filename": "glTF-Sample-Assets/Models/UnlitTest/glTF/UnlitTest.gltf"
+    },
+    {
+      "name": "USDShaderBallForGltf",
+      "filename": "glTF-Sample-Assets/Models/USDShaderBallForGltf/glTF/USDShaderBallForGltf.gltf"
+    },
+    {
+      "name": "VertexColorTest",
+      "filename": "glTF-Sample-Assets/Models/VertexColorTest/glTF/VertexColorTest.gltf"
+    },
+    {
+      "name": "VirtualCity",
+      "filename": "glTF-Sample-Assets/Models/VirtualCity/glTF/VirtualCity.gltf"
+    },
+    {
+      "name": "WaterBottle",
+      "filename": "glTF-Sample-Assets/Models/WaterBottle/glTF/WaterBottle.gltf"
+    },
+    {
+      "name": "XmpMetadataRoundedCube",
+      "filename": "glTF-Sample-Assets/Models/XmpMetadataRoundedCube/glTF/XmpMetadataRoundedCube.gltf"
     }
   ],
-  "validationFeatures" : [
+  "validationFeatures": [
     {
       "name": "gpuAssistedValidation",
       "enabled": false
     }
   ],
-  "cameraOverride" : [
+  "cameraOverride": [
     {
-      "position": [0.23877, 0.0715668, -0.257649],
-      "forward": [-0.566242, -0.136671, 0.812829],
-      "enabled": true
+      "position": [
+        0.23877,
+        0.0715668,
+        -0.257649
+      ],
+      "forward": [
+        -0.566242,
+        -0.136671,
+        0.812829
+      ],
+      "enabled": false
     }
   ],
   "environmentHdr": ""

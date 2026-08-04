@@ -42,8 +42,8 @@ enum class CameraMode {
  * - Escape: Toggle mouse capture (robust jump prevention is handled by InputManager).
  *
  * Public tunables:
- * - `movement_speed`
- * - `mouse_sensitivity`
+ * - `movement_speed` (WASD / Space / Shift; runtime: **Y** faster, **T** slower)
+ * - `mouse_sensitivity` (mouse look only; not affected by Y/T)
  * - `roll_speed` (Q/E roll rate in degrees per second)
  * - `invert_pitch` (default false = normal behavior)
  * - `fov_degrees`, `near_plane`, `far_plane`

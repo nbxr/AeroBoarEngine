@@ -134,6 +134,11 @@ bool gfx::BufferUtils::update_descriptor(
     if (allocated_buffer.buffer == VK_NULL_HANDLE) {
         return false;
     }
+    // VUID-VkDescriptorBufferInfo-range-00341: range must be > 0 if not WHOLE_SIZE.
+    // Empty meshes (0 indices/verts before load finish) used to pass range=0.
+    if (buffer_size == 0) {
+        buffer_size = VK_WHOLE_SIZE;
+    }
 
     // Update the descriptor set with the current buffer
     VkDescriptorBufferInfo buffer_info = {};

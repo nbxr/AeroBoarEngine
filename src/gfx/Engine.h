@@ -3,6 +3,7 @@
 #include "gfx/AllocatedImage.h"
 #include "gfx/Light.h"
 #include "gfx/Renderer.h"
+#include "physics/PhysicsWorld.h"
 #include "scene/Camera.h"
 #include "core/Log.h"
 #include <glm/glm.hpp>
@@ -15,6 +16,7 @@ class Engine {
   public:
     Renderer renderer{};
     scene::Camera camera{};   // Desktop + future VR camera system
+    physics::PhysicsWorld physics{};
 
 
     bool initialize();
@@ -39,6 +41,17 @@ class Engine {
     // the current frame slot (must run after that frame's fence wait).
     // Returns true if any world matrix changed.
     bool sync_scene_transforms();
+
+    // Advance playing glTF clips → TransformManager locals (call before render).
+    void update_animations(float delta_time);
+
+    // Fixed-step Jolt simulation + write body poses into linked transforms.
+    // Call after animations, before render().
+    void step_physics(float delta_time);
+
+    // Floor + falling unit boxes (procedural mesh). Call after load_scene.
+    // Rebuilds GPU cull batches. Safe to call once per loaded scene.
+    bool spawn_physics_demo();
 
   private:
     // devices
@@ -86,6 +99,9 @@ class Engine {
 
     // Wire prepass depth → HZB copy sets and HZB → cull sets (idle only).
     void wire_hzb_descriptors();
+
+    // Rebuild mesh_draw_infos + GpuCulling after runtime instance changes.
+    bool rebuild_draw_batches();
 
     void destroy_sync_primitives();
     void destroy_descriptor_pool();

@@ -22,8 +22,9 @@ struct GpuCullItem {
     glm::vec4 aabb_min{0.0f};
     glm::vec4 aabb_max{0.0f};
     glm::uvec4 meta{0}; // x=material, y=batch, z=instance_base, w=capacity
+    glm::uvec4 skin{0}; // x=joint_base, y=joint_count (0=rigid), z/w pad
 };
-static_assert(sizeof(GpuCullItem) == 112, "GpuCullItem size");
+static_assert(sizeof(GpuCullItem) == 128, "GpuCullItem size");
 
 struct GpuBatchMeta {
     uint32_t base = 0;

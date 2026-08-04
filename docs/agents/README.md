@@ -13,6 +13,12 @@ These files are intended to be read by any AI coding agent (Grok Build, Continue
 - `current_state.md` — Lightweight view of where the project currently stands (what is done, what is in progress, major gaps).
   - The `scene::Camera` desktop controls are documented in detail in `src/scene/Camera.h`.
 
+Architecture plans live under `docs/architecture/` (not only this folder), including:
+
+- `gltf-extensions.md` — Khronos extension support matrix (e.g. AnimationPointerUVs gaps)
+- `animation-plan.md` / `physics-plan.md` / `vr-chess-physics-plan.md`
+- `pipeline-implementation.md`, `lighting-implementation.md`, `game-object-implementation.md`, `desktop-inputs.md`
+
 ## Usage
 
 Agents should read the relevant files at the start of non-trivial tasks.

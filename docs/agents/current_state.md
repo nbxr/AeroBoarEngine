@@ -4,7 +4,7 @@ Lightweight snapshot of the AeroBoarEngine project status. Intended to be read q
 
 ## Overall Status
 
-Desktop foundation is solid and past “first triangle.” The engine loads glTF scenes (multi-material, hierarchy, punctual lights), uploads bindless resources, and renders with **GPU frustum + Hi-Z cull**, **mesh-grouped instancing**, and **one multi-draw indirect** call path plus procedural IBL. Default scene selection is via `assets/scenes/configuration.json` (often multi-material assets such as ABeautifulGame). OpenXR / Quest / reverse-Z remain roadmap items.
+Desktop foundation is solid and past “first triangle.” The engine loads glTF scenes (multi-material, hierarchy, punctual lights), uploads bindless resources, and renders with **GPU frustum + Hi-Z cull**, **mesh-grouped instancing**, and **one multi-draw indirect** call path plus procedural IBL. **Animation:** node TRS, skinned meshes, CPU morph weights. **Physics:** Jolt foundation (step + box bodies); no KHR physics load yet. Scene list in `configuration.json` includes the full glTF-Sample-Assets set for regression browsing. OpenXR / Quest / reverse-Z remain roadmap items. **Next product arc:** ABeautifulGame physics → VR shrink-to-board — see `docs/architecture/vr-chess-physics-plan.md`.
 
 ## Major Completed Areas
 
@@ -16,11 +16,12 @@ Desktop foundation is solid and past “first triangle.” The engine loads glTF
 - Complete bindless GPU upload path at load time (all data visible in shaders)
 - Render loop: acquire → frustum cull → depth prepass → HZB build → occlusion cull → shade → present
 - Basic PBR forward shader (`pbr.vert` / `pbr.frag`) that samples:
-  - Albedo (baseColor)
+  - Albedo (baseColor) including **alpha** (`baseColorFactor * texture`)
   - Normal map
   - Metallic + Roughness (from metalRoughness texture or factors)
   - Emissive
   - Ambient Occlusion (separate texture)
+  - **glTF alphaMode MVP:** OPAQUE / MASK (discard + cutoff) / BLEND (pipeline `SRC_ALPHA` blend); depth prepass skips BLEND and tests MASK. Double-sided via cull-none. **Not yet:** transparent sort, dual opaque/blend pipelines, per-material depth-write off
 - Proper vertex attribute input (`gfx::Vertex`, pipeline vertex state, `pbr.vert`) — legacy SSBO vertex pulling is no longer the active path
 - Materials SSBO correctly declared as a **single buffer + runtime array** in `pbr.frag` (not a descriptor array); `gfx::Material` is `alignas(16)` / 80-byte stride to match std430
 - Scene model: `GameObject` / `RenderMesh` / `TransformManager` (local + parent + dirty-flag `propagate`)
@@ -35,6 +36,7 @@ Desktop foundation is solid and past “first triangle.” The engine loads glTF
   - Q / E: Roll the camera counterclockwise / clockwise around its forward axis.
   - R: Frame the view on the currently loaded scene (AABB-based).
   - Escape: Toggle mouse capture (robust jump prevention handled by InputManager).
+  - **Y** / **T**: increase / decrease `movement_speed` (keyboard fly only; not mouse sensitivity).
   - Public tunables: `movement_speed`, `mouse_sensitivity`, `roll_speed` (Q/E roll), `invert_pitch`, `fov_degrees`, `near_plane`, `far_plane`.
   - Note: The implementation contains personal sign adjustments chosen for comfortable desktop model inspection. The documented public behavior above is the intended interface.
 - `core::InputManager` (desktop GLFW input layer):
@@ -48,12 +50,16 @@ Desktop foundation is solid and past “first triangle.” The engine loads glTF
 
 ## Current Focus Areas
 
-- Dirty-flag transform `propagate()` landed (runtime ready for anim writes)
+**Session snapshot (2026-08-03):** Desktop rendering + animation stack is in good shape for core samples. Next major track is **physics on ABeautifulGame** then **VR chess / scale-down** (plan stored). Advanced glTF material/animation-pointer samples remain incomplete by design.
+
+- Dirty-flag transform `propagate()` landed
 - Lighting polish landed: spot packing, dynamic light API, optional HDR equirect IBL
-- **Next implement:** glTF **node TRS animation** (Phase 1) — see `docs/architecture/animation-plan.md`
-- **Future tooling:** migrate shader compile from `glslc` → **glslang** when cross-platform (Quest/Android) work starts — see `tech_context.md`
-- **Same-frame occlusion (landed on desktop):** depth prepass → Hi-Z → shade at current pose; hysteresis removed. Quest still needs multiview/per-eye + reverse-Z HZB — see `tech_context.md` § Occlusion / Hi-Z architecture
-- **Physics (roadmap):** Jolt runtime + **glTF Khronos physics extensions** for model physics properties (`KHR_physics_rigid_bodies`, `KHR_implicit_shapes`) — see `tech_context.md` § Physics assets
+- **glTF animation Phase 1–3 landed:** node TRS + skins + **morph targets** (`MorphSystem`, path `weights`, CPU blend). Multi-clip exclusive play (**N** cycles). Y/T movement speed. Alpha OPAQUE/MASK/BLEND MVP. See `animation-plan.md`.
+- **Same-frame occlusion (desktop):** depth prepass → Hi-Z → shade; hysteresis removed. Prepass FS does MASK discard / skips BLEND depth.
+- **Physics foundation (landed):** Jolt v5.3.0; `PhysicsWorld`; step + transform sync; optional box demo (`physicsDemo`). See `physics-plan.md`.
+- **Extension matrix:** `docs/architecture/gltf-extensions.md` — what we do / don’t support
+- **VR chess plan:** `docs/architecture/vr-chess-physics-plan.md`
+- **Future tooling:** `glslc` → **glslang** when Quest/Android work starts
 
 ## Known Gaps / Not Yet Implemented
 
@@ -84,10 +90,11 @@ Desktop foundation is solid and past “first triangle.” The engine loads glTF
   - Main-pass MSAA depth resolve may still exist but is **not** the HZB source
 - **Depth model:** standard Z today (0=near, 1=far, `LESS`). **Planned:** reverse-Z with VR/multiview depth work (`GREATER`/`GREATER_OR_EQUAL`, clear 0, max-depth Hi-Z) — official roadmap item in `tech_context.md`
 - No OpenXR / VR input layer (desktop GLFW only)
-- **Scene model (hierarchy + dirty propagate)**: `GameObject` + `RenderMesh` + `TransformManager` with local matrices, parent links, **dirty flags**, and selective `propagate()`. Load builds hierarchy then `mark_all_dirty` + `propagate`. Runtime: `set_local_matrix` / `set_parent` mark dirty; each frame `Engine::sync_scene_transforms()` (after fence wait) propagates, refreshes instances/lights, and updates per-frame GPU cull models. Legacy `SceneInstance` dual-written.
-- **glTF animation (not loaded yet):** tinygltf may parse `animations`/`skins`, but the engine never reads them. No clip store, no sampling, no durable `gltf_node → transform` after load, no JOINTS/WEIGHTS fill, no skinning in VS. **Plan:** Phase 1 node TRS → Phase 2 skinned → morph later — full breakdown in `docs/architecture/animation-plan.md`.
-- **No physics yet** (runtime or asset). **Planned:** Jolt for simulation; physics properties on models via **Khronos glTF extensions** (`KHR_physics_rigid_bodies`, `KHR_implicit_shapes` and related as ratified) loaded through the glTF pipeline — see `docs/agents/tech_context.md` § Physics assets and `docs/project-plan.md`.
-- No audio, or higher-level input abstraction beyond the desktop layer (desktop input is complete via `core::InputManager`)
+- **Scene model (hierarchy + dirty propagate)**: `GameObject` + `RenderMesh` + `TransformManager` with local matrices, parent links, **dirty flags**, and selective `propagate()`. Runtime: `Engine::sync_scene_transforms()` after fence wait. Legacy `SceneInstance` dual-written.
+- **glTF animation Phase 1–3 (TRS / skin / morph) yes.** **Not yet:** `KHR_animation_pointer`, `KHR_texture_transform`, advanced material extensions — **AnimationPointerUVs** will not render correctly; see `docs/architecture/gltf-extensions.md`.
+- **Physics runtime foundation yes; asset pipeline no.** Jolt + boxes + transform links. **Missing:** KHR physics load, non-box shapes, raycast/impulse API, character controller, ABeautifulGame auto-bodies — `physics-plan.md` + `vr-chess-physics-plan.md`.
+- Alpha: MVP only (no transparent sort / dual queues).
+- No audio beyond desktop `InputManager` completeness
 
 ## Next Immediate Priorities
 
@@ -107,12 +114,20 @@ Desktop foundation is solid and past “first triangle.” The engine loads glTF
 - [done] Dirty-flag propagate + per-frame `sync_scene_transforms` (FIF-safe GPU cull model update)
 - [done] Occlusion culling / Hi-Z: same-frame depth prepass → pyramid → cull (hysteresis removed)
 - [done] Single multi-draw indirect: `build_indirect` writes `firstInstance = batch.base`; `pbr.vert` uses `gl_InstanceIndex` only (includes base on Vulkan); one `vkCmdDrawIndexedIndirect` for all batches
-- **Next immediate:** glTF **node TRS animation (Phase 1)** — persist node→transform, load clips, sample LINEAR/STEP, player tick → `set_local_matrix` → existing sync. See `docs/architecture/animation-plan.md`. Test with AnimatedCube (or similar).
-- **After Phase 1:** skinned meshes (JOINTS/WEIGHTS, IBM, joint palette, skin in shade + depth prepass) — animation-plan Phase 2
-- **Roadmap (VR / Quest depth + occlusion):** reverse-Z + multiview stereo with per-eye/multiview HZB — see `tech_context.md` § Occlusion / Hi-Z architecture and § Depth buffer model
-- **Roadmap (physics):** Jolt integration + load physics from glTF Khronos extensions (`KHR_physics_rigid_bodies`, `KHR_implicit_shapes`) — see `tech_context.md` § Physics assets
-- Future tooling: glslang shader toolchain when cross-platform (Quest/Android) work starts — keep `glslc` until then (see `tech_context.md`)
-- [done] Desktop input layer: `core::InputManager` (callback-driven deltas + EWMA + acceleration + capture state) + full decoupling from `scene::Camera` (see `docs/architecture/desktop-inputs.md` and the implementation plan). Pitch sign convention restored to original comfortable default.
+- [done] glTF node TRS animation Phase 1 (`AnimationSystem`, TRS locals, auto-play)
+- [done] Skinned animation Phase 2 (`SkinSystem`, JOINTS/WEIGHTS, palette, VS skin)
+- [done] Morph targets Phase 3 CPU (`MorphSystem`, AnimatedMorphCube)
+- [done] Physics foundation (Jolt `PhysicsWorld`, step/sync, floor+box demo)
+- [done] Richer skinned demos (CesiumMan, Fox multi-clip, mesh-relative skin, non-indexed meshes)
+- [done] Alpha mode MVP (OPAQUE / MASK / BLEND) + double-sided cull-none
+- [done] Full sample-assets list in `configuration.json` for manual regression
+- [done] Docs: extension matrix, VR chess plan, session progress
+- **Next immediate:** **ABeautifulGame auto-box physics + desktop knock-over** (`vr-chess-physics-plan.md` Phase A) → KHR physics → player scale → OpenXR
+- **Roadmap (extensions):** `KHR_texture_transform` + `KHR_animation_pointer` (AnimationPointerUVs); advanced materials — `gltf-extensions.md`
+- **Roadmap (VR / Quest):** reverse-Z + multiview + per-eye HZB; OpenXR input; VR chess demo
+- **Roadmap (physics):** shapes API + KHR load + character controller — `physics-plan.md`
+- Future tooling: glslang when Quest/Android — keep `glslc` until then
+- [done] Desktop input layer: `core::InputManager` + `scene::Camera` decoupling; **Y/T** keyboard move speed
 - glTF loader robustness: `extract_mesh_data` now accepts primitives that provide only POSITION (common in minimal test assets). Missing NORMAL defaults to (0,0,1); missing TEXCOORD_0 defaults to (0,0). This allows the Cameras.gltf pure-camera test scene (and similar) to load and render its proxy geometry. Also injects a default white material when the glTF contains no materials array (primitives may still reference default material via -1).
 - Node transform extraction (`extract_node_transform`): now correctly defaults absent translation (0,0,0), rotation (identity quat), and scale (1,1,1) per glTF spec. Previous `value_or_ident` always supplied 1.0 which placed nodes incorrectly for assets like Cameras.gltf that omit TRS keys on some nodes (e.g. camera nodes with only translation, mesh nodes with only rotation). The helper was removed as dead after the fix. Quat component order also corrected for glTF [x,y,z,w] layout.
 

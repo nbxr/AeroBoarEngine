@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstring>
 #include <glm/glm.hpp>
 #include "core/Handle.h"
 
@@ -13,7 +14,18 @@ namespace gfx {
 struct alignas(16) Material {
     static constexpr uint32_t NO_TEXTURE = UINT32_MAX;
 
-    // Base color (albedo)
+    // flags bitfield (must match shaders/pbr.frag)
+    static constexpr uint32_t kFlagHasAlbedoTex   = 1u << 0;
+    static constexpr uint32_t kFlagHasNormalMap   = 1u << 1;
+    static constexpr uint32_t kFlagHasOrmTex      = 1u << 2;
+    static constexpr uint32_t kFlagHasEmissiveTex = 1u << 3;
+    static constexpr uint32_t kFlagIsEmissive     = 1u << 4;
+    static constexpr uint32_t kFlagAlphaBlend     = 1u << 5; // glTF alphaMode = BLEND
+    static constexpr uint32_t kFlagNormalFlipY    = 1u << 6;
+    static constexpr uint32_t kFlagAlphaMask      = 1u << 7; // glTF alphaMode = MASK
+    static constexpr uint32_t kFlagDoubleSided    = 1u << 8;
+
+    // Base color (albedo) — rgb * texture, a = opacity (glTF baseColorFactor/texture)
     glm::vec4 albedo;
 
     // PBR parameters
@@ -33,18 +45,19 @@ struct alignas(16) Material {
     // Sampler indices (if needed for non-bindless approach)
     uint32_t sampler_index {NO_TEXTURE}; // Index into bindless sampler array
 
-    // Flags/variant bits for uber-shader branching
-    // Bit 0: HasAlbedoTexture
-    // Bit 1: HasNormalMap
-    // Bit 2: HasORMTexture
-    // Bit 3: HasEmissiveTexture
-    // Bit 4: IsEmissive
-    // Bit 5: Transparent
-    // Bit 6: NormalMapFlipY (invert green channel - useful for some authored normal maps)
-    uint32_t flags; // Material flags for shader branching
+    uint32_t flags = 0;
 
-    // Explicit pad to end of logical fields (offset 60..75); trailing alignas pad → 80.
-    uint32_t padding[4];
+    // padding[0] = floatBitsToUint(alphaCutoff) for MASK (default 0.5). [1..3] reserved.
+    uint32_t padding[4]{};
+
+    void set_alpha_cutoff(float cutoff) {
+        std::memcpy(&padding[0], &cutoff, sizeof(float));
+    }
+    [[nodiscard]] float alpha_cutoff() const {
+        float c = 0.5f;
+        std::memcpy(&c, &padding[0], sizeof(float));
+        return c;
+    }
 };
 
 // Must match shaders/pbr.frag Material + std430 array stride (base align 16 → 80).

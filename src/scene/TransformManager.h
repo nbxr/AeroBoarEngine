@@ -2,16 +2,24 @@
 
 #include <cstdint>
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <vector>
 
 namespace scene {
 
+// Local TRS (glTF-style). Local matrix = T * R * S.
+struct LocalTrs {
+    glm::vec3 translation{0.0f};
+    glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f}; // w, x, y, z
+    glm::vec3 scale{1.0f};
+};
+
 // Dense transform storage with hierarchy + dirty-flag propagate.
-// - local_matrices_: node-local TRS (as a matrix from glTF extract / animation)
+// - local TRS + local_matrices_ (kept in sync for animation component updates)
 // - parents_ / children_: hierarchy links
 // - world_matrices_: composed world = parent_world * local (via propagate())
 //
-// Call set_local_matrix / set_parent to mutate; call propagate() (or
+// Call set_local_* / set_parent to mutate; call propagate() (or
 // propagate_if_dirty()) before reading worlds for cull / draw / lights.
 class TransformManager {
   public:
@@ -23,7 +31,18 @@ class TransformManager {
     // Free a slot for reuse (does not compact the dense array). Detaches children.
     void free(uint32_t index);
 
-    // Marks the node dirty (and cascade-marks children during propagate).
+    // Full local TRS (preferred for glTF load + animation).
+    void set_local_trs(uint32_t index, const LocalTrs& trs);
+    void set_local_trs(uint32_t index, const glm::vec3& t, const glm::quat& r,
+                       const glm::vec3& s);
+    [[nodiscard]] const LocalTrs& get_local_trs(uint32_t index) const;
+
+    // Partial TRS updates (rebuild local matrix from stored components).
+    void set_local_translation(uint32_t index, const glm::vec3& t);
+    void set_local_rotation(uint32_t index, const glm::quat& r);
+    void set_local_scale(uint32_t index, const glm::vec3& s);
+
+    // Marks the node dirty. Also best-effort decomposes into TRS for later anim.
     void set_local_matrix(uint32_t index, const glm::mat4& local);
     [[nodiscard]] const glm::mat4& get_local_matrix(uint32_t index) const;
 
@@ -71,7 +90,10 @@ class TransformManager {
     void detach_from_parent(uint32_t index);
     void mark_dirty(uint32_t index);
     void propagate_recursive(uint32_t index);
+    void rebuild_local_matrix(uint32_t index);
+    static glm::mat4 compose_trs(const LocalTrs& trs);
 
+    std::vector<LocalTrs> local_trs_{};
     std::vector<glm::mat4> local_matrices_{};
     std::vector<glm::mat4> world_matrices_{};
     std::vector<uint32_t> parents_{}; // kInvalid = root

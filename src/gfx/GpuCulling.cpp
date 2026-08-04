@@ -2,6 +2,7 @@
 #include "gfx/BufferUtils.h"
 #include "gfx/ShaderLoader.h"
 #include "scene/SceneManager.h"
+#include "core/AABB.h"
 #include "core/Frustum.h"
 #include "core/Log.h"
 
@@ -237,9 +238,26 @@ bool GpuCulling::build_scene(VkDevice device, VmaAllocator allocator,
             const auto& rm = scene.get_render_mesh(rm_id);
             GpuCullItem item{};
             item.model = scene.transforms().get_world_matrix(rm.transform_index);
-            item.aabb_min = glm::vec4(rm.local_aabb.min, 0.0f);
-            item.aabb_max = glm::vec4(rm.local_aabb.max, 0.0f);
+            // Skinned meshes: inflate local AABB for cull (bind-pose + motion).
+            core::AABB aabb = rm.local_aabb;
+            if (rm.skin_index != ~0u && aabb.is_valid()) {
+                const glm::vec3 c = aabb.center();
+                const glm::vec3 e = aabb.extents() * 0.5f * 2.5f; // generous pad
+                aabb.min = c - e;
+                aabb.max = c + e;
+            }
+            item.aabb_min = glm::vec4(aabb.min, 0.0f);
+            item.aabb_max = glm::vec4(aabb.max, 0.0f);
             item.meta = glm::uvec4(rm.material_index, b, running_base, cap);
+            uint32_t joint_base = 0;
+            uint32_t joint_count = 0;
+            if (rm.skin_index != ~0u &&
+                rm.skin_index < scene.skins().skin_count()) {
+                const auto& sk = scene.skins().skin(rm.skin_index);
+                joint_base = sk.palette_offset;
+                joint_count = static_cast<uint32_t>(sk.joint_transform_indices.size());
+            }
+            item.skin = glm::uvec4(joint_base, joint_count, 0u, 0u);
             cpu_items_.push_back(item);
             item_transform_indices_.push_back(rm.transform_index);
         }

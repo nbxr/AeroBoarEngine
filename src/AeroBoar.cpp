@@ -80,6 +80,20 @@ int AeroBoar::fly() {
         return -1;
     }
 
+    // Physics foundation demo: static floor + falling unit cubes (Jolt).
+    // Can be disabled via configuration.json: "physicsDemo": false
+    {
+        bool enable_demo = true;
+        const nlohmann::json& root = core::Configuration::get_root();
+        if (root.contains("physicsDemo") && root["physicsDemo"].is_boolean())
+            enable_demo = root["physicsDemo"].get<bool>();
+        if (enable_demo) {
+            if (!engine.spawn_physics_demo()) {
+                LOG_ERROR("[Physics] spawn_physics_demo failed (continuing without demo)");
+            }
+        }
+    }
+
     // Optional config override for startup camera (Hi-Z / cull debug).
     // Schema:
     //   "cameraOverride": { "enabled": true, "position": [x,y,z], "forward": [x,y,z] }
@@ -171,6 +185,15 @@ int AeroBoar::fly() {
 
         engine.camera.update(delta_time, input);
 
+        // glTF node animations → dirty locals; sync_scene_transforms in render()
+        // after the frame fence applies worlds + GPU cull models.
+        engine.update_animations(delta_time);
+
+        // Jolt fixed-step + write linked body poses into TransformManager.
+        // Runs after animation so physics wins on dual-owned nodes (demo bodies
+        // are not animated).
+        engine.step_physics(delta_time);
+
         // If the device was lost (DEVICE_LOST from acquire/submit/present/wait),
         // stop the render loop instead of spinning at full speed and flooding
         // the validation log with millions of repeated errors.
@@ -225,6 +248,43 @@ int AeroBoar::fly() {
                      << ")");
         }
         p_was_pressed = p_pressed;
+
+        // N: cycle exclusive glTF animation clip (Fox Walk/Run/Survey, etc.).
+        static bool n_was_pressed = false;
+        bool n_pressed = input.is_key_down(GLFW_KEY_N);
+        if (n_pressed && !n_was_pressed) {
+            auto& anims = engine.renderer.scene_manager.animations();
+            if (anims.clip_count() > 0) {
+                const uint32_t idx = anims.cycle_next_clip(true);
+                if (idx != ~0u) {
+                    LOG_INFO("[Anim] Active clip [" << idx << "] '"
+                             << anims.clip(idx).name << "'");
+                }
+            }
+        }
+        n_was_pressed = n_pressed;
+
+        // Y / T: keyboard move speed (WASD / Space / Shift only — not mouse look).
+        // Multiplicative steps so fine control near slow speeds and big jumps when fast.
+        static bool y_was_pressed = false;
+        static bool t_was_pressed = false;
+        const bool y_pressed = input.is_key_down(GLFW_KEY_Y);
+        const bool t_pressed = input.is_key_down(GLFW_KEY_T);
+        constexpr float kSpeedMin = 0.01f;
+        constexpr float kSpeedMax = 200.0f;
+        constexpr float kSpeedStep = 1.25f; // +25% / -20% per press
+        if (y_pressed && !y_was_pressed) {
+            engine.camera.movement_speed = std::min(
+                kSpeedMax, engine.camera.movement_speed * kSpeedStep);
+            LOG_INFO("[Camera] movement_speed=" << engine.camera.movement_speed);
+        }
+        if (t_pressed && !t_was_pressed) {
+            engine.camera.movement_speed = std::max(
+                kSpeedMin, engine.camera.movement_speed / kSpeedStep);
+            LOG_INFO("[Camera] movement_speed=" << engine.camera.movement_speed);
+        }
+        y_was_pressed = y_pressed;
+        t_was_pressed = t_pressed;
 
         engine.render();
     }

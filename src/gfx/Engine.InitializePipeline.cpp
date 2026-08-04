@@ -80,12 +80,9 @@ bool gfx::Engine::init_graphics_pipeline() {
     VkPipelineShaderStageCreateInfo shader_stages[] = {vertex_stage_info,
                                                        fragment_stage_info};
 
-    // Vertex input state — proper attributes (replaces legacy SSBO vertex pulling)
-    // Matches gfx::Vertex exactly (stride 56):
-    //   loc 0: position (offset 0)
-    //   loc 1: normal   (offset 12)
-    //   loc 2: tangent  (offset 24)
-    //   loc 3: UV0 bits (offset 40, first 4 bytes of the packed uv[8] field)
+    // Vertex input — gfx::Vertex stride 56:
+    //   loc 0: position | 1: normal | 2: tangent | 3: UV0 packed
+    //   loc 4: joints (u8x4) | 5: weights (unorm8x4)
     static const VkVertexInputBindingDescription binding_desc = {
         .binding = 0,
         .stride = 56,
@@ -93,17 +90,19 @@ bool gfx::Engine::init_graphics_pipeline() {
     };
 
     static const VkVertexInputAttributeDescription attr_descs[] = {
-        { .location = 0, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 0  },  // position
-        { .location = 1, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 12 },  // normal
-        { .location = 2, .binding = 0, .format = VK_FORMAT_R32G32B32A32_SFLOAT, .offset = 24 }, // tangent
-        { .location = 3, .binding = 0, .format = VK_FORMAT_R32G32_SFLOAT, .offset = 40 }   // UV0 (packed bits)
+        { .location = 0, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 0  },
+        { .location = 1, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 12 },
+        { .location = 2, .binding = 0, .format = VK_FORMAT_R32G32B32A32_SFLOAT, .offset = 24 },
+        { .location = 3, .binding = 0, .format = VK_FORMAT_R32G32_SFLOAT, .offset = 40 },
+        { .location = 4, .binding = 0, .format = VK_FORMAT_R8G8B8A8_UINT, .offset = 52 },
+        { .location = 5, .binding = 0, .format = VK_FORMAT_R8G8B8A8_UNORM, .offset = 48 },
     };
 
     VkPipelineVertexInputStateCreateInfo vertex_input_info = {};
     vertex_input_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     vertex_input_info.vertexBindingDescriptionCount = 1;
     vertex_input_info.pVertexBindingDescriptions = &binding_desc;
-    vertex_input_info.vertexAttributeDescriptionCount = 4;
+    vertex_input_info.vertexAttributeDescriptionCount = 6;
     vertex_input_info.pVertexAttributeDescriptions = attr_descs;
 
     // Input assembly
@@ -142,7 +141,9 @@ bool gfx::Engine::init_graphics_pipeline() {
     rasterizer.rasterizerDiscardEnable = VK_FALSE;
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.lineWidth = 1.0f;
-    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+    // No cull: glTF doubleSided is common (AlphaBlendModeTest planes, etc.).
+    // Per-material cull needs dual pipelines or dynamic cull — later.
+    rasterizer.cullMode = VK_CULL_MODE_NONE;
     rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     rasterizer.depthBiasEnable = VK_FALSE;
     rasterizer.depthBiasConstantFactor = 0.0f;
@@ -160,17 +161,20 @@ bool gfx::Engine::init_graphics_pipeline() {
     multisampling.alphaToCoverageEnable = VK_FALSE;
     multisampling.alphaToOneEnable = VK_FALSE;
 
-    // Color blending
+    // Alpha blending for glTF BLEND materials (OPAQUE/MASK output a=1).
+    // Overlapping transparent order is not sorted yet (MVP).
     VkPipelineColorBlendAttachmentState color_blend_attachment = {};
     color_blend_attachment.colorWriteMask =
         VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
         VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-    color_blend_attachment.blendEnable = VK_FALSE;
-    color_blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
-    color_blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+    color_blend_attachment.blendEnable = VK_TRUE;
+    color_blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    color_blend_attachment.dstColorBlendFactor =
+        VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
     color_blend_attachment.colorBlendOp = VK_BLEND_OP_ADD;
     color_blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-    color_blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+    color_blend_attachment.dstAlphaBlendFactor =
+        VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
     color_blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD;
 
     VkPipelineColorBlendStateCreateInfo color_blending = {};
@@ -242,12 +246,19 @@ bool gfx::Engine::init_graphics_pipeline() {
 
 bool gfx::Engine::init_depth_prepass_pipeline() {
     std::vector<unsigned int> vertex_code;
+    std::vector<unsigned int> fragment_code;
     if (!load_shader_source("shaders/pbr.vert.spv", vertex_code)) {
         LOG_ERROR("Failed to load vertex shader for depth prepass");
         return false;
     }
+    // Fragment stage: MASK alpha test + skip BLEND (no solid depth for cutouts).
+    if (!load_shader_source("shaders/depth_prepass.frag.spv", fragment_code)) {
+        LOG_ERROR("Failed to load depth_prepass.frag");
+        return false;
+    }
 
     VkShaderModule vertex_shader_module = VK_NULL_HANDLE;
+    VkShaderModule fragment_shader_module = VK_NULL_HANDLE;
     VkShaderModuleCreateInfo vertex_shader_info{};
     vertex_shader_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
     vertex_shader_info.codeSize = vertex_code.size() * sizeof(unsigned int);
@@ -257,14 +268,28 @@ bool gfx::Engine::init_depth_prepass_pipeline() {
         LOG_ERROR("Failed to create depth-prepass vertex module");
         return false;
     }
+    VkShaderModuleCreateInfo fragment_shader_info{};
+    fragment_shader_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    fragment_shader_info.codeSize = fragment_code.size() * sizeof(unsigned int);
+    fragment_shader_info.pCode = fragment_code.data();
+    if (vkCreateShaderModule(renderer.vk.device, &fragment_shader_info, nullptr,
+                             &fragment_shader_module) != VK_SUCCESS) {
+        vkDestroyShaderModule(renderer.vk.device, vertex_shader_module, nullptr);
+        LOG_ERROR("Failed to create depth-prepass fragment module");
+        return false;
+    }
 
-    VkPipelineShaderStageCreateInfo vertex_stage{};
-    vertex_stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    vertex_stage.stage = VK_SHADER_STAGE_VERTEX_BIT;
-    vertex_stage.module = vertex_shader_module;
-    vertex_stage.pName = "main";
+    VkPipelineShaderStageCreateInfo stages[2]{};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vertex_shader_module;
+    stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = fragment_shader_module;
+    stages[1].pName = "main";
 
-    // Same vertex layout as PBR (position drives depth; other attrs unused but bound).
+    // Same vertex layout as PBR (skin attrs required for skinned depth prepass).
     static const VkVertexInputBindingDescription binding_desc = {
         .binding = 0, .stride = 56, .inputRate = VK_VERTEX_INPUT_RATE_VERTEX};
 
@@ -272,13 +297,16 @@ bool gfx::Engine::init_depth_prepass_pipeline() {
         {.location = 0, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 0},
         {.location = 1, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 12},
         {.location = 2, .binding = 0, .format = VK_FORMAT_R32G32B32A32_SFLOAT, .offset = 24},
-        {.location = 3, .binding = 0, .format = VK_FORMAT_R32G32_SFLOAT, .offset = 40}};
+        {.location = 3, .binding = 0, .format = VK_FORMAT_R32G32_SFLOAT, .offset = 40},
+        {.location = 4, .binding = 0, .format = VK_FORMAT_R8G8B8A8_UINT, .offset = 52},
+        {.location = 5, .binding = 0, .format = VK_FORMAT_R8G8B8A8_UNORM, .offset = 48},
+    };
 
     VkPipelineVertexInputStateCreateInfo vertex_input_info{};
     vertex_input_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     vertex_input_info.vertexBindingDescriptionCount = 1;
     vertex_input_info.pVertexBindingDescriptions = &binding_desc;
-    vertex_input_info.vertexAttributeDescriptionCount = 4;
+    vertex_input_info.vertexAttributeDescriptionCount = 6;
     vertex_input_info.pVertexAttributeDescriptions = attr_descs;
 
     VkPipelineInputAssemblyStateCreateInfo input_assembly{};
@@ -294,7 +322,7 @@ bool gfx::Engine::init_depth_prepass_pipeline() {
     rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.lineWidth = 1.0f;
-    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+    rasterizer.cullMode = VK_CULL_MODE_NONE;
     rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 
     VkPipelineMultisampleStateCreateInfo multisampling{};
@@ -321,8 +349,8 @@ bool gfx::Engine::init_depth_prepass_pipeline() {
 
     VkGraphicsPipelineCreateInfo pipeline_info{};
     pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    pipeline_info.stageCount = 1;
-    pipeline_info.pStages = &vertex_stage;
+    pipeline_info.stageCount = 2;
+    pipeline_info.pStages = stages;
     pipeline_info.pVertexInputState = &vertex_input_info;
     pipeline_info.pInputAssemblyState = &input_assembly;
     pipeline_info.pViewportState = &viewport_state;
@@ -339,10 +367,12 @@ bool gfx::Engine::init_depth_prepass_pipeline() {
                                   nullptr,
                                   &renderer.vk.depth_prepass_pipeline) != VK_SUCCESS) {
         vkDestroyShaderModule(renderer.vk.device, vertex_shader_module, nullptr);
+        vkDestroyShaderModule(renderer.vk.device, fragment_shader_module, nullptr);
         LOG_ERROR("Failed to create depth-prepass pipeline");
         return false;
     }
 
     vkDestroyShaderModule(renderer.vk.device, vertex_shader_module, nullptr);
+    vkDestroyShaderModule(renderer.vk.device, fragment_shader_module, nullptr);
     return true;
 }

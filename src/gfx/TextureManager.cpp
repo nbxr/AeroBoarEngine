@@ -1,5 +1,6 @@
 #include "gfx/TextureManager.h"
 #include "gfx/BufferUtils.h"
+#include "core/Log.h"
 #include <cstring>
 #include <iostream>
 #include <mutex>
@@ -83,6 +84,110 @@ bool gfx::TextureManager::initialize(VkDevice device, VmaAllocator allocator,
         }
     }
 
+    if (!create_dummy_texture()) {
+        LOG_ERROR("[TextureManager] Failed to create dummy 1x1 texture");
+        return false;
+    }
+
+    return true;
+}
+
+bool gfx::TextureManager::create_dummy_texture() {
+    // Magenta 1x1 so missing binds are obvious if accidentally sampled.
+    const uint8_t pixel[4] = {255, 0, 255, 255};
+
+    VkImageCreateInfo ici{};
+    ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ici.imageType = VK_IMAGE_TYPE_2D;
+    ici.format = VK_FORMAT_R8G8B8A8_UNORM;
+    ici.extent = {1, 1, 1};
+    ici.mipLevels = 1;
+    ici.arrayLayers = 1;
+    ici.samples = VK_SAMPLE_COUNT_1_BIT;
+    ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ici.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    ici.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    VmaAllocationCreateInfo aci{};
+    aci.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+    if (vmaCreateImage(allocator, &ici, &aci, &dummy_image_.handle,
+                       &dummy_image_.allocation, &dummy_image_.info) != VK_SUCCESS)
+        return false;
+
+    VkImageViewCreateInfo vci{};
+    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vci.image = dummy_image_.handle;
+    vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vci.format = VK_FORMAT_R8G8B8A8_UNORM;
+    vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    vci.subresourceRange.levelCount = 1;
+    vci.subresourceRange.layerCount = 1;
+    if (vkCreateImageView(device, &vci, nullptr, &dummy_image_.view) != VK_SUCCESS)
+        return false;
+
+    // Staging upload on the *graphics* command pool (must match submit queue
+    // family; transfer pool cannot use FRAGMENT_SHADER barriers).
+    VkBuffer staging = VK_NULL_HANDLE;
+    VmaAllocation staging_alloc = VK_NULL_HANDLE;
+    VmaAllocationInfo staging_info{};
+    VkBufferCreateInfo bci{};
+    bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bci.size = 4;
+    bci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    VmaAllocationCreateInfo saci{};
+    saci.usage = VMA_MEMORY_USAGE_CPU_ONLY;
+    saci.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    if (vmaCreateBuffer(allocator, &bci, &saci, &staging, &staging_alloc,
+                        &staging_info) != VK_SUCCESS)
+        return false;
+    std::memcpy(staging_info.pMappedData, pixel, 4);
+
+    vkResetCommandBuffer(transition_command_buffer, 0);
+    VkCommandBufferBeginInfo begin{};
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(transition_command_buffer, &begin);
+
+    VkImageMemoryBarrier to_dst{};
+    to_dst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    to_dst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    to_dst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    to_dst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_dst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_dst.image = dummy_image_.handle;
+    to_dst.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    to_dst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(transition_command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                         &to_dst);
+
+    VkBufferImageCopy region{};
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageExtent = {1, 1, 1};
+    vkCmdCopyBufferToImage(transition_command_buffer, staging, dummy_image_.handle,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+    VkImageMemoryBarrier to_sample = to_dst;
+    to_sample.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    to_sample.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    to_sample.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    to_sample.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(transition_command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0,
+                         nullptr, 1, &to_sample);
+
+    vkEndCommandBuffer(transition_command_buffer);
+    VkSubmitInfo submit{};
+    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers = &transition_command_buffer;
+    vkQueueSubmit(graphics_queue, 1, &submit, VK_NULL_HANDLE);
+    vkQueueWaitIdle(graphics_queue);
+
+    vmaDestroyBuffer(allocator, staging, staging_alloc);
+    dummy_ready_ = true;
     return true;
 }
 
@@ -377,10 +482,15 @@ void gfx::TextureManager::bind_descriptor(uint32_t index, VkDescriptorSet target
 
     std::vector<VkDescriptorImageInfo> image_infos(write_count);
 
-    // Choose a safe fallback for unused / tail slots (first real texture if available).
-    VkImageView safe_view = VK_NULL_HANDLE;
+    // Fallback for unused / tail slots: first real texture, else permanent dummy 1x1.
+    // Never write VK_NULL_HANDLE (VUID-02997 without nullDescriptor).
+    VkImageView safe_view = dummy_ready_ ? dummy_image_.view : VK_NULL_HANDLE;
     if (real_count > 0 && texture_cache[0].gpu_image.view != VK_NULL_HANDLE) {
         safe_view = texture_cache[0].gpu_image.view;
+    }
+    if (safe_view == VK_NULL_HANDLE) {
+        LOG_ERROR("[TextureManager] No safe imageView for bindless fill — skip bind");
+        return;
     }
 
     for (uint32_t i = 0; i < write_count; ++i) {
@@ -388,7 +498,7 @@ void gfx::TextureManager::bind_descriptor(uint32_t index, VkDescriptorSet target
         if (i < real_count && texture_cache[i].gpu_image.view != VK_NULL_HANDLE) {
             image_infos[i].imageView = texture_cache[i].gpu_image.view;
         } else {
-            image_infos[i].imageView = safe_view;   // tail or failed textures get a real (if any) view
+            image_infos[i].imageView = safe_view;
         }
         image_infos[i].sampler = sampler_handle;
     }
@@ -421,6 +531,16 @@ void gfx::TextureManager::shutdown() {
         vkDestroySampler(device, sampler_handle, nullptr);
         sampler_handle = VK_NULL_HANDLE;
     }
+
+    if (dummy_image_.view != VK_NULL_HANDLE) {
+        vkDestroyImageView(device, dummy_image_.view, nullptr);
+        dummy_image_.view = VK_NULL_HANDLE;
+    }
+    if (dummy_image_.handle != VK_NULL_HANDLE) {
+        vmaDestroyImage(allocator, dummy_image_.handle, dummy_image_.allocation);
+        dummy_image_ = {};
+    }
+    dummy_ready_ = false;
 
     uint32_t image_views_destroyed = 0;
     // Destroy all AllocatedImage resources in texture_cache

@@ -560,8 +560,9 @@ bool gfx::Engine::init_descriptor_pool() {
 bool gfx::Engine::init_descriptor_set_layout() {
     // Global bindless descriptor layout.
     // VARIABLE_DESCRIPTOR_COUNT (textures) MUST be the highest binding number.
-    // 0: FrameConstants | 1-5: scene | 6: lights | 7: env cube | 8: BRDF LUT | 9: textures
-    VkDescriptorSetLayoutBinding bindings[10] = {};
+    // 0: FrameConstants | 1-5: scene | 6: lights | 7: env cube | 8: BRDF LUT
+    // 9: joint matrices | 10: textures
+    VkDescriptorSetLayoutBinding bindings[11] = {};
 
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -623,17 +624,23 @@ bool gfx::Engine::init_descriptor_set_layout() {
     bindings[8].descriptorCount = 1;
     bindings[8].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    // 9: Textures — MUST be highest binding
-    bindings[9].binding = Renderer::BINDING_TEXTURES;
-    bindings[9].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    bindings[9].descriptorCount = 10000;
-    bindings[9].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    // 9: Joint matrices (skinning palette)
+    bindings[9].binding = Renderer::BINDING_JOINT_MATRICES;
+    bindings[9].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[9].descriptorCount = 1;
+    bindings[9].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+    // 10: Textures — MUST be highest binding
+    bindings[10].binding = Renderer::BINDING_TEXTURES;
+    bindings[10].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[10].descriptorCount = 10000;
+    bindings[10].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
     VkDescriptorSetLayoutBindingFlagsCreateInfo binding_flags_info{};
     binding_flags_info.sType =
         VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
 
-    VkDescriptorBindingFlags binding_flags[10] = {};
+    VkDescriptorBindingFlags binding_flags[11] = {};
     binding_flags[0] = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
     binding_flags[1] = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
     binding_flags[2] = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
@@ -643,16 +650,17 @@ bool gfx::Engine::init_descriptor_set_layout() {
     binding_flags[6] = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
     binding_flags[7] = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
     binding_flags[8] = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
-    binding_flags[9] = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT |
-                       VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
-                       VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT;
+    binding_flags[9] = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
+    binding_flags[10] = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT |
+                        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
+                        VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT;
 
-    binding_flags_info.bindingCount = 10;
+    binding_flags_info.bindingCount = 11;
     binding_flags_info.pBindingFlags = binding_flags;
 
     VkDescriptorSetLayoutCreateInfo layout_info = {};
     layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layout_info.bindingCount = 10;
+    layout_info.bindingCount = 11;
     layout_info.pBindings = bindings;
     layout_info.flags =
         VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;

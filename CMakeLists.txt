@@ -57,6 +57,7 @@ file(MAKE_DIRECTORY ${SHADER_OUTPUT_DIR})
 set(SHADER_FILES
     pbr.vert
     pbr.frag
+    depth_prepass.frag
     cull_frustum.comp
     build_indirect.comp
     hzb_copy.comp
@@ -204,11 +205,23 @@ FetchContent_Declare(
     GIT_TAG v3.11.3
 )
 
+# 7. Jolt Physics (runtime simulation)
+set(OVERRIDE_CXX_FLAGS OFF CACHE BOOL "" FORCE)
+set(ENABLE_ALL_WARNINGS OFF CACHE BOOL "" FORCE)
+set(USE_STATIC_MSVC_RUNTIME_LIBRARY OFF CACHE BOOL "" FORCE)
+set(INTERPROCEDURAL_OPTIMIZATION OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    JoltPhysics
+    GIT_REPOSITORY https://github.com/jrouwe/JoltPhysics.git
+    GIT_TAG v5.3.0
+    SOURCE_SUBDIR Build
+)
+
 # Enable updating dependencies
 set(FETCHCONTENT_QUIET OFF)
 
 # Fetch and make dependencies available
-FetchContent_MakeAvailable(VulkanMemoryAllocator vk-bootstrap tinygltf glfw glm nlohmann_json)
+FetchContent_MakeAvailable(VulkanMemoryAllocator vk-bootstrap tinygltf glfw glm nlohmann_json JoltPhysics)
 
 # -----------------------------------------------------------------------------
 # Build Configuration
@@ -245,7 +258,12 @@ add_executable(Aero_Boar_Engine
     src/gfx/Engine.InitializePasses.cpp
     src/gfx/Engine.InitializePipeline.cpp
     src/gfx/Engine.InitializeScene.cpp
+    src/gfx/Engine.Physics.cpp
     src/gfx/Engine.Render.cpp
+    src/physics/PhysicsWorld.cpp
+    src/scene/Animation.cpp
+    src/scene/Morph.cpp
+    src/scene/Skin.cpp
     src/scene/GltfLoader.cpp
     src/scene/SceneManager.cpp
     src/scene/TransformManager.cpp
@@ -287,7 +305,15 @@ target_link_libraries(Aero_Boar_Engine PRIVATE
     GPUOpen::VulkanMemoryAllocator    
     glfw
     glm::glm
+    Jolt
 )
+
+# Jolt headers live next to the Build/ SOURCE_SUBDIR.
+if(DEFINED joltphysics_SOURCE_DIR)
+    target_include_directories(Aero_Boar_Engine PRIVATE
+        ${joltphysics_SOURCE_DIR}/..
+    )
+endif()
 
 # Make Visual Studio debugger use the build directory as the working directory.
 # This matches how the project copies configuration.json + shaders into ${CMAKE_BINARY_DIR}/assets and /shaders.

@@ -1,11 +1,15 @@
 # glTF Animation Implementation Plan
 
-Canonical plan for bringing glTF animation online. **Not implemented yet** — implement against this doc next session.
+Canonical plan for glTF animation.
+
+**Status:** **Phase 1 (node TRS), Phase 2 (skinned meshes), and Phase 3 morph (CPU) landed.**  
+Morph: `MorphSystem` loads target deltas, animation path `weights`, CPU blend into mesh VBs. Test: **AnimatedMorphCube**.
 
 **See also**
 - `docs/agents/current_state.md` — status / next immediate
 - `docs/architecture/game-object-implementation.md` — hierarchy + `TransformManager`
 - `docs/agents/tech_context.md` — pipeline timing notes
+- `docs/architecture/gltf-extensions.md` — extension support matrix (incl. **KHR_animation_pointer**)
 
 ---
 
@@ -13,21 +17,25 @@ Canonical plan for bringing glTF animation online. **Not implemented yet** — i
 
 | Piece | Status |
 |--------|--------|
-| tinygltf parse (file may contain `animations` / `skins`) | Yes |
-| Load or store animation clips | **No** |
-| Sample channels over time | **No** |
+| tinygltf parse | Yes |
+| Load / store / sample node TRS clips | **Yes (Phase 1)** — `scene::AnimationSystem` |
 | Hierarchy + dirty `propagate` | Yes |
 | Per-frame world → cull/draw (`sync_scene_transforms`) | Yes |
-| Durable `gltf_node → transform_index` after load | **No** (map is local in `load_scene` and discarded) |
-| Decomposed TRS storage on nodes | **No** (matrix-only locals from `extract_node_transform`) |
-| JOINTS/WEIGHTS from glTF into `Vertex` | **No** (defaults only) |
-| Inverse bind matrices / joint palette | **No** |
-| Skinning in VS / depth prepass | **No** |
-| Morph targets | **No** |
+| Durable `gltf_node → transform_index` | **Yes** — `SceneManager::gltf_node_to_transform()` |
+| Decomposed TRS on nodes | **Yes** — `TransformManager::LocalTrs` + set_local_translation/rotation/scale |
+| Clip playback | **Exclusive default** (`play_default_clip`: prefers Walk/Run/…); **N** cycles clips |
+| JOINTS/WEIGHTS / skins / VS skinning | **Yes (Phase 2)** — `SkinSystem` + `pbr.vert` / prepass |
+| Mesh-relative skin matrices | **Yes** — `inv(meshWorld) * jointWorld * IBM`, VS multiplies mesh model |
+| Missing NORMAL (e.g. Fox) | **Yes** — face-normal accumulation at load |
+| Morph targets | **Yes (CPU Phase 3)** — `MorphSystem`; path `weights`; POSITION+NORMAL deltas |
+| `KHR_animation_pointer` | **No** — channels with `path: "pointer"` ignored |
+| `KHR_texture_transform` | **No** — UV offset/rotation/scale not applied |
 
-**Conclusion:** Rigid **node TRS animation** can build on existing transform sync. **Skinned** animation is a second, larger project. Morphs are later.
+**Code:** `src/scene/Animation.{h,cpp}`, `src/scene/Skin.{h,cpp}`, `src/scene/Morph.{h,cpp}`, TRS on `TransformManager`, load in `Engine.InitializeScene`, tick `Engine::update_animations` from `AeroBoar.cpp`.
 
-Architecture stubs (`GameObject::skin_index`, `RenderMesh::skin_index`, `Vertex` blend fields, `ComputePassContext::animation_pipeline`) are placeholders only.
+**Test scenes**: skinned demos + **`AnimatedMorphCube`** for morph weights.
+
+**Known incomplete sample:** **`AnimationPointerUVs`** requires `KHR_animation_pointer` + `KHR_texture_transform` (and many advanced material extensions). Geometry may load; animated UVs / unlit / transmission materials will **not** match reference. Tracked in `docs/architecture/gltf-extensions.md` §2.1 for future implementation.
 
 ---
 
@@ -55,9 +63,13 @@ Requires Phase 1 for **joint** nodes, plus:
 - Skin in **`pbr.vert` and depth-prepass VS** (must match or Hi-Z / occlusion diverge)
 - Cull AABB policy (inflate, bone AABBs, or recompute) — rigid mesh-local AABB is wrong under large deformation
 
-### C. Morph targets (Phase 3+)
+### C. Morph targets (Phase 3 — CPU landed)
 
-Blend-shape targets on primitives — separate from node/skin; schedule after A/B.
+Blend-shape targets on primitives:
+- Load `primitives[].targets[]` POSITION (+ NORMAL) deltas into `MorphSystem`
+- Animation channel path `weights` (SCALAR × target count per key) → `set_weights`
+- Each frame: `position = base + Σ w_i * delta_i` written into MeshManager VBs
+- **Future:** GPU morph in VS / compute for larger assets
 
 ---
 
@@ -105,11 +117,13 @@ Do **not** bypass dirty propagate with ad-hoc GPU buffer writes.
 
 ### 3.5 Verification (Phase 1)
 
-- [ ] Build + shaders still clean
-- [ ] Animated sample scene listed in `configuration.json`
-- [ ] Motion visible under GPU cull + depth prepass + shade
+- [x] Build + Phase 1 code landed
+- [x] `AnimatedCube` listed in `configuration.json` (use as default to see motion)
+- [ ] Motion visible under GPU cull + depth prepass + shade (manual check)
 - [ ] No validation errors when transforms change every frame
-- [ ] Lights parented to animated nodes (if any) still update via `transform_index`
+- [ ] Lights parented to animated nodes still update via `transform_index`
+
+**Note:** `AnisotropyRotationTest` is a materials sample and has **no** `animations` array — log will show `[Anim] No node animations in this scene`.
 
 ---
 
