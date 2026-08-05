@@ -43,6 +43,7 @@ gfx::Vertex make_vertex(const glm::vec3& p, const glm::vec3& n, float u,
     out.tangent[2] = 0.0f;
     out.tangent[3] = 1.0f;
     pack_uv0(out, u, v);
+    out.color[0] = out.color[1] = out.color[2] = out.color[3] = 255;
     out.blend_weights[0] = 255;
     out.blend_weights[1] = out.blend_weights[2] = out.blend_weights[3] = 0;
     out.blend_indices[0] = out.blend_indices[1] = out.blend_indices[2] =

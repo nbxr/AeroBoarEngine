@@ -7,8 +7,8 @@ namespace gfx {
 
 using Index = uint32_t;
 
-// Tight, aligned vertex format for mobile VR + GPU-driven rendering (mesh
-// shaders / indirect)
+// Tight, aligned vertex format for mobile VR + GPU-driven rendering.
+// Stride 64: natural alignment; +RGBA8 color for glTF COLOR_0 (~14% vs old 56).
 struct Vertex {
     float position[3]; //  0-11
     float normal[3];   // 12-23
@@ -17,14 +17,16 @@ struct Vertex {
     // UV0 + UV1 as IEEE half floats (R16G16B16A16_SFLOAT): xy=UV0, zw=UV1
     uint8_t uv[8]; // 40-47
 
-    // Skinning (kept for future animated meshes)
-    uint8_t blend_weights[4]; // 48-51
-    uint8_t blend_indices[4]; // 52-55
+    // glTF COLOR_0 (RGBA8 unorm). Default white when attribute missing.
+    uint8_t color[4]; // 48-51
 
-    // Optional: Vertex color (RGBA8) - uncomment when needed
-    // uint8_t color[4];       // would push stride to 60 → pad to 64
+    // Skinning
+    uint8_t blend_weights[4]; // 52-55
+    uint8_t blend_indices[4]; // 56-59
 
-    static constexpr size_t stride = 56;
+    uint8_t _pad[4]{}; // 60-63
+
+    static constexpr size_t stride = 64;
 };
 
 static_assert(sizeof(Vertex) == Vertex::stride,

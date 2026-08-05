@@ -53,6 +53,7 @@ layout(location = 2) in vec4 inTangent;
 layout(location = 3) in vec2 inUV0;
 layout(location = 4) in vec2 inUV1;
 layout(location = 5) flat in uint inMaterialIndex;
+layout(location = 6) in vec4 inColor; // glTF COLOR_0 (linear unorm)
 
 // Push constants (must match pbr.vert / gfx::PbrPushInstanced)
 layout(push_constant) uniform PushConstants {
@@ -180,11 +181,12 @@ void main() {
             materials[matIdx].uv_scale_offset[slot],                              \
             materials[matIdx].uv_rotation[slot])
 
-    // Sample albedo (baseColorTexture * baseColorFactor)
+    // Sample albedo (baseColorFactor * baseColorTexture * COLOR_0)
     vec4 albedo = baseColor;
     if (albedoIdx != NO_TEXTURE) {
         albedo *= texture(bindlessTextures[nonuniformEXT(albedoIdx)], UV_FOR(0u));
     }
+    albedo *= inColor;
 
     const uint matFlags = materials[matIdx].flags;
     const float alphaCutoff = materials[matIdx].alpha_cutoff;

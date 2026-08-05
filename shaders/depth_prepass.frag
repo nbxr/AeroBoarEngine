@@ -44,6 +44,7 @@ layout(location = 2) in vec4 inTangent;
 layout(location = 3) in vec2 inUV0;
 layout(location = 4) in vec2 inUV1;
 layout(location = 5) flat in uint inMaterialIndex;
+layout(location = 6) in vec4 inColor;
 
 const uint NO_TEXTURE = 0xFFFFFFFFu;
 
@@ -79,6 +80,7 @@ void main() {
                                 materials[matIdx].uv_rotation[0]);
         albedo *= texture(bindlessTextures[nonuniformEXT(albedoIdx)], uv);
     }
+    albedo *= inColor;
     if (albedo.a < materials[matIdx].alpha_cutoff)
         discard;
 }

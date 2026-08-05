@@ -17,6 +17,69 @@
 #include <map>
 #include <tiny_gltf.h>
 
+// glTF COLOR_0: VEC3 or VEC4, float or normalized integer → RGBA in 0..1.
+static glm::vec4 GetColorFromAccessor(const tinygltf::Model& model,
+                                      const tinygltf::Accessor& acc,
+                                      size_t index) {
+    glm::vec4 c(1.0f, 1.0f, 1.0f, 1.0f);
+    if (acc.bufferView < 0)
+        return c;
+    if (acc.type != TINYGLTF_TYPE_VEC3 && acc.type != TINYGLTF_TYPE_VEC4)
+        return c;
+
+    const auto& bv = model.bufferViews[acc.bufferView];
+    if (bv.buffer < 0 || bv.buffer >= (int)model.buffers.size())
+        return c;
+
+    const auto& buf = model.buffers[bv.buffer];
+    const uint8_t* base = buf.data.data() + bv.byteOffset + acc.byteOffset;
+    int stride = acc.ByteStride(bv);
+    if (stride == 0) {
+        stride = tinygltf::GetNumComponentsInType(acc.type) *
+                 tinygltf::GetComponentSizeInBytes(acc.componentType);
+    }
+    const uint8_t* ptr = base + index * stride;
+    const int ncomp = (acc.type == TINYGLTF_TYPE_VEC4) ? 4 : 3;
+
+    auto pack_channel = [](float x) -> float {
+        return std::clamp(x, 0.0f, 1.0f);
+    };
+
+    switch (acc.componentType) {
+    case TINYGLTF_COMPONENT_TYPE_FLOAT: {
+        const float* f = reinterpret_cast<const float*>(ptr);
+        c.r = pack_channel(f[0]);
+        c.g = pack_channel(f[1]);
+        c.b = pack_channel(f[2]);
+        if (ncomp >= 4)
+            c.a = pack_channel(f[3]);
+        break;
+    }
+    case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE: {
+        // glTF integer colors are normalized when accessor.normalized is true;
+        // treat as unorm regardless (common authoring).
+        c.r = float(ptr[0]) / 255.0f;
+        c.g = float(ptr[1]) / 255.0f;
+        c.b = float(ptr[2]) / 255.0f;
+        if (ncomp >= 4)
+            c.a = float(ptr[3]) / 255.0f;
+        break;
+    }
+    case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT: {
+        const uint16_t* s = reinterpret_cast<const uint16_t*>(ptr);
+        c.r = float(s[0]) / 65535.0f;
+        c.g = float(s[1]) / 65535.0f;
+        c.b = float(s[2]) / 65535.0f;
+        if (ncomp >= 4)
+            c.a = float(s[3]) / 65535.0f;
+        break;
+    }
+    default:
+        break;
+    }
+    return c;
+}
+
 // Helper to read a TEXCOORD (always VEC2) from an accessor, properly handling
 // normalized integer formats that some optimized glTFs use.
 static glm::vec2 GetTexcoordFromAccessor(const tinygltf::Model& model,
@@ -454,18 +517,21 @@ scene::GltfLoader::extract_mesh_data(const tinygltf::Model &model,
             auto norm_it = primitive.attributes.find("NORMAL");
             auto tex_it = primitive.attributes.find("TEXCOORD_0");
             auto tex1_it = primitive.attributes.find("TEXCOORD_1");
+            auto color_it = primitive.attributes.find("COLOR_0");
             auto joints_it = primitive.attributes.find("JOINTS_0");
             auto weights_it = primitive.attributes.find("WEIGHTS_0");
 
             bool has_normal = (norm_it != primitive.attributes.end());
             bool has_tex0   = (tex_it != primitive.attributes.end());
             bool has_tex1   = (tex1_it != primitive.attributes.end());
+            bool has_color  = (color_it != primitive.attributes.end());
             bool has_joints = (joints_it != primitive.attributes.end());
             bool has_weights = (weights_it != primitive.attributes.end());
 
             const tinygltf::Accessor *norm_acc_ptr = nullptr;
             const tinygltf::Accessor *tex_acc_ptr  = nullptr;
             const tinygltf::Accessor *tex1_acc_ptr = nullptr;
+            const tinygltf::Accessor *color_acc_ptr = nullptr;
             const tinygltf::Accessor *joints_acc_ptr = nullptr;
             const tinygltf::Accessor *weights_acc_ptr = nullptr;
 
@@ -499,6 +565,23 @@ scene::GltfLoader::extract_mesh_data(const tinygltf::Model &model,
                 if (!texcoord_accessor_ok(*tex1_acc_ptr)) {
                     has_tex1 = false;
                     tex1_acc_ptr = nullptr;
+                }
+            }
+
+            if (has_color) {
+                color_acc_ptr = &model.accessors[color_it->second];
+                const bool color_ok =
+                    (color_acc_ptr->type == TINYGLTF_TYPE_VEC3 ||
+                     color_acc_ptr->type == TINYGLTF_TYPE_VEC4) &&
+                    (color_acc_ptr->componentType ==
+                         TINYGLTF_COMPONENT_TYPE_FLOAT ||
+                     color_acc_ptr->componentType ==
+                         TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE ||
+                     color_acc_ptr->componentType ==
+                         TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT);
+                if (!color_ok) {
+                    has_color = false;
+                    color_acc_ptr = nullptr;
                 }
             }
 
@@ -674,6 +757,21 @@ scene::GltfLoader::extract_mesh_data(const tinygltf::Model &model,
                 if (has_tex1 && tex1_acc_ptr)
                     uv1 = GetTexcoordFromAccessor(model, *tex1_acc_ptr, i);
                 pack_uv_half(uv1, v.uv + 4);
+
+                // COLOR_0 → RGBA8 unorm (default white)
+                v.color[0] = v.color[1] = v.color[2] = v.color[3] = 255;
+                if (has_color && color_acc_ptr) {
+                    const glm::vec4 c =
+                        GetColorFromAccessor(model, *color_acc_ptr, i);
+                    v.color[0] = static_cast<uint8_t>(
+                        std::clamp(c.r, 0.0f, 1.0f) * 255.0f + 0.5f);
+                    v.color[1] = static_cast<uint8_t>(
+                        std::clamp(c.g, 0.0f, 1.0f) * 255.0f + 0.5f);
+                    v.color[2] = static_cast<uint8_t>(
+                        std::clamp(c.b, 0.0f, 1.0f) * 255.0f + 0.5f);
+                    v.color[3] = static_cast<uint8_t>(
+                        std::clamp(c.a, 0.0f, 1.0f) * 255.0f + 0.5f);
+                }
 
                 // Skinning: JOINTS_0 + WEIGHTS_0 (up to 4 influences)
                 v.blend_weights[0] = 255;

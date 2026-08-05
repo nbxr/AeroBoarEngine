@@ -3,6 +3,7 @@
 #include "gfx/AllocatedImage.h"
 #include "gfx/Renderer.h"
 #include "gfx/ShaderLoader.h"
+#include "gfx/Vertex.h"
 
 bool gfx::Engine::init_pipeline_layout() {
     // Pipeline layout
@@ -80,12 +81,12 @@ bool gfx::Engine::init_graphics_pipeline() {
     VkPipelineShaderStageCreateInfo shader_stages[] = {vertex_stage_info,
                                                        fragment_stage_info};
 
-    // Vertex input — gfx::Vertex stride 56:
-    //   loc 0: position | 1: normal | 2: tangent | 3: UV0 packed
-    //   loc 4: joints (u8x4) | 5: weights (unorm8x4)
+    // Vertex input — gfx::Vertex stride 64:
+    //   loc 0: position | 1: normal | 2: tangent | 3: UV0/UV1 half
+    //   loc 4: color (unorm8) | 5: weights (unorm8) | 6: joints (u8)
     static const VkVertexInputBindingDescription binding_desc = {
         .binding = 0,
-        .stride = 56,
+        .stride = static_cast<uint32_t>(gfx::Vertex::stride),
         .inputRate = VK_VERTEX_INPUT_RATE_VERTEX
     };
 
@@ -93,17 +94,17 @@ bool gfx::Engine::init_graphics_pipeline() {
         { .location = 0, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 0  },
         { .location = 1, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 12 },
         { .location = 2, .binding = 0, .format = VK_FORMAT_R32G32B32A32_SFLOAT, .offset = 24 },
-        // UV0.xy + UV1.xy as half floats (true range, not unorm/frac-packed)
         { .location = 3, .binding = 0, .format = VK_FORMAT_R16G16B16A16_SFLOAT, .offset = 40 },
-        { .location = 4, .binding = 0, .format = VK_FORMAT_R8G8B8A8_UINT, .offset = 52 },
-        { .location = 5, .binding = 0, .format = VK_FORMAT_R8G8B8A8_UNORM, .offset = 48 },
+        { .location = 4, .binding = 0, .format = VK_FORMAT_R8G8B8A8_UNORM, .offset = 48 },
+        { .location = 5, .binding = 0, .format = VK_FORMAT_R8G8B8A8_UNORM, .offset = 52 },
+        { .location = 6, .binding = 0, .format = VK_FORMAT_R8G8B8A8_UINT, .offset = 56 },
     };
 
     VkPipelineVertexInputStateCreateInfo vertex_input_info = {};
     vertex_input_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     vertex_input_info.vertexBindingDescriptionCount = 1;
     vertex_input_info.pVertexBindingDescriptions = &binding_desc;
-    vertex_input_info.vertexAttributeDescriptionCount = 6;
+    vertex_input_info.vertexAttributeDescriptionCount = 7;
     vertex_input_info.pVertexAttributeDescriptions = attr_descs;
 
     // Input assembly
@@ -291,24 +292,27 @@ bool gfx::Engine::init_depth_prepass_pipeline() {
     stages[1].module = fragment_shader_module;
     stages[1].pName = "main";
 
-    // Same vertex layout as PBR (skin attrs required for skinned depth prepass).
+    // Same vertex layout as PBR (skin + color attrs for prepass MASK alpha).
     static const VkVertexInputBindingDescription binding_desc = {
-        .binding = 0, .stride = 56, .inputRate = VK_VERTEX_INPUT_RATE_VERTEX};
+        .binding = 0,
+        .stride = static_cast<uint32_t>(gfx::Vertex::stride),
+        .inputRate = VK_VERTEX_INPUT_RATE_VERTEX};
 
     static const VkVertexInputAttributeDescription attr_descs[] = {
         {.location = 0, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 0},
         {.location = 1, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 12},
         {.location = 2, .binding = 0, .format = VK_FORMAT_R32G32B32A32_SFLOAT, .offset = 24},
         {.location = 3, .binding = 0, .format = VK_FORMAT_R16G16B16A16_SFLOAT, .offset = 40},
-        {.location = 4, .binding = 0, .format = VK_FORMAT_R8G8B8A8_UINT, .offset = 52},
-        {.location = 5, .binding = 0, .format = VK_FORMAT_R8G8B8A8_UNORM, .offset = 48},
+        {.location = 4, .binding = 0, .format = VK_FORMAT_R8G8B8A8_UNORM, .offset = 48},
+        {.location = 5, .binding = 0, .format = VK_FORMAT_R8G8B8A8_UNORM, .offset = 52},
+        {.location = 6, .binding = 0, .format = VK_FORMAT_R8G8B8A8_UINT, .offset = 56},
     };
 
     VkPipelineVertexInputStateCreateInfo vertex_input_info{};
     vertex_input_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     vertex_input_info.vertexBindingDescriptionCount = 1;
     vertex_input_info.pVertexBindingDescriptions = &binding_desc;
-    vertex_input_info.vertexAttributeDescriptionCount = 6;
+    vertex_input_info.vertexAttributeDescriptionCount = 7;
     vertex_input_info.pVertexAttributeDescriptions = attr_descs;
 
     VkPipelineInputAssemblyStateCreateInfo input_assembly{};
