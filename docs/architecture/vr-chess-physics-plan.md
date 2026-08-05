@@ -4,6 +4,8 @@
 
 **Status:** Design only. Physics **runtime foundation** (Jolt) exists; no KHR physics load, no OpenXR, no player-scale system yet.
 
+**Prerequisite (near-term):** **ECS + Player + input injection** so camera/locomotion are not hard-coded in the main loop — see `docs/architecture/ecs-plan.md`. Chess/VR work resumes after Player can own the view (and later a character body).
+
 **See also**
 - `docs/architecture/physics-plan.md` — Jolt foundation + phase checklist  
 - `docs/agents/tech_context.md` — physics assets, reverse-Z, occlusion/VR  

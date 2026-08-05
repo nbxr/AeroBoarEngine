@@ -10,6 +10,13 @@
 - Decouple raw GLFW input handling (callbacks, state, event processing) from the high-level `scene::Camera` (which owns 6DOF quaternion orientation, movement math, and view/projection concerns).
 - Support smooth WASD + mouse + roll controls while the cursor is captured.
 - Make cursor capture toggling (Escape) robust — no spurious large mouse deltas or "jumps" on re-capture.
+
+**Planned split (ECS near-term):** `InputManager` stays the **device** layer. Per-frame **`InputFrame`** feeds:
+
+- **`DesktopMoveSystem`** — Player fly/look (entity with `PlayerTag` / `DesktopMove`)
+- **`EditorHotkeySystem`** — Escape, R, N, P, … (**app/editor**, not on Player; Debug+Release for now)
+
+`Camera` and `AeroBoar.cpp` stop polling keys. See `docs/architecture/ecs-plan.md` §4.4.
 - Keep the CPU-side input path lightweight and cache-friendly (data-oriented style).
 - Enable easy tuning of smoothing/acceleration feel without touching camera math.
 

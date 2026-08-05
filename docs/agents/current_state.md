@@ -50,15 +50,13 @@ Desktop foundation is solid and past “first triangle.” The engine loads glTF
 
 ## Current Focus Areas
 
-**Session snapshot (2026-08-03):** Desktop rendering + animation stack is in good shape for core samples. Next major track is **physics on ABeautifulGame** then **VR chess / scale-down** (plan stored). Advanced glTF material/animation-pointer samples remain incomplete by design.
+**Near-term priority (updated):** **ECS + input injection + Player-owned camera** before ABeautifulGame physics / VR chess execution. Plan: `docs/architecture/ecs-plan.md`.
 
-- Dirty-flag transform `propagate()` landed
-- Lighting polish landed: spot packing, dynamic light API, optional HDR equirect IBL
-- **glTF animation Phase 1–3 landed:** node TRS + skins + **morph targets** (`MorphSystem`, path `weights`, CPU blend). Multi-clip exclusive play (**N** cycles). Y/T movement speed. Alpha OPAQUE/MASK/BLEND MVP. See `animation-plan.md`.
-- **Same-frame occlusion (desktop):** depth prepass → Hi-Z → shade; hysteresis removed. Prepass FS does MASK discard / skips BLEND depth.
-- **Physics foundation (landed):** Jolt v5.3.0; `PhysicsWorld`; step + transform sync; optional box demo (`physicsDemo`). See `physics-plan.md`.
-- **Extension matrix:** `docs/architecture/gltf-extensions.md` — what we do / don’t support
-- **VR chess plan:** `docs/architecture/vr-chess-physics-plan.md`
+- **Docs:** `ecs-plan.md` decisions locked (first-wins player, Jolt sensors, EditorHotkeySystem in Debug+Release, fixed-union events, REGISTER_SCRIPT). **Code not started.**
+- **Next to implement (after doc sign-off):** Phase 1 `InputFrame` + `DesktopMoveSystem` + `EditorHotkeySystem` → Phase 2 World + Player → Phase 3 extras + script registry
+- Desktop rendering + animation stack solid for core samples (TRS / skin / morph, Hi-Z, alpha MVP)
+- Physics foundation (Jolt) landed but **deprioritized** until Player/ECS slice works — see `physics-plan.md` / `vr-chess-physics-plan.md`
+- **Extension matrix:** `docs/architecture/gltf-extensions.md` (AnimationPointerUVs still unsupported)
 - **Future tooling:** `glslc` → **glslang** when Quest/Android work starts
 
 ## Known Gaps / Not Yet Implemented
@@ -90,6 +88,7 @@ Desktop foundation is solid and past “first triangle.” The engine loads glTF
   - Main-pass MSAA depth resolve may still exist but is **not** the HZB source
 - **Depth model:** standard Z today (0=near, 1=far, `LESS`). **Planned:** reverse-Z with VR/multiview depth work (`GREATER`/`GREATER_OR_EQUAL`, clear 0, max-depth Hi-Z) — official roadmap item in `tech_context.md`
 - No OpenXR / VR input layer (desktop GLFW only)
+- **No ECS yet** — camera fly + hotkeys hard-coded in `Camera` / `AeroBoar.cpp`; no Player entity. See `ecs-plan.md`.
 - **Scene model (hierarchy + dirty propagate)**: `GameObject` + `RenderMesh` + `TransformManager` with local matrices, parent links, **dirty flags**, and selective `propagate()`. Runtime: `Engine::sync_scene_transforms()` after fence wait. Legacy `SceneInstance` dual-written.
 - **glTF animation Phase 1–3 (TRS / skin / morph) yes.** **Not yet:** `KHR_animation_pointer`, `KHR_texture_transform`, advanced material extensions — **AnimationPointerUVs** will not render correctly; see `docs/architecture/gltf-extensions.md`.
 - **Physics runtime foundation yes; asset pipeline no.** Jolt + boxes + transform links. **Missing:** KHR physics load, non-box shapes, raycast/impulse API, character controller, ABeautifulGame auto-bodies — `physics-plan.md` + `vr-chess-physics-plan.md`.
@@ -122,10 +121,12 @@ Desktop foundation is solid and past “first triangle.” The engine loads glTF
 - [done] Alpha mode MVP (OPAQUE / MASK / BLEND) + double-sided cull-none
 - [done] Full sample-assets list in `configuration.json` for manual regression
 - [done] Docs: extension matrix, VR chess plan, session progress
-- **Next immediate:** **ABeautifulGame auto-box physics + desktop knock-over** (`vr-chess-physics-plan.md` Phase A) → KHR physics → player scale → OpenXR
-- **Roadmap (extensions):** `KHR_texture_transform` + `KHR_animation_pointer` (AnimationPointerUVs); advanced materials — `gltf-extensions.md`
-- **Roadmap (VR / Quest):** reverse-Z + multiview + per-eye HZB; OpenXR input; VR chess demo
-- **Roadmap (physics):** shapes API + KHR load + character controller — `physics-plan.md`
+- [done] Docs: **ECS plan** + near-term goal shift (`ecs-plan.md`, game-object ECS section)
+- **Next immediate:** **ECS Phase 1–2** — InputFrame + DesktopPlayerController + DebugHotkeys; then Player entity owns camera (`ecs-plan.md`)
+- **Then:** glTF `ECS_Components_v1` load; **then** ABeautifulGame physics / VR chess (`vr-chess-physics-plan.md`)
+- **Roadmap (extensions):** `KHR_texture_transform` + `KHR_animation_pointer`; advanced materials — `gltf-extensions.md`
+- **Roadmap (VR / Quest):** reverse-Z + multiview HZB; OpenXR; VR chess (needs Player/ECS)
+- **Roadmap (physics):** shapes + KHR load + character controller — `physics-plan.md`
 - Future tooling: glslang when Quest/Android — keep `glslc` until then
 - [done] Desktop input layer: `core::InputManager` + `scene::Camera` decoupling; **Y/T** keyboard move speed
 - glTF loader robustness: `extract_mesh_data` now accepts primitives that provide only POSITION (common in minimal test assets). Missing NORMAL defaults to (0,0,1); missing TEXCOORD_0 defaults to (0,0). This allows the Cameras.gltf pure-camera test scene (and similar) to load and render its proxy geometry. Also injects a default white material when the glTF contains no materials array (primitives may still reference default material via -1).

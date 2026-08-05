@@ -88,9 +88,13 @@ This project aims to develop a cross-platform game engine targeting VR via OpenX
   - **Phase 2 (done):** skinned meshes (joint palette + VS skin)
   - **Phase 3 (done, CPU):** morph target weights
   - **Later:** `KHR_animation_pointer` + `KHR_texture_transform` (see `gltf-extensions.md`; sample: AnimationPointerUVs)
+- **ECS + Player (near-term; `docs/architecture/ecs-plan.md`):**
+  - Custom SoA ECS; `InputFrame` + controllers (no hard-coded keys in main/camera)
+  - Camera associated with **Player** entity
+  - glTF `extras.ECS_Components_v1` authoring (Blender)
 - **Physics foundation (landed runtime; asset path open):**
   - Jolt world step, rigid boxes, transform links (`physics-plan.md`)
-  - **Next product arc:** ABeautifulGame piece physics → shrink player → OpenXR knock-over — `docs/architecture/vr-chess-physics-plan.md`
+  - **After Player/ECS:** ABeautifulGame piece physics → shrink player → OpenXR knock-over — `vr-chess-physics-plan.md`
   - glTF load path for Khronos physics extensions (`KHR_physics_rigid_bodies`, `KHR_implicit_shapes`) still TODO
 
 ### Phase 3: VR Features (Weeks 9-12)

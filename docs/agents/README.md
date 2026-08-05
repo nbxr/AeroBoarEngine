@@ -15,6 +15,7 @@ These files are intended to be read by any AI coding agent (Grok Build, Continue
 
 Architecture plans live under `docs/architecture/` (not only this folder), including:
 
+- `ecs-plan.md` — **near-term** custom ECS, InputFrame, Player + camera
 - `gltf-extensions.md` — Khronos extension support matrix (e.g. AnimationPointerUVs gaps)
 - `animation-plan.md` / `physics-plan.md` / `vr-chess-physics-plan.md`
 - `pipeline-implementation.md`, `lighting-implementation.md`, `game-object-implementation.md`, `desktop-inputs.md`
