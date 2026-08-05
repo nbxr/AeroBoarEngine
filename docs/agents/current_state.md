@@ -91,6 +91,7 @@ Desktop foundation is solid and past “first triangle.” The engine loads glTF
 - **glTF animation Phase 1–3 (TRS / skin / morph) yes.** Static `KHR_texture_transform` yes. **Not yet:** animated transforms via `KHR_animation_pointer`, full material extension set — **AnimationPointerUVs** incomplete; see `gltf-extensions.md`.
 - **Physics runtime foundation yes; asset pipeline no.** Jolt + boxes + transform links. **Missing:** KHR physics load, non-box shapes, raycast/impulse API, character controller, ABeautifulGame auto-bodies — `physics-plan.md` + `vr-chess-physics-plan.md`.
 - Alpha/transmission: dual pipelines yes; **no** transparent sort / OIT.
+- **Volume / dispersion / thick glass:** deferred. Thin-wall transmission MVP only. Future option: parse factors + desktop-only refraction path, **off on Quest** — see `gltf-extensions.md` §2.2. Showcase: `DragonDispersion` not reference-correct.
 - No audio beyond desktop `InputManager` completeness
 
 ## Next Immediate Priorities
@@ -126,7 +127,7 @@ Desktop foundation is solid and past “first triangle.” The engine loads glTF
 - [done] Docs: **ECS plan** + near-term goal shift (`ecs-plan.md`, game-object ECS section)
 - **Next immediate:** **ECS Phase 1–2** — InputFrame + DesktopPlayerController + DebugHotkeys; then Player entity owns camera (`ecs-plan.md`)
 - **Then:** glTF `ECS_Components_v1` load; **then** ABeautifulGame physics / VR chess (`vr-chess-physics-plan.md`)
-- **Roadmap (extensions):** `KHR_animation_pointer` (animated UV transforms); unlit; full transmission/volume; variants UI — `gltf-extensions.md`
+- **Roadmap (extensions):** `KHR_animation_pointer` (animated UV transforms); unlit; variants UI; optional **desktop-only** volume/dispersion glass tier (off on mobile) — `gltf-extensions.md`
 - **Roadmap (VR / Quest):** reverse-Z + multiview HZB; OpenXR; VR chess (needs Player/ECS)
 - **Roadmap (physics):** shapes + KHR load + character controller — `physics-plan.md`
 - Future tooling: glslang when Quest/Android — keep `glslc` until then

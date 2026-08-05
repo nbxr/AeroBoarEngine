@@ -67,16 +67,34 @@ These appear on **AnimationPointerUVs** and many material samples. The engine us
 | Extension | Purpose |
 |-----------|---------|
 | `KHR_materials_volume` | Attenuation / thickness (not loaded) |
+| `KHR_materials_dispersion` | Wavelength-dependent IOR / chromatic refraction (not loaded) |
+| `KHR_materials_ior` | Non-default IOR for refraction (not loaded; shade uses fixed ~1.5 proxy) |
 | `KHR_materials_specular` | Specular factor / color beyond dielectric F0 |
 | `KHR_materials_sheen` | Cloth sheen |
 | `KHR_materials_anisotropy` | Anisotropic specular |
 | `KHR_materials_diffuse_transmission` | Diffuse transmission |
 | `KHR_materials_unlit` | Unlit (required by AnimationPointerUVs) |
 | Clearcoat/transmission/iridescence **textures** | Factor-only MVP; maps ignored for now |
-| Full transmission / volume glass | Transparent pass exists (depth-write off); still no refraction MRT / volume IOR |
+| Full transmission / volume glass | Transparent pass exists (depth-write off); still no refraction RT / volume absorption |
 | Runtime material variants UI | Only variant 0 applied at load |
 
 **Note:** `KHR_materials_unlit` is in `extensionsRequired` for AnimationPointerUVs — a strict client may refuse the file; we still load geometry with the default PBR path (incorrect for unlit panels).
+
+#### Volume / dispersion / thick glass — deferred (desktop-only quality tier later)
+
+**Decision (2026-08):** Do **not** implement full `KHR_materials_volume`, `KHR_materials_dispersion`, or multi-sample refraction for the current product path (ECS, Player, Quest). Showcase assets such as **`DragonDispersion`** (`transmission` + `volume` + `dispersion` + `ior`, thickness maps, ~140k verts) will load geometry but **will not** match Khronos reference until a dedicated glass tier exists.
+
+**Why skip for now**
+- Correct look needs opaque background → refraction sampling, thickness/absorption, and (for dispersion) multi-wavelength IOR — high bandwidth/ALU, poor fit for default **Quest 3 / TBDR** budgets and multiview.
+- Thin-wall transmission MVP (CarConcept glass) is already enough for product content; thick gem glass is a beauty/demo feature.
+
+**Middle path (when prioritized — not started)**
+1. **Parse only:** load IOR / volume (attenuation, thickness factor/texture) / dispersion factors into `gfx::Material` (or a side table) so the matrix stays honest and assets are data-ready.
+2. **Shader stub:** default path keeps today’s cheap transmission/env proxy; no extra RT cost.
+3. **Desktop quality tier (optional):** enable a real refraction + volume (+ optional dispersion) path behind a **desktop-only** quality flag / `#define` / config bit; **force off on mobile/Quest** builds so shipping VR never pays for it.
+4. Do **not** make dispersion the default desktop path either — opt-in showcase quality.
+
+**Known incomplete samples (glass tier):** `DragonDispersion`, `DispersionTest`, `CompareDispersion`, `CompareVolume`, and several Transmission\* demos that need more than thin-wall MVP.
 
 ---
 
@@ -111,6 +129,7 @@ Runtime **Jolt** exists; glTF physics load does **not**.
 - Samples that depend on **§2** extensions are expected to load (geometry may show) but **not** match Khronos reference renders until the listed work lands.
 - Prefer documenting “known incomplete” here rather than silent wrong visuals.
 - **CarConcept** is a good smoke test for multi-UV, texture transform, transmission glass, emissive maps (`Dash_E` / `Khronos_C`), and opaque/transparent split.
+- **DragonDispersion** / volume+dispersion samples: geometry may show; full glass is **out of scope** until the desktop-only middle path in §2.2.
 
 ---
 
@@ -118,10 +137,10 @@ Runtime **Jolt** exists; glTF physics load does **not**.
 
 1. **`KHR_animation_pointer`** targeting texture transforms — unlocks AnimationPointerUVs UV motion  
 2. **`KHR_materials_unlit`** — cheap correctness for that sample’s required ext  
-3. Transmission / volume maps + better glass — refraction/MRT investment  
-4. Clearcoat/iridescence maps; variants UI  
+3. Clearcoat/iridescence maps; variants UI  
+4. **Optional desktop glass tier** (parse → stub → desktop refraction/volume; off on Quest) — §2.2  
 5. **Physics KHR** — product path for ABeautifulGame / VR chess (separate plan)
 
 ---
 
-*Last reviewed: 2026-08-04 (CarConcept materials + opaque/transparent cull + AO/UV fixes).*
+*Last reviewed: 2026-08-04 (volume/dispersion deferred; desktop-only glass middle path noted).*
