@@ -113,15 +113,18 @@ void GpuCulling::clear_scene(VkDevice device, VmaAllocator allocator) {
     BufferUtils::destroy_buffer(device, allocator, batch_metas_);
     for (uint32_t i = 0; i < kMaxFrames; ++i) {
         BufferUtils::destroy_buffer(device, allocator, cull_items_[i]);
-        BufferUtils::destroy_buffer(device, allocator, cull_globals_[i]);
-        BufferUtils::destroy_buffer(device, allocator, batch_counts_[i]);
         BufferUtils::destroy_buffer(device, allocator, out_instances_[i]);
-        BufferUtils::destroy_buffer(device, allocator, indirect_cmds_[i]);
+        for (uint32_t p = 0; p < kCullPassCount; ++p) {
+            BufferUtils::destroy_buffer(device, allocator, cull_globals_[i][p]);
+            BufferUtils::destroy_buffer(device, allocator, batch_counts_[i][p]);
+            BufferUtils::destroy_buffer(device, allocator, indirect_cmds_[i][p]);
+        }
     }
     item_transform_indices_.clear();
     cpu_items_.clear();
     item_count_ = 0;
     batch_count_ = 0;
+    instance_slot_count_ = 0;
     ready_ = false;
 }
 
@@ -147,27 +150,30 @@ bool GpuCulling::create_descriptors(VkDevice device) {
     if (vkCreateDescriptorSetLayout(device, &lci, nullptr, &set_layout_) != VK_SUCCESS)
         return false;
 
+    const uint32_t set_count = kMaxFrames * kCullPassCount;
     VkDescriptorPoolSize sizes[] = {
-        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kMaxFrames},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, kMaxFrames * 5},
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxFrames},
+        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, set_count},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, set_count * 5},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, set_count},
     };
     VkDescriptorPoolCreateInfo pci{};
     pci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    pci.maxSets = kMaxFrames;
+    pci.maxSets = set_count;
     pci.poolSizeCount = 3;
     pci.pPoolSizes = sizes;
     if (vkCreateDescriptorPool(device, &pci, nullptr, &pool_) != VK_SUCCESS)
         return false;
 
     for (uint32_t i = 0; i < kMaxFrames; ++i) {
-        VkDescriptorSetAllocateInfo ai{};
-        ai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-        ai.descriptorPool = pool_;
-        ai.descriptorSetCount = 1;
-        ai.pSetLayouts = &set_layout_;
-        if (vkAllocateDescriptorSets(device, &ai, &sets_[i]) != VK_SUCCESS)
-            return false;
+        for (uint32_t p = 0; p < kCullPassCount; ++p) {
+            VkDescriptorSetAllocateInfo ai{};
+            ai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            ai.descriptorPool = pool_;
+            ai.descriptorSetCount = 1;
+            ai.pSetLayouts = &set_layout_;
+            if (vkAllocateDescriptorSets(device, &ai, &sets_[i][p]) != VK_SUCCESS)
+                return false;
+        }
     }
     return true;
 }
@@ -211,7 +217,8 @@ bool GpuCulling::create_pipelines(VkDevice device) {
 
 bool GpuCulling::build_scene(VkDevice device, VmaAllocator allocator,
                              const std::vector<MeshDrawInfo>& mesh_draw_infos,
-                             const scene::SceneManager& scene) {
+                             const scene::SceneManager& scene,
+                             const MaterialManager* materials) {
     clear_scene(device, allocator);
 
     batch_count_ = static_cast<uint32_t>(mesh_draw_infos.size());
@@ -257,7 +264,17 @@ bool GpuCulling::build_scene(VkDevice device, VmaAllocator allocator,
                 joint_base = sk.palette_offset;
                 joint_count = static_cast<uint32_t>(sk.joint_transform_indices.size());
             }
-            item.skin = glm::uvec4(joint_base, joint_count, 0u, 0u);
+            // Material flags for depth/Hi-Z: only opaque (non-blend, non-transmission)
+            // writers should build the pyramid. MASK still writes after alpha test.
+            uint32_t mat_flags = 0;
+            if (materials)
+                mat_flags = materials->get_material_flags(rm.material_index);
+            const uint32_t kBlend = Material::kFlagAlphaBlend;
+            const uint32_t kTrans = Material::kFlagTransmission;
+            const uint32_t writes_opaque_depth =
+                ((mat_flags & (kBlend | kTrans)) == 0u) ? 1u : 0u;
+            item.skin =
+                glm::uvec4(joint_base, joint_count, mat_flags, writes_opaque_depth);
             cpu_items_.push_back(item);
             item_transform_indices_.push_back(rm.transform_index);
         }
@@ -265,6 +282,7 @@ bool GpuCulling::build_scene(VkDevice device, VmaAllocator allocator,
     }
     item_count_ = static_cast<uint32_t>(cpu_items_.size());
 
+    instance_slot_count_ = running_base;
     const VkDeviceSize items_bytes =
         std::max<VkDeviceSize>(sizeof(GpuCullItem),
                                cpu_items_.size() * sizeof(GpuCullItem));
@@ -272,9 +290,11 @@ bool GpuCulling::build_scene(VkDevice device, VmaAllocator allocator,
         std::max<VkDeviceSize>(sizeof(GpuBatchMeta), metas.size() * sizeof(GpuBatchMeta));
     const VkDeviceSize counts_bytes =
         std::max<VkDeviceSize>(sizeof(uint32_t), batch_count_ * sizeof(uint32_t));
-    const VkDeviceSize out_bytes =
-        std::max<VkDeviceSize>(sizeof(DrawInstanceGPU),
-                               running_base * sizeof(DrawInstanceGPU));
+    // Combined SSBO: opaque half [0, N) + transparent half [N, 2N).
+    const VkDeviceSize out_bytes = std::max<VkDeviceSize>(
+        sizeof(DrawInstanceGPU),
+        static_cast<VkDeviceSize>(kCullPassCount) * running_base *
+            sizeof(DrawInstanceGPU));
     // 5 uints per indirect command
     const VkDeviceSize cmds_bytes =
         std::max<VkDeviceSize>(sizeof(uint32_t) * 5,
@@ -288,65 +308,72 @@ bool GpuCulling::build_scene(VkDevice device, VmaAllocator allocator,
 
     for (uint32_t f = 0; f < kMaxFrames; ++f) {
         if (!BufferUtils::initialize_buffer(device, allocator, items_bytes, cull_items_[f]) ||
-            !BufferUtils::initialize_buffer(device, allocator, sizeof(GpuCullGlobals),
-                                            cull_globals_[f],
-                                            VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT) ||
-            // TRANSFER_DST required for vkCmdFillBuffer zeroing each frame
-            !BufferUtils::initialize_buffer(device, allocator, counts_bytes,
-                                            batch_counts_[f],
-                                            VK_BUFFER_USAGE_TRANSFER_DST_BIT) ||
             !BufferUtils::initialize_buffer(device, allocator, out_bytes,
-                                            out_instances_[f]) ||
-            !BufferUtils::initialize_buffer(device, allocator, cmds_bytes,
-                                            indirect_cmds_[f],
-                                            VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT)) {
-            LOG_ERROR("[GpuCulling] Failed to create per-frame cull buffers");
+                                            out_instances_[f])) {
+            LOG_ERROR("[GpuCulling] Failed to create per-frame cull item/instance buffers");
             return false;
         }
-
         if (!cpu_items_.empty()) {
             memcpy(cull_items_[f].mapped_data, cpu_items_.data(),
                    cpu_items_.size() * sizeof(GpuCullItem));
         }
 
-        // Buffer bindings are static for the scene. HZB image is set via bind_hzb
-        // (dummy until the pyramid is wired after resize / scene load).
-        VkDescriptorBufferInfo infos[6]{};
-        infos[0] = {cull_globals_[f].buffer, 0, sizeof(GpuCullGlobals)};
-        infos[1] = {cull_items_[f].buffer, 0, items_bytes};
-        infos[2] = {out_instances_[f].buffer, 0, out_bytes};
-        infos[3] = {batch_counts_[f].buffer, 0, counts_bytes};
-        infos[4] = {batch_metas_.buffer, 0, metas_bytes};
-        infos[5] = {indirect_cmds_[f].buffer, 0, cmds_bytes};
+        for (uint32_t p = 0; p < kCullPassCount; ++p) {
+            if (!BufferUtils::initialize_buffer(device, allocator, sizeof(GpuCullGlobals),
+                                                cull_globals_[f][p],
+                                                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT) ||
+                // TRANSFER_DST required for vkCmdFillBuffer zeroing each record()
+                !BufferUtils::initialize_buffer(device, allocator, counts_bytes,
+                                                batch_counts_[f][p],
+                                                VK_BUFFER_USAGE_TRANSFER_DST_BIT) ||
+                !BufferUtils::initialize_buffer(device, allocator, cmds_bytes,
+                                                indirect_cmds_[f][p],
+                                                VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT)) {
+                LOG_ERROR("[GpuCulling] Failed to create per-frame cull pass buffers");
+                return false;
+            }
 
-        VkDescriptorImageInfo hzb_info{};
-        hzb_info.sampler = dummy_sampler_;
-        hzb_info.imageView = dummy_hzb_.view;
-        hzb_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            // Buffer bindings are static for the scene. HZB image is set via bind_hzb
+            // (dummy until the pyramid is wired after resize / scene load).
+            // Both passes share the combined out_instances buffer.
+            VkDescriptorBufferInfo infos[6]{};
+            infos[0] = {cull_globals_[f][p].buffer, 0, sizeof(GpuCullGlobals)};
+            infos[1] = {cull_items_[f].buffer, 0, items_bytes};
+            infos[2] = {out_instances_[f].buffer, 0, out_bytes};
+            infos[3] = {batch_counts_[f][p].buffer, 0, counts_bytes};
+            infos[4] = {batch_metas_.buffer, 0, metas_bytes};
+            infos[5] = {indirect_cmds_[f][p].buffer, 0, cmds_bytes};
 
-        VkWriteDescriptorSet writes[7]{};
-        for (uint32_t i = 0; i < 6; ++i) {
-            writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[i].dstSet = sets_[f];
-            writes[i].dstBinding = i;
-            writes[i].descriptorCount = 1;
-            writes[i].pBufferInfo = &infos[i];
-            writes[i].descriptorType =
-                (i == 0) ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
-                         : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            VkDescriptorImageInfo hzb_info{};
+            hzb_info.sampler = dummy_sampler_;
+            hzb_info.imageView = dummy_hzb_.view;
+            hzb_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+            VkWriteDescriptorSet writes[7]{};
+            for (uint32_t i = 0; i < 6; ++i) {
+                writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                writes[i].dstSet = sets_[f][p];
+                writes[i].dstBinding = i;
+                writes[i].descriptorCount = 1;
+                writes[i].pBufferInfo = &infos[i];
+                writes[i].descriptorType =
+                    (i == 0) ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
+                             : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            }
+            writes[6].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[6].dstSet = sets_[f][p];
+            writes[6].dstBinding = 6;
+            writes[6].descriptorCount = 1;
+            writes[6].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[6].pImageInfo = &hzb_info;
+            vkUpdateDescriptorSets(device, 7, writes, 0, nullptr);
         }
-        writes[6].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[6].dstSet = sets_[f];
-        writes[6].dstBinding = 6;
-        writes[6].descriptorCount = 1;
-        writes[6].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[6].pImageInfo = &hzb_info;
-        vkUpdateDescriptorSets(device, 7, writes, 0, nullptr);
     }
 
     ready_ = true;
     LOG_INFO("[GpuCulling] Ready: " << item_count_ << " items, " << batch_count_
-             << " batches, " << running_base << " instance slots");
+             << " batches, " << instance_slot_count_
+             << " instance slots/pass (combined SSBO x" << kCullPassCount << ")");
     return true;
 }
 
@@ -367,7 +394,7 @@ void GpuCulling::update_models(uint32_t frame_index, const scene::SceneManager& 
 
 void GpuCulling::bind_hzb(uint32_t frame_index, VkImageView hzb_view,
                           VkSampler hzb_sampler) {
-    if (frame_index >= kMaxFrames || sets_[frame_index] == VK_NULL_HANDLE)
+    if (frame_index >= kMaxFrames)
         return;
 
     VkDescriptorImageInfo hzb_info{};
@@ -383,24 +410,33 @@ void GpuCulling::bind_hzb(uint32_t frame_index, VkImageView hzb_view,
         hzb_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
     }
 
-    VkWriteDescriptorSet w{};
-    w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    w.dstSet = sets_[frame_index];
-    w.dstBinding = 6;
-    w.descriptorCount = 1;
-    w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    w.pImageInfo = &hzb_info;
-    vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
+    for (uint32_t p = 0; p < kCullPassCount; ++p) {
+        if (sets_[frame_index][p] == VK_NULL_HANDLE)
+            continue;
+        VkWriteDescriptorSet w{};
+        w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        w.dstSet = sets_[frame_index][p];
+        w.dstBinding = 6;
+        w.descriptorCount = 1;
+        w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        w.pImageInfo = &hzb_info;
+        vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
+    }
 }
 
 void GpuCulling::record(VkCommandBuffer cmd, uint32_t frame_index,
                         const glm::mat4& view_proj, bool enable_hzb, uint32_t hzb_width,
-                        uint32_t hzb_height, uint32_t hzb_mips, float hzb_depth_bias) {
+                        uint32_t hzb_height, uint32_t hzb_mips, float hzb_depth_bias,
+                        CullEmitFilter emit_filter) {
     if (!ready_ || frame_index >= kMaxFrames)
         return;
 
+    const uint32_t pass = static_cast<uint32_t>(pass_for_filter(emit_filter));
     const bool use_hzb =
         enable_hzb && hzb_width > 0 && hzb_height > 0 && hzb_mips > 0;
+    const uint32_t inst_offset =
+        (pass == static_cast<uint32_t>(CullPass::Transparent)) ? instance_slot_count_
+                                                               : 0u;
 
     // BestPractices-ImageMemoryBarrier-TransitionUndefinedToReadOnly: never go
     // UNDEFINED → SHADER_READ_ONLY (discards into a read-only layout). GENERAL is fine
@@ -434,27 +470,51 @@ void GpuCulling::record(VkCommandBuffer cmd, uint32_t frame_index,
     g.hzb_mips = hzb_mips;
     g.view_proj = view_proj;
     const float bias = (hzb_depth_bias > 0.0f) ? hzb_depth_bias : 0.003f;
-    g.hzb_info = glm::vec4(float(hzb_width), float(hzb_height), bias, 1.0f);
-    memcpy(cull_globals_[frame_index].mapped_data, &g, sizeof(g));
+    g.hzb_info = glm::vec4(float(hzb_width), float(hzb_height), bias, 0.0f);
+    g.emit_filter = static_cast<uint32_t>(emit_filter);
+    g.instance_base_offset = inst_offset;
+    g.pad1 = g.pad2 = 0;
+    memcpy(cull_globals_[frame_index][pass].mapped_data, &g, sizeof(g));
 
-    // Zero batch counts on the host (buffer is persistently mapped + coherent).
-    if (batch_counts_[frame_index].mapped_data && batch_count_ > 0) {
-        memset(batch_counts_[frame_index].mapped_data, 0,
-               batch_count_ * sizeof(uint32_t));
-    }
-
+    // Host write of globals → compute/transfer.
     VkMemoryBarrier host_barrier{};
     host_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
     host_barrier.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
-    host_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT |
-                                 VK_ACCESS_UNIFORM_READ_BIT;
+    host_barrier.dstAccessMask = VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_HOST_BIT,
-                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &host_barrier, 0,
-                         nullptr, 0, nullptr);
+                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |
+                             VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         0, 1, &host_barrier, 0, nullptr, 0, nullptr);
+
+    // GPU-zero batch counts (host memset during *recording* races with multi-cull
+    // in one CB — prepass then shade would see non-zero counts).
+    if (batch_counts_[frame_index][pass].buffer != VK_NULL_HANDLE && batch_count_ > 0) {
+        // Prior compute may have written counts (e.g. prepass cull → shade cull).
+        VkMemoryBarrier to_fill{};
+        to_fill.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        to_fill.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+        to_fill.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &to_fill, 0, nullptr, 0,
+                             nullptr);
+
+        const VkDeviceSize counts_bytes =
+            static_cast<VkDeviceSize>(batch_count_) * sizeof(uint32_t);
+        vkCmdFillBuffer(cmd, batch_counts_[frame_index][pass].buffer, 0, counts_bytes, 0);
+
+        VkMemoryBarrier fill_done{};
+        fill_done.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        fill_done.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        fill_done.dstAccessMask =
+            VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &fill_done, 0,
+                             nullptr, 0, nullptr);
+    }
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cull_pipeline_);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout_, 0, 1,
-                            &sets_[frame_index], 0, nullptr);
+                            &sets_[frame_index][pass], 0, nullptr);
 
     const uint32_t groups = (item_count_ + 63u) / 64u;
     if (groups > 0)
@@ -486,13 +546,17 @@ void GpuCulling::record(VkCommandBuffer cmd, uint32_t frame_index,
 }
 
 uint32_t GpuCulling::read_visible_count(uint32_t frame_index) const {
-    if (!ready_ || frame_index >= kMaxFrames || !batch_counts_[frame_index].mapped_data)
+    if (!ready_ || frame_index >= kMaxFrames)
         return 0;
-    const auto* counts =
-        static_cast<const uint32_t*>(batch_counts_[frame_index].mapped_data);
     uint32_t sum = 0;
-    for (uint32_t i = 0; i < batch_count_; ++i)
-        sum += counts[i];
+    for (uint32_t p = 0; p < kCullPassCount; ++p) {
+        if (!batch_counts_[frame_index][p].mapped_data)
+            continue;
+        const auto* counts =
+            static_cast<const uint32_t*>(batch_counts_[frame_index][p].mapped_data);
+        for (uint32_t i = 0; i < batch_count_; ++i)
+            sum += counts[i];
+    }
     return sum;
 }
 

@@ -112,7 +112,7 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
         def.albedo = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
         def.roughness = 0.5f;
         def.metallic = 0.0f;
-        def.emissive = 0.0f;
+        def.emissive_factor = glm::vec4(0.f, 0.f, 0.f, 1.f);
         def.normalStrength = 1.0f;
         def.albedo_texture_index = gfx::Material::NO_TEXTURE;
         def.normal_texture_index = gfx::Material::NO_TEXTURE;
@@ -253,6 +253,38 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
                     const uint32_t mesh_prim_id =
                         mesh_lookup[prim_i + mat_offset];
                     int mat_idx = prim.material;
+                    // KHR_materials_variants: use mapping for variant 0 (first named).
+                    {
+                        auto vit = prim.extensions.find("KHR_materials_variants");
+                        if (vit != prim.extensions.end() && vit->second.IsObject()) {
+                            const auto& vobj = vit->second.Get<tinygltf::Value::Object>();
+                            auto mit = vobj.find("mappings");
+                            if (mit != vobj.end() && mit->second.IsArray()) {
+                                const auto& maps = mit->second.Get<tinygltf::Value::Array>();
+                                for (const auto& entry : maps) {
+                                    if (!entry.IsObject())
+                                        continue;
+                                    const auto& eobj = entry.Get<tinygltf::Value::Object>();
+                                    auto vars = eobj.find("variants");
+                                    auto mmat = eobj.find("material");
+                                    if (vars == eobj.end() || mmat == eobj.end() ||
+                                        !vars->second.IsArray() || !mmat->second.IsNumber())
+                                        continue;
+                                    bool has_v0 = false;
+                                    for (const auto& v : vars->second.Get<tinygltf::Value::Array>()) {
+                                        if (v.IsNumber() && v.GetNumberAsInt() == 0) {
+                                            has_v0 = true;
+                                            break;
+                                        }
+                                    }
+                                    if (has_v0) {
+                                        mat_idx = mmat->second.GetNumberAsInt();
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
                     if (mat_idx < 0 || mat_idx >= (int)material_lookup.size()) {
                         mat_idx = 0;
                     }

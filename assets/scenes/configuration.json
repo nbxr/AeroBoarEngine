@@ -1,7 +1,7 @@
 {
-  "defaultScene": "ABeautifulGame",
+  "defaultScene": "CarConcept",
   "activeSystem": "Windows",
-  "physicsDemo": true,
+  "physicsDemo": false,
   "home": [
     {
       "system": "Windows",

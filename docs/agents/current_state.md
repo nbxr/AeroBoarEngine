@@ -21,9 +21,10 @@ Desktop foundation is solid and past “first triangle.” The engine loads glTF
   - Metallic + Roughness (from metalRoughness texture or factors)
   - Emissive
   - Ambient Occlusion (separate texture)
-  - **glTF alphaMode MVP:** OPAQUE / MASK (discard + cutoff) / BLEND (pipeline `SRC_ALPHA` blend); depth prepass skips BLEND and tests MASK. Double-sided via cull-none. **Not yet:** transparent sort, dual opaque/blend pipelines, per-material depth-write off
+  - **glTF alphaMode:** OPAQUE / MASK (discard + cutoff) / BLEND + transmission → **dual shade pipelines** (opaque depth-write on; transparent blend + depth-write off). Depth/Hi-Z prepass emits **opaque writers only**. **Not yet:** OIT / sorted transparency
+  - Multi-UV + static `KHR_texture_transform`; UV0/UV1 as **half floats** (`R16G16B16A16_SFLOAT`); AO multiplies **indirect only** (not emissive/direct)
 - Proper vertex attribute input (`gfx::Vertex`, pipeline vertex state, `pbr.vert`) — legacy SSBO vertex pulling is no longer the active path
-- Materials SSBO correctly declared as a **single buffer + runtime array** in `pbr.frag` (not a descriptor array); `gfx::Material` is `alignas(16)` / 80-byte stride to match std430
+- Materials SSBO: single buffer + runtime array in `pbr.frag`; `gfx::Material` is `alignas(16)` / **256-byte** stride (maps, multi-UV, clearcoat/transmission/iridescence factors)
 - Scene model: `GameObject` / `RenderMesh` / `TransformManager` (local + parent + dirty-flag `propagate`)
 - GPU cull + same-frame Hi-Z + multi-draw indirect (`GpuCulling`, `HzbPyramid`, depth prepass — see tech_context)
 - Desktop `scene::Camera` system (fully documented in `src/scene/Camera.h`):
@@ -54,7 +55,7 @@ Desktop foundation is solid and past “first triangle.” The engine loads glTF
 
 - **Docs:** `ecs-plan.md` decisions locked (first-wins player, Jolt sensors, EditorHotkeySystem in Debug+Release, fixed-union events, REGISTER_SCRIPT). **Code not started.**
 - **Next to implement (after doc sign-off):** Phase 1 `InputFrame` + `DesktopMoveSystem` + `EditorHotkeySystem` → Phase 2 World + Player → Phase 3 extras + script registry
-- Desktop rendering + animation stack solid for core samples (TRS / skin / morph, Hi-Z, alpha MVP)
+- Desktop rendering + animation stack solid for core samples (TRS / skin / morph, Hi-Z, opaque/transparent split; CarConcept usable)
 - Physics foundation (Jolt) landed but **deprioritized** until Player/ECS slice works — see `physics-plan.md` / `vr-chess-physics-plan.md`
 - **Extension matrix:** `docs/architecture/gltf-extensions.md` (AnimationPointerUVs still unsupported)
 - **Future tooling:** `glslc` → **glslang** when Quest/Android work starts
@@ -76,23 +77,20 @@ Desktop foundation is solid and past “first triangle.” The engine loads glTF
   - BRDF integration LUT (128²) → binding 8 `sampler2D`
   - Split-sum specular in `pbr.frag` when IBL is ready
   Spot packing complete (pos + emission dir + cos cones). Dynamic lights via per-frame upload + `Engine::set_light` / `refresh_lights_from_transforms`. Optional HDR equirect IBL (`environmentHdr` in configuration.json). Still deferred: clustered many-lights, shadows.
-- **GPU frustum + same-frame Hi-Z occlusion + instancing + indirect (landed)**:
-  - Frame order: frustum cull → **depth-only prepass** (1x, vertex-only) → `HzbPyramid::record_build` → frustum+HZB cull → main shade (MSAA)
-  - `gfx::GpuCulling`: `cull_frustum.comp` frustum + optional same-frame Hi-Z; packs visible instances into fixed per-batch regions; `build_indirect.comp` writes draw commands
-  - `gfx::HzbPyramid`: half-res min-Z pyramid (double-buffered for frames-in-flight); built from prepass depth at the **current** `view_proj` (no hysteresis)
-  - Prepass resources: `renderer.depth_prepass` RP/FBs + `vk.depth_prepass_pipeline`; one depth target per frame-in-flight
-  - `hzb_copy` min-downsamples full-res prepass depth into mip0; `hzb_reduce` min-mips
-  - Graphics uses binding 1 instance SSBO + **one** `vkCmdDrawIndexedIndirect` per pass (multi-draw; `firstInstance = batch.base`)
-  - **Instance index (Vulkan):** VS uses `gl_InstanceIndex` only — it already includes `firstInstance`. Never also add `gl_BaseInstance` or push base (double-count → wrong materials / missing draws).
+- **GPU frustum + same-frame Hi-Z + opaque/transparent shade (landed)**:
+  - Frame order (compute **outside** render passes): frustum cull opaque → depth prepass → HZB build → frustum+HZB cull opaque **and** transparent → main RP: opaque shade then transparent shade
+  - `gfx::GpuCulling`: emit filter (all / opaque-depth / transparent); **combined** instance SSBO (opaque half + transparent half via `instance_base_offset`) so binding 1 is never flipped mid-CB (`UPDATE_AFTER_BIND`); dual indirect buffers; GPU `vkCmdFillBuffer` zeros batch counts
+  - `gfx::HzbPyramid`: half-res min-Z from **opaque-only** prepass (glass must not seal cabin for occlusion)
+  - Graphics: binding 1 combined instance SSBO; **one** `vkCmdDrawIndexedIndirect` per shade pass; transparent uses `vk.transparent_pipeline` (blend, depth write off)
+  - **Instance index (Vulkan):** VS uses `gl_InstanceIndex` only (includes `firstInstance`)
   - `[Cull]` log from host-visible counts after frame fence (`[hzb=on]` when same-frame path ran)
-  - Main-pass MSAA depth resolve may still exist but is **not** the HZB source
 - **Depth model:** standard Z today (0=near, 1=far, `LESS`). **Planned:** reverse-Z with VR/multiview depth work (`GREATER`/`GREATER_OR_EQUAL`, clear 0, max-depth Hi-Z) — official roadmap item in `tech_context.md`
 - No OpenXR / VR input layer (desktop GLFW only)
 - **No ECS yet** — camera fly + hotkeys hard-coded in `Camera` / `AeroBoar.cpp`; no Player entity. See `ecs-plan.md`.
 - **Scene model (hierarchy + dirty propagate)**: `GameObject` + `RenderMesh` + `TransformManager` with local matrices, parent links, **dirty flags**, and selective `propagate()`. Runtime: `Engine::sync_scene_transforms()` after fence wait. Legacy `SceneInstance` dual-written.
-- **glTF animation Phase 1–3 (TRS / skin / morph) yes.** **Not yet:** `KHR_animation_pointer`, `KHR_texture_transform`, advanced material extensions — **AnimationPointerUVs** will not render correctly; see `docs/architecture/gltf-extensions.md`.
+- **glTF animation Phase 1–3 (TRS / skin / morph) yes.** Static `KHR_texture_transform` yes. **Not yet:** animated transforms via `KHR_animation_pointer`, full material extension set — **AnimationPointerUVs** incomplete; see `gltf-extensions.md`.
 - **Physics runtime foundation yes; asset pipeline no.** Jolt + boxes + transform links. **Missing:** KHR physics load, non-box shapes, raycast/impulse API, character controller, ABeautifulGame auto-bodies — `physics-plan.md` + `vr-chess-physics-plan.md`.
-- Alpha: MVP only (no transparent sort / dual queues).
+- Alpha/transmission: dual pipelines yes; **no** transparent sort / OIT.
 - No audio beyond desktop `InputManager` completeness
 
 ## Next Immediate Priorities
@@ -102,8 +100,12 @@ Desktop foundation is solid and past “first triangle.” The engine loads glTF
 - [done] Lighting polish: spot direction packing, dynamic light API, HDR equirect IBL
 - [done] Production IBL (procedural env + SH + prefiltered cube + BRDF LUT)
 - [done] Switch from raw SSBO vertex pulling to proper vertex attribute input
-- [done] Materials SSBO GLSL shape + C++ 80-byte stride
+- [done] Materials SSBO GLSL shape + C++ stride (now **256-byte** Material)
 - [done] PBR path hygiene
+- [done] Multi-UV + static `KHR_texture_transform`; half-float vertex UVs
+- [done] Material MVP: clearcoat / emissive_strength / transmission / iridescence factors
+- [done] Opaque + transparent shade split (Hi-Z opaque-only; glass depth-write off)
+- [done] AO on indirect only; combined cull instance SSBO (no mid-CB descriptor flip)
 - [done] Camera framing
 - [done] Mesh-grouped instancing (`DrawBatch` / `DrawInstanceGPU`)
 - [done] GameObject + RenderMesh + TransformManager foundation
@@ -118,13 +120,13 @@ Desktop foundation is solid and past “first triangle.” The engine loads glTF
 - [done] Morph targets Phase 3 CPU (`MorphSystem`, AnimatedMorphCube)
 - [done] Physics foundation (Jolt `PhysicsWorld`, step/sync, floor+box demo)
 - [done] Richer skinned demos (CesiumMan, Fox multi-clip, mesh-relative skin, non-indexed meshes)
-- [done] Alpha mode MVP (OPAQUE / MASK / BLEND) + double-sided cull-none
+- [done] Alpha mode OPAQUE / MASK / BLEND + double-sided cull-none + dual shade pipelines
 - [done] Full sample-assets list in `configuration.json` for manual regression
 - [done] Docs: extension matrix, VR chess plan, session progress
 - [done] Docs: **ECS plan** + near-term goal shift (`ecs-plan.md`, game-object ECS section)
 - **Next immediate:** **ECS Phase 1–2** — InputFrame + DesktopPlayerController + DebugHotkeys; then Player entity owns camera (`ecs-plan.md`)
 - **Then:** glTF `ECS_Components_v1` load; **then** ABeautifulGame physics / VR chess (`vr-chess-physics-plan.md`)
-- **Roadmap (extensions):** `KHR_texture_transform` + `KHR_animation_pointer`; advanced materials — `gltf-extensions.md`
+- **Roadmap (extensions):** `KHR_animation_pointer` (animated UV transforms); unlit; full transmission/volume; variants UI — `gltf-extensions.md`
 - **Roadmap (VR / Quest):** reverse-Z + multiview HZB; OpenXR; VR chess (needs Player/ECS)
 - **Roadmap (physics):** shapes + KHR load + character controller — `physics-plan.md`
 - Future tooling: glslang when Quest/Android — keep `glslc` until then
@@ -151,14 +153,14 @@ Active path:
 - Material index from **instance SSBO** (`DrawInstanceGPU.meta.x`), not push constants
 - Push constants: `viewProj` (+ reserved `extra`)
 - Multi-material scenes: materials as elements of a **single** SSBO (see below)
-- Frustum → depth prepass → Hi-Z → occlusion cull → shade (multi-draw indirect)
+- Frustum → depth prepass → Hi-Z → dual cull → opaque then transparent shade (multi-draw indirect)
 
 ### Materials SSBO (important)
 
 C++ binds **one** `STORAGE_BUFFER` for all materials (binding 2). The shader must declare a runtime array **inside** that buffer:
 
 ```glsl
-struct Material { /* matches gfx::Material, 80-byte std430 stride */ };
+struct Material { /* matches gfx::Material, 256-byte std430 stride */ };
 layout(set = 0, binding = 2) readonly buffer Materials {
     Material materials[];
 };

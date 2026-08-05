@@ -1,6 +1,7 @@
 #include "gfx/MaterialManager.h"
 #include "core/Log.h"
 #include <mutex>
+#include <shared_mutex>
 
 namespace gfx {
 
@@ -57,6 +58,20 @@ void MaterialManager::update_material(MaterialID material_id, const Material& ma
         return;
     }
     LOG_ERROR("[MaterialManager] update_material: invalid id " << material_id);
+}
+
+uint32_t MaterialManager::get_material_flags(uint32_t material_id) const {
+    std::shared_lock lock(material_mutex_);
+    if (material_id >= cpu_materials_.size())
+        return 0;
+    return cpu_materials_[material_id].flags;
+}
+
+const Material* MaterialManager::get_material(uint32_t material_id) const {
+    std::shared_lock lock(material_mutex_);
+    if (material_id >= cpu_materials_.size())
+        return nullptr;
+    return &cpu_materials_[material_id];
 }
 
 void MaterialManager::update_buffers() {

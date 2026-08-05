@@ -138,7 +138,8 @@ bool gfx::Engine::rebuild_draw_batches() {
     if (!renderer.gpu_culling.build_scene(renderer.vk.device.device,
                                           renderer.allocator,
                                           renderer.mesh_draw_infos,
-                                          renderer.scene_manager)) {
+                                          renderer.scene_manager,
+                                          &renderer.material_manager)) {
         LOG_ERROR("[Draw] GPU cull build_scene failed");
         return false;
     }
@@ -189,10 +190,9 @@ bool gfx::Engine::spawn_physics_demo() {
     mat.albedo = glm::vec4(0.92f, 0.45f, 0.12f, 1.0f);
     mat.roughness = 0.45f;
     mat.metallic = 0.05f;
-    mat.emissive = 0.0f;
+    mat.emissive_factor = glm::vec4(0.f, 0.f, 0.f, 1.f);
     mat.normalStrength = 1.0f;
     mat.flags = 0;
-    std::memset(mat.padding, 0, sizeof(mat.padding));
     const gfx::MaterialID mat_id = renderer.material_manager.create_material(mat);
 
     auto& xforms = renderer.scene_manager.transforms();

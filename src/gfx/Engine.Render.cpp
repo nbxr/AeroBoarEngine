@@ -17,6 +17,9 @@
 
 namespace {
 
+// Bind the combined opaque|transparent instance SSBO once. Do not re-point
+// BINDING_DRAW_INSTANCES mid-command-buffer: UPDATE_AFTER_BIND means both draws
+// would execute against the *last* host write (transparent-only → body missing).
 void bind_draw_instances(gfx::Renderer& renderer, uint32_t frame_index) {
     auto& inst = renderer.gpu_culling.out_instances(frame_index);
     gfx::BufferUtils::update_descriptor(
@@ -26,7 +29,8 @@ void bind_draw_instances(gfx::Renderer& renderer, uint32_t frame_index) {
 }
 
 void record_indirect_draws(VkCommandBuffer cmd, gfx::Renderer& renderer,
-                           VkPipeline pipeline, const glm::mat4& viewProj) {
+                           VkPipeline pipeline, const glm::mat4& viewProj,
+                           gfx::CullPass pass = gfx::CullPass::Opaque) {
     auto& vk = renderer.vk;
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
@@ -63,7 +67,7 @@ void record_indirect_draws(VkCommandBuffer cmd, gfx::Renderer& renderer,
                        sizeof(gfx::PbrPush), &pushData);
 
     const uint32_t batches = renderer.gpu_culling.batch_count();
-    auto& indirect = renderer.gpu_culling.indirect_cmds(renderer.current_frame);
+    auto& indirect = renderer.gpu_culling.indirect_cmds(renderer.current_frame, pass);
     if (batches > 0) {
         vkCmdDrawIndexedIndirect(cmd, indirect.buffer, 0, batches, 20);
     }
@@ -168,20 +172,23 @@ void gfx::Engine::render() {
                          renderer.vk.depth_prepass_pipeline != VK_NULL_HANDLE;
 
     // ------------------------------------------------------------------
-    // Same-frame occlusion:
-    //   1) frustum cull → 2) depth prepass → 3) HZB build
-    //   → 4) frustum+HZB cull → 5) shade
+    // Same-frame occlusion (all *compute* culls run outside render passes):
+    //   1) frustum cull opaque → 2) depth prepass → 3) HZB build
+    //   → 4) frustum+HZB cull opaque + transparent (dual lists)
+    //   → 5) main RP: draw opaque then transparent (no compute inside RP)
     // ------------------------------------------------------------------
     if (can_cull) {
-        // 1) Frustum-only candidates for the depth prepass.
-        renderer.gpu_culling.record(frame.command_buffer, fi, viewProj);
+        // 1) Frustum + opaque-only list for depth prepass / Hi-Z source.
+        renderer.gpu_culling.record(frame.command_buffer, fi, viewProj, false, 0, 0,
+                                    0, 0.003f, gfx::CullEmitFilter::OpaqueDepth);
+        // Combined instance SSBO — bind once for the whole frame.
         bind_draw_instances(renderer, fi);
     }
 
     write_frame_lighting(renderer.current_frame);
 
     if (can_hzb) {
-        // 2) Depth-only prepass at current pose.
+        // 2) Depth prepass (opaque writers only).
         VkClearValue clear_depth{};
         clear_depth.depthStencil = {1.0f, 0};
 
@@ -197,25 +204,39 @@ void gfx::Engine::render() {
         vkCmdBeginRenderPass(frame.command_buffer, &prepass_info,
                              VK_SUBPASS_CONTENTS_INLINE);
         record_indirect_draws(frame.command_buffer, renderer,
-                              vk.depth_prepass_pipeline, viewProj);
+                              vk.depth_prepass_pipeline, viewProj,
+                              gfx::CullPass::Opaque);
         vkCmdEndRenderPass(frame.command_buffer);
 
-        // 3) Build Hi-Z from prepass depth (same view_proj).
-        // Descriptors were wired at init/resize (bind_depth_source) — no updates here.
+        // 3) Hi-Z from opaque-only depth.
         renderer.hzb.record_build(frame.command_buffer, fi, vk.swap_chain_extent);
-
-        // 4) Final cull with same-frame HZB (image already bound via bind_hzb).
-        renderer.gpu_culling.record(frame.command_buffer, fi, viewProj, true,
-                                    renderer.hzb.width(), renderer.hzb.height(),
-                                    renderer.hzb.mip_count());
-        bind_draw_instances(renderer, fi);
         renderer.last_cull_used_hzb[fi] = true;
-    } else if (can_cull) {
-        // No HZB resources: frustum-only already recorded for shade.
+    } else {
         renderer.last_cull_used_hzb[fi] = false;
     }
 
-    // 5) Main shade pass (MSAA color + depth; independent of prepass depth).
+    // 4) Shade culls *before* main RP — dual output lists so both survive.
+    if (can_cull) {
+        if (can_hzb) {
+            renderer.gpu_culling.record(frame.command_buffer, fi, viewProj, true,
+                                        renderer.hzb.width(), renderer.hzb.height(),
+                                        renderer.hzb.mip_count(), 0.003f,
+                                        gfx::CullEmitFilter::OpaqueDepth);
+            // Glass can still use Hi-Z (pyramid is opaque-only depth).
+            renderer.gpu_culling.record(frame.command_buffer, fi, viewProj, true,
+                                        renderer.hzb.width(), renderer.hzb.height(),
+                                        renderer.hzb.mip_count(), 0.003f,
+                                        gfx::CullEmitFilter::Transparent);
+        } else {
+            renderer.gpu_culling.record(frame.command_buffer, fi, viewProj, false, 0, 0, 0,
+                                        0.003f, gfx::CullEmitFilter::OpaqueDepth);
+            renderer.gpu_culling.record(frame.command_buffer, fi, viewProj, false, 0, 0, 0,
+                                        0.003f, gfx::CullEmitFilter::Transparent);
+        }
+    }
+
+    // 5) Main shade: **opaque first** (depth write on), then **transparent**
+    //    (depth test on, depth write off) so glass never blocks the cabin.
     VkRenderPassBeginInfo render_pass_info{};
     render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     render_pass_info.renderPass = renderer.main_pass.render_pass;
@@ -240,7 +261,17 @@ void gfx::Engine::render() {
     vkCmdBeginRenderPass(frame.command_buffer, &render_pass_info, VK_SUBPASS_CONTENTS_INLINE);
 
     if (can_cull) {
-        record_indirect_draws(frame.command_buffer, renderer, vk.pipeline, viewProj);
+        // Graphics only — no compute/barriers inside the render pass.
+        // Opaque + transparent share one instance SSBO (different firstInstance
+        // bases); do not re-update binding 1 between these draws.
+        record_indirect_draws(frame.command_buffer, renderer, vk.pipeline, viewProj,
+                              gfx::CullPass::Opaque);
+
+        if (vk.transparent_pipeline != VK_NULL_HANDLE) {
+            record_indirect_draws(frame.command_buffer, renderer,
+                                  vk.transparent_pipeline, viewProj,
+                                  gfx::CullPass::Transparent);
+        }
     }
 
     vkCmdEndRenderPass(frame.command_buffer);

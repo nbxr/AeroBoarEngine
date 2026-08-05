@@ -16,12 +16,19 @@ Update this file when adding loader, material, or animation support.
 | Extension / feature | Status | Notes |
 |---------------------|--------|--------|
 | Core glTF 2.0 mesh / materials (metallic-roughness) | **Yes** | Base color, MR, normal, emissive, AO textures |
+| Multi-UV (`TEXCOORD_0` / `TEXCOORD_1`) | **Yes** | Vertex packs both; material picks set per texture |
+| `KHR_texture_transform` | **Yes (MVP)** | Static scale / offset / rotation at load (animated needs animation_pointer) |
+| `KHR_materials_clearcoat` | **Yes (MVP)** | Factor + roughness; second specular/env lobe (no clearcoat maps yet) |
+| `KHR_materials_emissive_strength` | **Yes** | Multiplies emissive RGB factor |
+| `KHR_materials_transmission` | **MVP** | Factor + blend alpha + env refraction proxy (no full refraction/MRT) |
+| `KHR_materials_iridescence` | **MVP** | Simplified thin-film F0 tint (not full spectral BRDF) |
+| `KHR_materials_variants` | **Partial** | Applies **variant index 0** at load only (no runtime switch UI) |
 | Core node TRS + hierarchy | **Yes** | `TransformManager` |
 | Core animations (`translation` / `rotation` / `scale`) | **Yes** | `AnimationSystem` |
 | Core morph weights path (`weights`) | **Yes** | CPU morph — `MorphSystem` |
 | Core skins (`JOINTS_0` / `WEIGHTS_0`, IBM) | **Yes** | `SkinSystem` + VS skin |
 | `KHR_lights_punctual` | **Partial** | Load + world xform + shade; no shadows |
-| `alphaMode` OPAQUE / MASK / BLEND | **MVP** | MASK discard, BLEND pipeline blend; no sort |
+| `alphaMode` OPAQUE / MASK / BLEND | **Yes (MVP)** | Dual pipelines: opaque depth-write on; BLEND/transmission depth-write off. No transparent sort |
 | Non-indexed primitives | **Yes** | Synthetic indices (e.g. Fox) |
 | Missing NORMAL / TEXCOORD | **Yes** | Defaults + optional face normals |
 
@@ -37,19 +44,18 @@ Update this file when adding loader, material, or animation support.
 | Extension | Role in that asset |
 |-----------|-------------------|
 | **`KHR_animation_pointer`** | Animation channels target JSON pointers (not only node TRS). Here: animated **texture transform** offsets/rotations/scales on many materials |
-| **`KHR_texture_transform`** | UV offset / rotation / scale on texture infos (often nested under other material extensions) |
+| **`KHR_texture_transform`** | UV offset / rotation / scale on texture infos (static transforms **supported** at load; **animated** transforms need pointer) |
 
-**Why it does not work today**
-1. Animation loader only handles `target.path` ∈ {`translation`,`rotation`,`scale`,`weights`} — **`pointer` is ignored**.
-2. Materials have **no UV transform** uniforms or shader path (`KHR_texture_transform` not applied).
-3. The sample also stacks many **advanced material** extensions (below); even with pointer support, visuals would still diverge until those shade.
+**Why it does not work fully today**
+1. Animation loader only handles `target.path` ∈ {`translation`,`rotation`,`scale`,`weights`} — **`pointer` is ignored** (so animated UV transforms never update).
+2. Static `KHR_texture_transform` + multi-UV **are** applied at load/sample (see Material UV fields).
+3. The sample also stacks many **advanced material** extensions (below); visuals still diverge until those shade.
 
 **Future work (when prioritized)**
 1. Parse `channel.target.extensions.KHR_animation_pointer.pointer` (JSON pointer into the glTF document).
-2. Resolve pointer → engine binding (e.g. material slot + `textureTransform.offset/rotation/scale`).
-3. Store per-texture UV transforms; sample animation into them each frame.
-4. Apply transform in VS or FS when sampling bindless textures (or transform UVs in VS).
-5. Optionally support pointer targets into lights / node extras as the extension allows.
+2. Resolve pointer → engine binding (e.g. material slot + live `textureTransform.offset/rotation/scale`).
+3. Sample animation into those fields each frame (static path already exists).
+4. Optionally support pointer targets into lights / node extras as the extension allows.
 
 ---
 
@@ -59,15 +65,15 @@ These appear on **AnimationPointerUVs** and many material samples. The engine us
 
 | Extension | Purpose |
 |-----------|---------|
-| `KHR_materials_transmission` | Specular transmission / glass |
-| `KHR_materials_volume` | Attenuation / thickness |
-| `KHR_materials_specular` | Specular factor / color (beyond dielectric F0) |
+| `KHR_materials_volume` | Attenuation / thickness (not loaded) |
+| `KHR_materials_specular` | Specular factor / color beyond dielectric F0 |
 | `KHR_materials_sheen` | Cloth sheen |
-| `KHR_materials_clearcoat` | Clear coat layer |
 | `KHR_materials_anisotropy` | Anisotropic specular |
-| `KHR_materials_iridescence` | Thin-film iridescence |
 | `KHR_materials_diffuse_transmission` | Diffuse transmission |
-| `KHR_materials_unlit` | Unlit (extension is **required** by AnimationPointerUVs) |
+| `KHR_materials_unlit` | Unlit (required by AnimationPointerUVs) |
+| Clearcoat/transmission/iridescence **textures** | Factor-only MVP; maps ignored for now |
+| Full transmission / volume glass | Transparent pass exists (depth-write off); still no refraction MRT / volume IOR |
+| Runtime material variants UI | Only variant 0 applied at load |
 
 **Note:** `KHR_materials_unlit` is in `extensionsRequired` for AnimationPointerUVs — a strict client may refuse the file; we still load geometry with the default PBR path (incorrect for unlit panels).
 
@@ -91,9 +97,9 @@ Runtime **Jolt** exists; glTF physics load does **not**.
 | Sparse accessors | Not fully verified |
 | Meshopt / Draco compression | Not supported |
 | `EXT_mesh_gpu_instancing` | Not supported |
-| Material variants (`KHR_materials_variants`) | Not supported |
+| Material variants UI (runtime switch) | Load applies index 0 only |
 | Embedded images via bufferView only | Warned / skipped in loader |
-| Full transparent sort / dual opaque-blend queues | MVP blend only |
+| Transparent sort / OIT | Dual queues yes; no sort / OIT |
 | GPU morph | CPU only |
 
 ---
@@ -103,17 +109,18 @@ Runtime **Jolt** exists; glTF physics load does **not**.
 - `assets/scenes/configuration.json` lists **all** `glTF-Sample-Assets` models for regression browsing.
 - Samples that depend on **§2** extensions are expected to load (geometry may show) but **not** match Khronos reference renders until the listed work lands.
 - Prefer documenting “known incomplete” here rather than silent wrong visuals.
+- **CarConcept** is a good smoke test for multi-UV, texture transform, transmission glass, emissive maps (`Dash_E` / `Khronos_C`), and opaque/transparent split.
 
 ---
 
 ## 4. Implementation order (suggested, not committed)
 
-1. **`KHR_texture_transform`** (static) — high leverage for many assets  
-2. **`KHR_animation_pointer`** targeting texture transforms — unlocks AnimationPointerUVs UV motion  
-3. **`KHR_materials_unlit`** — cheap correctness for that sample’s required ext  
-4. Transmission / volume / clearcoat / etc. — large shader + pipeline investment  
+1. **`KHR_animation_pointer`** targeting texture transforms — unlocks AnimationPointerUVs UV motion  
+2. **`KHR_materials_unlit`** — cheap correctness for that sample’s required ext  
+3. Transmission / volume maps + better glass — refraction/MRT investment  
+4. Clearcoat/iridescence maps; variants UI  
 5. **Physics KHR** — product path for ABeautifulGame / VR chess (separate plan)
 
 ---
 
-*Last reviewed: end of session 2026-08-03 (desktop animation + alpha MVP + morph + physics foundation era).*
+*Last reviewed: 2026-08-04 (CarConcept materials + opaque/transparent cull + AO/UV fixes).*

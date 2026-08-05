@@ -31,6 +31,8 @@ class MaterialManager {
     void shutdown();
 
     [[nodiscard]] uint32_t get_material_count() const { return material_count_; }
+    [[nodiscard]] uint32_t get_material_flags(uint32_t material_id) const;
+    [[nodiscard]] const Material* get_material(uint32_t material_id) const;
 
   private:
     VkDevice device_{VK_NULL_HANDLE};

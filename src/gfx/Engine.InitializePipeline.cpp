@@ -93,7 +93,8 @@ bool gfx::Engine::init_graphics_pipeline() {
         { .location = 0, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 0  },
         { .location = 1, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 12 },
         { .location = 2, .binding = 0, .format = VK_FORMAT_R32G32B32A32_SFLOAT, .offset = 24 },
-        { .location = 3, .binding = 0, .format = VK_FORMAT_R32G32_SFLOAT, .offset = 40 },
+        // UV0.xy + UV1.xy as half floats (true range, not unorm/frac-packed)
+        { .location = 3, .binding = 0, .format = VK_FORMAT_R16G16B16A16_SFLOAT, .offset = 40 },
         { .location = 4, .binding = 0, .format = VK_FORMAT_R8G8B8A8_UINT, .offset = 52 },
         { .location = 5, .binding = 0, .format = VK_FORMAT_R8G8B8A8_UNORM, .offset = 48 },
     };
@@ -161,35 +162,29 @@ bool gfx::Engine::init_graphics_pipeline() {
     multisampling.alphaToCoverageEnable = VK_FALSE;
     multisampling.alphaToOneEnable = VK_FALSE;
 
-    // Alpha blending for glTF BLEND materials (OPAQUE/MASK output a=1).
-    // Overlapping transparent order is not sorted yet (MVP).
-    VkPipelineColorBlendAttachmentState color_blend_attachment = {};
-    color_blend_attachment.colorWriteMask =
+    // Opaque: no blend needed (shader forces a=1). Transparent pipeline blends.
+    VkPipelineColorBlendAttachmentState blend_off = {};
+    blend_off.colorWriteMask =
         VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
         VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-    color_blend_attachment.blendEnable = VK_TRUE;
-    color_blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-    color_blend_attachment.dstColorBlendFactor =
-        VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-    color_blend_attachment.colorBlendOp = VK_BLEND_OP_ADD;
-    color_blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-    color_blend_attachment.dstAlphaBlendFactor =
-        VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-    color_blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD;
+    blend_off.blendEnable = VK_FALSE;
+
+    VkPipelineColorBlendAttachmentState blend_on = blend_off;
+    blend_on.blendEnable = VK_TRUE;
+    blend_on.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    blend_on.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blend_on.colorBlendOp = VK_BLEND_OP_ADD;
+    blend_on.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    blend_on.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blend_on.alphaBlendOp = VK_BLEND_OP_ADD;
 
     VkPipelineColorBlendStateCreateInfo color_blending = {};
     color_blending.sType =
         VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
     color_blending.logicOpEnable = VK_FALSE;
-    color_blending.logicOp = VK_LOGIC_OP_COPY;
     color_blending.attachmentCount = 1;
-    color_blending.pAttachments = &color_blend_attachment;
-    color_blending.blendConstants[0] = 0.0f;
-    color_blending.blendConstants[1] = 0.0f;
-    color_blending.blendConstants[2] = 0.0f;
-    color_blending.blendConstants[3] = 0.0f;
+    color_blending.pAttachments = &blend_off;
 
-    // Dynamic state
     std::array<VkDynamicState, 2> dynamic_states = {VK_DYNAMIC_STATE_VIEWPORT,
                                                     VK_DYNAMIC_STATE_SCISSOR};
     VkPipelineDynamicStateCreateInfo dynamic_state = {};
@@ -198,7 +193,17 @@ bool gfx::Engine::init_graphics_pipeline() {
         static_cast<uint32_t>(dynamic_states.size());
     dynamic_state.pDynamicStates = dynamic_states.data();
 
-    // Pipeline creation
+    VkPipelineDepthStencilStateCreateInfo depth_opaque{};
+    depth_opaque.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depth_opaque.depthTestEnable = VK_TRUE;
+    depth_opaque.depthWriteEnable = VK_TRUE;
+    depth_opaque.depthCompareOp = VK_COMPARE_OP_LESS;
+
+    // Transparent: test against opaque depth, do NOT write (so cabin stays visible
+    // through glass regardless of draw order among transparent batches).
+    VkPipelineDepthStencilStateCreateInfo depth_transparent = depth_opaque;
+    depth_transparent.depthWriteEnable = VK_FALSE;
+
     VkGraphicsPipelineCreateInfo pipeline_info = {};
     pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
     pipeline_info.stageCount = 2;
@@ -208,39 +213,36 @@ bool gfx::Engine::init_graphics_pipeline() {
     pipeline_info.pViewportState = &viewport_state;
     pipeline_info.pRasterizationState = &rasterizer;
     pipeline_info.pMultisampleState = &multisampling;
-
-    // Basic depth state to match the render pass
-    VkPipelineDepthStencilStateCreateInfo depth_stencil{};
-    depth_stencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depth_stencil.depthTestEnable = VK_TRUE;
-    depth_stencil.depthWriteEnable = VK_TRUE;
-    depth_stencil.depthCompareOp = VK_COMPARE_OP_LESS;
-    depth_stencil.depthBoundsTestEnable = VK_FALSE;
-    depth_stencil.stencilTestEnable = VK_FALSE;
-
-    pipeline_info.pDepthStencilState = &depth_stencil;
+    pipeline_info.pDepthStencilState = &depth_opaque;
     pipeline_info.pColorBlendState = &color_blending;
     pipeline_info.pDynamicState = &dynamic_state;
     pipeline_info.layout = renderer.vk.pipeline_layout;
     pipeline_info.renderPass = renderer.main_pass.render_pass;
     pipeline_info.subpass = 0;
-    pipeline_info.basePipelineHandle = VK_NULL_HANDLE;
-    pipeline_info.basePipelineIndex = -1;
 
     if (vkCreateGraphicsPipelines(renderer.vk.device, VK_NULL_HANDLE, 1,
                                   &pipeline_info, nullptr,
                                   &renderer.vk.pipeline) != VK_SUCCESS) {
-        vkDestroyShaderModule(renderer.vk.device, vertex_shader_module,
-                              nullptr);
-        vkDestroyShaderModule(renderer.vk.device, fragment_shader_module,
-                              nullptr);
-        LOG_ERROR("Failed to create graphics pipeline");
+        vkDestroyShaderModule(renderer.vk.device, vertex_shader_module, nullptr);
+        vkDestroyShaderModule(renderer.vk.device, fragment_shader_module, nullptr);
+        LOG_ERROR("Failed to create opaque graphics pipeline");
+        return false;
+    }
+
+    color_blending.pAttachments = &blend_on;
+    pipeline_info.pDepthStencilState = &depth_transparent;
+    if (vkCreateGraphicsPipelines(renderer.vk.device, VK_NULL_HANDLE, 1,
+                                  &pipeline_info, nullptr,
+                                  &renderer.vk.transparent_pipeline) != VK_SUCCESS) {
+        vkDestroyShaderModule(renderer.vk.device, vertex_shader_module, nullptr);
+        vkDestroyShaderModule(renderer.vk.device, fragment_shader_module, nullptr);
+        LOG_ERROR("Failed to create transparent graphics pipeline");
         return false;
     }
 
     vkDestroyShaderModule(renderer.vk.device, vertex_shader_module, nullptr);
     vkDestroyShaderModule(renderer.vk.device, fragment_shader_module, nullptr);
-
+    LOG_INFO("[Pipeline] Opaque + transparent (depth-write-off) shade pipelines ready");
     return true;
 }
 
@@ -297,7 +299,7 @@ bool gfx::Engine::init_depth_prepass_pipeline() {
         {.location = 0, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 0},
         {.location = 1, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 12},
         {.location = 2, .binding = 0, .format = VK_FORMAT_R32G32B32A32_SFLOAT, .offset = 24},
-        {.location = 3, .binding = 0, .format = VK_FORMAT_R32G32_SFLOAT, .offset = 40},
+        {.location = 3, .binding = 0, .format = VK_FORMAT_R16G16B16A16_SFLOAT, .offset = 40},
         {.location = 4, .binding = 0, .format = VK_FORMAT_R8G8B8A8_UINT, .offset = 52},
         {.location = 5, .binding = 0, .format = VK_FORMAT_R8G8B8A8_UNORM, .offset = 48},
     };

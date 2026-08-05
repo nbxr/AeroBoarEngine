@@ -11,7 +11,8 @@ struct CullItem {
     vec4  aabb_min; // xyz = local AABB min
     vec4  aabb_max; // xyz = local AABB max
     uvec4 meta;     // x = material_index, y = batch_index, z = base, w = capacity
-    uvec4 skin;     // x = joint_base, y = joint_count (0 = rigid)
+    // x=joint_base, y=joint_count, z=material flags, w=1 if writes opaque depth (Hi-Z)
+    uvec4 skin;
 };
 
 struct DrawInstance {
@@ -23,11 +24,15 @@ layout(set = 0, binding = 0, std140) uniform CullGlobals {
     vec4  planes[6];
     uint  item_count;
     uint  batch_count;
-    uint  hzb_enabled; // 1 = test same-frame HZB (from depth prepass)
+    uint  hzb_enabled; // 1 = test same-frame HZB (from opaque depth prepass)
     uint  hzb_mips;
-    // View-projection that wrote the HZB depth (same as frustum camera for same-frame).
     mat4  hzb_view_proj;
-    vec4  hzb_info; // xy = HZB mip0 size (pixels), z = depth bias, w = unused
+    vec4  hzb_info; // xy = HZB mip0 size (pixels), z = depth bias
+    uint  emit_filter; // 0=all, 1=opaque depth writers, 2=transparent only
+    // Offset into combined out_instances (0 = opaque half, N = transparent half)
+    uint  instance_base_offset;
+    uint  pad1;
+    uint  pad2;
 } globals;
 
 layout(set = 0, binding = 1, std430) readonly buffer CullItems {
@@ -131,27 +136,25 @@ bool hzb_occluded(vec3 wmin, vec3 wmax) {
     vec2 size_px = uv_size * hzb_size;
     float max_extent = max(size_px.x, size_px.y);
 
-    // Mip so the larger axis spans ~4 texels (finer than "1 texel" which over-dilates).
-    // Old formula used log2(extent)-1 (~2 texels) and still over-culled neighbors.
+    // Prefer *fine* mips. Min-Z pyramids dilate occluders at coarse levels, which
+    // false-culls hollow assemblies (car body vs interior seats through windows).
     float max_mip = float(max(globals.hzb_mips, 1u) - 1u);
-    float mip_f = floor(log2(max(max_extent, 1.0)) - 2.0);
-    mip_f = clamp(mip_f, 0.0, max_mip);
+    float mip_f = floor(log2(max(max_extent, 1.0)) - 3.0);
+    // Never climb too high: coarse mips are unsafe for complex interiors.
+    mip_f = clamp(mip_f, 0.0, min(max_mip, 5.0));
 
-    // Half-texel pad *at the chosen mip only* (covers filtering/quantization).
-    // Percent-of-AABB padding expands into neighboring occluders and grows them.
-    vec2 texel_uv = exp2(mip_f) / hzb_size;
-    uv_min = clamp(uv_min - 0.5 * texel_uv, vec2(0.0), vec2(1.0));
-    uv_max = clamp(uv_max + 0.5 * texel_uv, vec2(0.0), vec2(1.0));
+    // No UV padding into neighboring texels (that grows body over window holes).
     if (uv_min.x >= uv_max.x || uv_min.y >= uv_max.y)
         return false;
 
-    // 3x3 nearest samples; use MAX of mins so any "hole" (farther surface / sky)
-    // prevents cull. Min-of-mins would treat a thin occluder as a solid wall.
+    // Dense samples: any deeper sample (window hole / interior surface) raises
+    // `farthest` and blocks the cull.
     float farthest = 0.0;
     float closest = 1.0;
-    for (int y = 0; y < 3; ++y) {
-        for (int x = 0; x < 3; ++x) {
-            vec2 t = vec2(float(x), float(y)) / 2.0;
+    const int kGrid = 4;
+    for (int y = 0; y < kGrid; ++y) {
+        for (int x = 0; x < kGrid; ++x) {
+            vec2 t = vec2(float(x), float(y)) / float(kGrid - 1);
             vec2 uv = mix(uv_min, uv_max, t);
             float s = textureLod(hzb, uv, mip_f).r;
             farthest = max(farthest, s);
@@ -159,20 +162,26 @@ bool hzb_occluded(vec3 wmin, vec3 wmax) {
         }
     }
 
-    // Any sample near clear/far → footprint not fully occluded.
-    if (farthest >= 0.999)
+    // Clear / far sample → not fully covered by an occluder.
+    if (farthest >= 0.998)
         return false;
 
-    // Mixed depths under the rect (edge of occluder / silhouette) → do not cull.
-    // Threshold scales a little with distance (depth precision / slope).
+    // Any meaningful depth variation under the rect → silhouette / hollow /
+    // layered geometry (body + cabin). Do not occlude-cull.
     float depth_spread = farthest - closest;
-    float spread_limit = max(0.015, z_near * 0.05);
+    float spread_limit = max(0.004, z_near * 0.015);
     if (depth_spread > spread_limit)
         return false;
 
-    // Object nearest Z must be clearly behind the least-occluding HZB sample.
-    float bias = max(globals.hzb_info.z, 0.002);
-    bias = max(bias, z_near * 0.01);
+    // Also: if the closest surface is clearly in front of the AABB near plane
+    // *and* the farthest sample reaches past the AABB near plane, the rect is
+    // mixed (occluder + hole). Skip cull.
+    if (closest + 0.002 < z_near && farthest + 0.002 >= z_near)
+        return false;
+
+    // Fully covered only if every sample is still closer than the object.
+    float bias = max(globals.hzb_info.z, 0.004);
+    bias = max(bias, z_near * 0.02);
     return z_near > farthest + bias;
 }
 
@@ -186,10 +195,18 @@ void main() {
     if (batch >= globals.batch_count)
         return;
 
+    // emit_filter: 1 = solid depth (opaque/MASK), 2 = transparent (blend/transmission)
+    // skin.w == 1 when the material writes opaque depth for Hi-Z.
+    if (globals.emit_filter == 1u && item.skin.w == 0u)
+        return;
+    if (globals.emit_filter == 2u && item.skin.w != 0u)
+        return;
+
     vec3 wmin, wmax;
     transform_aabb(item.model, item.aabb_min.xyz, item.aabb_max.xyz, wmin, wmax);
     if (!frustum_intersects_aabb(wmin, wmax))
         return;
+    // Hi-Z was built from opaque-only depth; still test all shade candidates.
     if (hzb_occluded(wmin, wmax))
         return;
 
@@ -202,5 +219,5 @@ void main() {
     DrawInstance di;
     di.model = item.model;
     di.meta = uvec4(item.meta.x, item.skin.x, item.skin.y, 0u);
-    out_instances[base + slot] = di;
+    out_instances[globals.instance_base_offset + base + slot] = di;
 }

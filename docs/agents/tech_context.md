@@ -162,7 +162,7 @@ The single bindless descriptor set (allocated once, UPDATE_AFTER_BIND) uses thes
 |---------|-------------------------------|--------|--------------------------------------|-------|
 | 0       | UNIFORM_BUFFER                | 1      | `FrameConstants` — camera xyz + exposure (w), lightCount, SH, IBL indices. std140-safe (vec4/uvec4 only). | `gfx::FrameConstants`; double-buffered per frame |
 | 1       | STORAGE_BUFFER                | 1      | `DrawInstanceGPU[]` for instancing (model + material index) | Per-frame GPU cull output; multi-draw uses `firstInstance` = batch base (Vulkan `gl_InstanceIndex` already includes base) |
-| 2       | STORAGE_BUFFER                | 1      | Materials (PBR + texture indices); single packed SSBO, runtime array in shader. `gfx::Material` is 80 bytes / align 16 (std430). | `gfx::MaterialManager` |
+| 2       | STORAGE_BUFFER                | 1      | Materials (PBR + maps + multi-UV/transform); single packed SSBO, runtime array in shader. `gfx::Material` is **256 bytes** / align 16 (std430). | `gfx::MaterialManager` |
 | 3       | STORAGE_BUFFER                | 1      | MeshPrimitiveSSBO metadata (v/i offsets) | `gfx::MeshManager` |
 | 4       | STORAGE_BUFFER                | 1      | Vertex buffer (legacy SSBO view; primary path uses vertex attributes) | `gfx::MeshManager` |
 | 5       | STORAGE_BUFFER                | 1      | Index buffer                         | `gfx::MeshManager` |

@@ -9,8 +9,10 @@
 #include <filesystem>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/packing.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <cstring>
 #include <iostream>
 #include <map>
 #include <tiny_gltf.h>
@@ -133,6 +135,44 @@ scene::GltfLoader::extract_material_data(const std::string &filename,
         return {img.name, uri_path};
     };
 
+    // Apply texCoord + KHR_texture_transform from a tinygltf texture info.
+    auto apply_tex_info = [](gfx::Material& material, uint32_t slot, int tex_coord,
+                             const tinygltf::ExtensionMap& extensions) {
+        int set = tex_coord >= 0 ? tex_coord : 0;
+        float scale_u = 1.f, scale_v = 1.f, off_u = 0.f, off_v = 0.f, rot = 0.f;
+        auto it = extensions.find("KHR_texture_transform");
+        if (it != extensions.end() && it->second.IsObject()) {
+            const auto& obj = it->second.Get<tinygltf::Value::Object>();
+            auto get_num = [&](const char* key, float def) -> float {
+                auto jt = obj.find(key);
+                if (jt == obj.end())
+                    return def;
+                if (jt->second.IsNumber())
+                    return static_cast<float>(jt->second.GetNumberAsDouble());
+                return def;
+            };
+            auto get_vec2 = [&](const char* key, float& x, float& y) {
+                auto jt = obj.find(key);
+                if (jt == obj.end() || !jt->second.IsArray())
+                    return;
+                const auto& arr = jt->second.Get<tinygltf::Value::Array>();
+                if (arr.size() >= 1 && arr[0].IsNumber())
+                    x = static_cast<float>(arr[0].GetNumberAsDouble());
+                if (arr.size() >= 2 && arr[1].IsNumber())
+                    y = static_cast<float>(arr[1].GetNumberAsDouble());
+            };
+            get_vec2("scale", scale_u, scale_v);
+            get_vec2("offset", off_u, off_v);
+            rot = get_num("rotation", 0.f);
+            // Extension may override texCoord
+            auto jt = obj.find("texCoord");
+            if (jt != obj.end() && jt->second.IsNumber())
+                set = static_cast<int>(jt->second.GetNumberAsInt());
+        }
+        material.set_texcoord(slot, static_cast<uint32_t>(std::max(0, set)));
+        material.set_uv_transform(slot, scale_u, scale_v, off_u, off_v, rot);
+    };
+
     // create materials in the material manager using the proper typed glTF structures
     for (const auto &mat : model.materials) {
         gfx::Material material{};
@@ -143,9 +183,9 @@ scene::GltfLoader::extract_material_data(const std::string &filename,
         material.ao_texture_index = gfx::Material::NO_TEXTURE;
         material.sampler_index = gfx::Material::NO_TEXTURE;
         material.flags = 0;
-        material.set_alpha_cutoff(0.5f);
+        material.alpha_cutoff = 0.5f;
 
-        // --- PBR base values (with correct glTF 2.0 defaults) ---
+        // --- PBR base values (glTF 2.0 defaults) ---
         const auto& pbr = mat.pbrMetallicRoughness;
 
         if (pbr.baseColorFactor.size() == 4) {
@@ -158,78 +198,154 @@ scene::GltfLoader::extract_material_data(const std::string &filename,
             material.albedo = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
         }
 
+        // Factors multiply textures in the shader when maps are present.
         material.metallic  = static_cast<float>(pbr.metallicFactor);
         material.roughness = static_cast<float>(pbr.roughnessFactor);
-        material.normalStrength = 1.0f; // reasonable default; can be driven by normalTexture.scale later
+        material.normalStrength = 1.0f;
 
-        // --- Textures via proper glTF accessors (not the legacy ParameterMap) ---
-        // baseColor
+        // --- Textures (indices + texCoord + KHR_texture_transform) ---
         {
-            auto [img_name, uri] = get_safe_image_path(pbr.baseColorTexture.index);
+            const auto& info = pbr.baseColorTexture;
+            auto [img_name, uri] = get_safe_image_path(info.index);
             if (!uri.empty()) {
                 material.albedo_texture_index =
-                    renderer.texture_manager.get_texture_handle(img_name, uri.string(), /*is_srgb=*/true);
+                    renderer.texture_manager.get_texture_handle(img_name, uri.string(),
+                                                               /*is_srgb=*/true);
                 material.flags |= gfx::Material::kFlagHasAlbedoTex;
+                apply_tex_info(material, gfx::Material::kUvAlbedo, info.texCoord,
+                               info.extensions);
             }
         }
-
-        // metallicRoughness (typical layout: G=roughness, B=metallic)
         {
-            auto [img_name, uri] = get_safe_image_path(pbr.metallicRoughnessTexture.index);
+            const auto& info = pbr.metallicRoughnessTexture;
+            auto [img_name, uri] = get_safe_image_path(info.index);
             if (!uri.empty()) {
                 material.roughness_texture_index =
                     renderer.texture_manager.get_texture_handle(img_name, uri.string());
                 material.flags |= gfx::Material::kFlagHasOrmTex;
+                apply_tex_info(material, gfx::Material::kUvOrm, info.texCoord,
+                               info.extensions);
             }
         }
-
-        // normalTexture (top-level on Material)
         {
-            auto [img_name, uri] = get_safe_image_path(mat.normalTexture.index);
+            const auto& info = mat.normalTexture;
+            auto [img_name, uri] = get_safe_image_path(info.index);
             if (!uri.empty()) {
                 material.normal_texture_index =
                     renderer.texture_manager.get_texture_handle(img_name, uri.string());
                 material.flags |= gfx::Material::kFlagHasNormalMap;
-                // If we want to honor scale: material.normalStrength = static_cast<float>(mat.normalTexture.scale);
+                if (info.scale != 0.0)
+                    material.normalStrength = static_cast<float>(info.scale);
+                apply_tex_info(material, gfx::Material::kUvNormal, info.texCoord,
+                               info.extensions);
             }
         }
-
-        // emissiveTexture
         {
-            auto [img_name, uri] = get_safe_image_path(mat.emissiveTexture.index);
+            const auto& info = mat.emissiveTexture;
+            auto [img_name, uri] = get_safe_image_path(info.index);
             if (!uri.empty()) {
                 material.emissive_texture_index =
-                    renderer.texture_manager.get_texture_handle(img_name, uri.string());
+                    renderer.texture_manager.get_texture_handle(img_name, uri.string(),
+                                                               /*is_srgb=*/true);
                 material.flags |= gfx::Material::kFlagHasEmissiveTex;
+                apply_tex_info(material, gfx::Material::kUvEmissive, info.texCoord,
+                               info.extensions);
             }
         }
-
-        // occlusionTexture (AO)
         {
-            auto [img_name, uri] = get_safe_image_path(mat.occlusionTexture.index);
+            const auto& info = mat.occlusionTexture;
+            auto [img_name, uri] = get_safe_image_path(info.index);
             if (!uri.empty()) {
                 material.ao_texture_index =
                     renderer.texture_manager.get_texture_handle(img_name, uri.string());
+                apply_tex_info(material, gfx::Material::kUvAo, info.texCoord,
+                               info.extensions);
             }
         }
 
-        // Emissive factor (simple average into the existing scalar for now)
-        if (mat.emissiveFactor.size() == 3) {
-            float avg = (static_cast<float>(mat.emissiveFactor[0]) +
-                         static_cast<float>(mat.emissiveFactor[1]) +
-                         static_cast<float>(mat.emissiveFactor[2])) / 3.0f;
-            material.emissive = avg;
-            if (avg > 0.0f)
-                material.flags |= gfx::Material::kFlagIsEmissive;
+        // Emissive factor (RGB) + KHR_materials_emissive_strength
+        material.emissive_factor = glm::vec4(0.f, 0.f, 0.f, 1.f);
+        if (mat.emissiveFactor.size() >= 3) {
+            material.emissive_factor = glm::vec4(
+                static_cast<float>(mat.emissiveFactor[0]),
+                static_cast<float>(mat.emissiveFactor[1]),
+                static_cast<float>(mat.emissiveFactor[2]), 1.f);
+        }
+        {
+            auto it = mat.extensions.find("KHR_materials_emissive_strength");
+            if (it != mat.extensions.end() && it->second.IsObject()) {
+                const auto& obj = it->second.Get<tinygltf::Value::Object>();
+                auto jt = obj.find("emissiveStrength");
+                if (jt != obj.end() && jt->second.IsNumber())
+                    material.emissive_factor.w =
+                        static_cast<float>(jt->second.GetNumberAsDouble());
+            }
+        }
+        if (glm::length(glm::vec3(material.emissive_factor)) > 1e-6f ||
+            (material.flags & gfx::Material::kFlagHasEmissiveTex))
+            material.flags |= gfx::Material::kFlagIsEmissive;
+
+        // KHR_materials_clearcoat (factors only — CarConcept has no clearcoat maps)
+        {
+            auto it = mat.extensions.find("KHR_materials_clearcoat");
+            if (it != mat.extensions.end() && it->second.IsObject()) {
+                const auto& obj = it->second.Get<tinygltf::Value::Object>();
+                auto num = [&](const char* k, float def) {
+                    auto jt = obj.find(k);
+                    if (jt != obj.end() && jt->second.IsNumber())
+                        return static_cast<float>(jt->second.GetNumberAsDouble());
+                    return def;
+                };
+                material.clearcoat = num("clearcoatFactor", 0.f);
+                material.clearcoat_roughness = num("clearcoatRoughnessFactor", 0.f);
+                if (material.clearcoat > 1e-4f)
+                    material.flags |= gfx::Material::kFlagClearcoat;
+            }
         }
 
-        // glTF alphaMode: OPAQUE (default) | MASK | BLEND
-        // tinygltf: empty string means OPAQUE; alphaCutoff defaults to 0.5 when MASK.
+        // KHR_materials_transmission (MVP: factor only, no refraction pass)
+        {
+            auto it = mat.extensions.find("KHR_materials_transmission");
+            if (it != mat.extensions.end() && it->second.IsObject()) {
+                const auto& obj = it->second.Get<tinygltf::Value::Object>();
+                auto jt = obj.find("transmissionFactor");
+                if (jt != obj.end() && jt->second.IsNumber())
+                    material.transmission =
+                        static_cast<float>(jt->second.GetNumberAsDouble());
+                if (material.transmission > 1e-4f) {
+                    material.flags |= gfx::Material::kFlagTransmission;
+                    // Glass-like: force blend so background can show through a bit
+                    material.flags |= gfx::Material::kFlagAlphaBlend;
+                }
+            }
+        }
+
+        // KHR_materials_iridescence (simplified single-thickness thin-film tint)
+        {
+            auto it = mat.extensions.find("KHR_materials_iridescence");
+            if (it != mat.extensions.end() && it->second.IsObject()) {
+                const auto& obj = it->second.Get<tinygltf::Value::Object>();
+                auto num = [&](const char* k, float def) {
+                    auto jt = obj.find(k);
+                    if (jt != obj.end() && jt->second.IsNumber())
+                        return static_cast<float>(jt->second.GetNumberAsDouble());
+                    return def;
+                };
+                material.iridescence = num("iridescenceFactor", 0.f);
+                material.iridescence_ior = num("iridescenceIor", 1.3f);
+                const float tmin = num("iridescenceThicknessMinimum", 100.f);
+                const float tmax = num("iridescenceThicknessMaximum", 400.f);
+                material.iridescence_thickness = 0.5f * (tmin + tmax);
+                if (material.iridescence > 1e-4f)
+                    material.flags |= gfx::Material::kFlagIridescence;
+            }
+        }
+
+        // glTF alphaMode
         if (mat.alphaMode == "MASK") {
             material.flags |= gfx::Material::kFlagAlphaMask;
-            const float cutoff =
+            material.alpha_cutoff =
                 (mat.alphaCutoff > 0.0) ? static_cast<float>(mat.alphaCutoff) : 0.5f;
-            material.set_alpha_cutoff(cutoff);
         } else if (mat.alphaMode == "BLEND") {
             material.flags |= gfx::Material::kFlagAlphaBlend;
         }
@@ -337,18 +453,30 @@ scene::GltfLoader::extract_mesh_data(const tinygltf::Model &model,
 
             auto norm_it = primitive.attributes.find("NORMAL");
             auto tex_it = primitive.attributes.find("TEXCOORD_0");
+            auto tex1_it = primitive.attributes.find("TEXCOORD_1");
             auto joints_it = primitive.attributes.find("JOINTS_0");
             auto weights_it = primitive.attributes.find("WEIGHTS_0");
 
             bool has_normal = (norm_it != primitive.attributes.end());
             bool has_tex0   = (tex_it != primitive.attributes.end());
+            bool has_tex1   = (tex1_it != primitive.attributes.end());
             bool has_joints = (joints_it != primitive.attributes.end());
             bool has_weights = (weights_it != primitive.attributes.end());
 
             const tinygltf::Accessor *norm_acc_ptr = nullptr;
             const tinygltf::Accessor *tex_acc_ptr  = nullptr;
+            const tinygltf::Accessor *tex1_acc_ptr = nullptr;
             const tinygltf::Accessor *joints_acc_ptr = nullptr;
             const tinygltf::Accessor *weights_acc_ptr = nullptr;
+
+            auto texcoord_accessor_ok = [](const tinygltf::Accessor& acc) {
+                return (acc.type == TINYGLTF_TYPE_VEC2) &&
+                       (acc.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT ||
+                        acc.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT ||
+                        acc.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE ||
+                        acc.componentType == TINYGLTF_COMPONENT_TYPE_SHORT ||
+                        acc.componentType == TINYGLTF_COMPONENT_TYPE_BYTE);
+            };
 
             if (has_normal) {
                 norm_acc_ptr = &model.accessors[norm_it->second];
@@ -361,16 +489,16 @@ scene::GltfLoader::extract_mesh_data(const tinygltf::Model &model,
 
             if (has_tex0) {
                 tex_acc_ptr = &model.accessors[tex_it->second];
-                bool texcoord_ok =
-                    (tex_acc_ptr->type == TINYGLTF_TYPE_VEC2) &&
-                    (tex_acc_ptr->componentType == TINYGLTF_COMPONENT_TYPE_FLOAT ||
-                     tex_acc_ptr->componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT ||
-                     tex_acc_ptr->componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE ||
-                     tex_acc_ptr->componentType == TINYGLTF_COMPONENT_TYPE_SHORT ||
-                     tex_acc_ptr->componentType == TINYGLTF_COMPONENT_TYPE_BYTE);
-                if (!texcoord_ok) {
+                if (!texcoord_accessor_ok(*tex_acc_ptr)) {
                     has_tex0 = false;
                     tex_acc_ptr = nullptr;
+                }
+            }
+            if (has_tex1) {
+                tex1_acc_ptr = &model.accessors[tex1_it->second];
+                if (!texcoord_accessor_ok(*tex1_acc_ptr)) {
+                    has_tex1 = false;
+                    tex1_acc_ptr = nullptr;
                 }
             }
 
@@ -528,36 +656,24 @@ scene::GltfLoader::extract_mesh_data(const tinygltf::Model &model,
                     v.tangent[3] = 1.0f;
                 }
 
-                // UV → packed uint16_t (little-endian) into 4x uint8_t
-                {
-                    glm::vec2 t{0.0f, 0.0f};
-                    if (has_tex0 && tex_acc_ptr) {
-                        // Use the helper that properly handles normalized integer UVs
-                        t = GetTexcoordFromAccessor(model, *tex_acc_ptr, i);
-                    }
-                    // else: leave at (0,0) — fine for untextured proxy geometry (e.g. Cameras.gltf test plane)
+                // UV0 + UV1 as IEEE half floats (R16G16B16A16_SFLOAT vertex attr).
+                // Do NOT frac/unorm-pack: License plate UVs sit slightly outside [0,1]
+                // (e.g. V≈1.04); frac wrapping maps them to the wrong end of Khronos_C.
+                // Half retains full range for tiling UVs and slight OOB clamp/wrap cases.
+                auto pack_uv_half = [](const glm::vec2& t, uint8_t* dst) {
+                    const uint32_t packed = glm::packHalf2x16(t);
+                    std::memcpy(dst, &packed, sizeof(packed));
+                };
 
-                    // Use fractional part so UVs outside [0,1] (tiling / repeat) are preserved
-                    // instead of being smashed to the texture edge.
-                    float u_frac = t.x - std::floor(t.x);
-                    float v_frac = t.y - std::floor(t.y);
+                glm::vec2 uv0{0.0f, 0.0f};
+                if (has_tex0 && tex_acc_ptr)
+                    uv0 = GetTexcoordFromAccessor(model, *tex_acc_ptr, i);
+                pack_uv_half(uv0, v.uv);
 
-                    uint16_t u = static_cast<uint16_t>(
-                        std::clamp(u_frac, 0.0f, 1.0f) * 65535.0f);
-                    uint16_t vval = static_cast<uint16_t>(
-                        std::clamp(v_frac, 0.0f, 1.0f) * 65535.0f);
-
-                    v.uv[0] = static_cast<uint8_t>(u & 0xFF);
-                    v.uv[1] = static_cast<uint8_t>((u >> 8) & 0xFF);
-                    v.uv[2] = static_cast<uint8_t>(vval & 0xFF);
-                    v.uv[3] = static_cast<uint8_t>((vval >> 8) & 0xFF);
-                }
-
-                // UV1 = zero for now
-                v.uv[4] = v.uv[0];
-                v.uv[5] = v.uv[1];
-                v.uv[6] = v.uv[2];
-                v.uv[7] = v.uv[3];
+                glm::vec2 uv1 = uv0; // default: duplicate UV0 if TEXCOORD_1 absent
+                if (has_tex1 && tex1_acc_ptr)
+                    uv1 = GetTexcoordFromAccessor(model, *tex1_acc_ptr, i);
+                pack_uv_half(uv1, v.uv + 4);
 
                 // Skinning: JOINTS_0 + WEIGHTS_0 (up to 4 influences)
                 v.blend_weights[0] = 255;

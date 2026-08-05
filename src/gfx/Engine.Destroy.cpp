@@ -132,6 +132,10 @@ void gfx::Engine::destroy_pipelines() {
         vkDestroyPipeline(renderer.vk.device, renderer.vk.depth_prepass_pipeline, nullptr);
         renderer.vk.depth_prepass_pipeline = VK_NULL_HANDLE;
     }
+    if (renderer.vk.transparent_pipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(renderer.vk.device, renderer.vk.transparent_pipeline, nullptr);
+        renderer.vk.transparent_pipeline = VK_NULL_HANDLE;
+    }
     if (renderer.vk.pipeline != VK_NULL_HANDLE) {
         vkDestroyPipeline(renderer.vk.device, renderer.vk.pipeline, nullptr);
         renderer.vk.pipeline = VK_NULL_HANDLE;

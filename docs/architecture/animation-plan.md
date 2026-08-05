@@ -29,13 +29,13 @@ Morph: `MorphSystem` loads target deltas, animation path `weights`, CPU blend in
 | Missing NORMAL (e.g. Fox) | **Yes** — face-normal accumulation at load |
 | Morph targets | **Yes (CPU Phase 3)** — `MorphSystem`; path `weights`; POSITION+NORMAL deltas |
 | `KHR_animation_pointer` | **No** — channels with `path: "pointer"` ignored |
-| `KHR_texture_transform` | **No** — UV offset/rotation/scale not applied |
+| `KHR_texture_transform` | **Static yes** — load-time scale/offset/rotation on materials; **animated** needs animation_pointer |
 
 **Code:** `src/scene/Animation.{h,cpp}`, `src/scene/Skin.{h,cpp}`, `src/scene/Morph.{h,cpp}`, TRS on `TransformManager`, load in `Engine.InitializeScene`, tick `Engine::update_animations` from `AeroBoar.cpp`.
 
 **Test scenes**: skinned demos + **`AnimatedMorphCube`** for morph weights.
 
-**Known incomplete sample:** **`AnimationPointerUVs`** requires `KHR_animation_pointer` + `KHR_texture_transform` (and many advanced material extensions). Geometry may load; animated UVs / unlit / transmission materials will **not** match reference. Tracked in `docs/architecture/gltf-extensions.md` §2.1 for future implementation.
+**Known incomplete sample:** **`AnimationPointerUVs`** needs **`KHR_animation_pointer`** (static texture transform already works) plus advanced materials (unlit, etc.). Geometry may load; animated UVs will **not** match reference. Tracked in `docs/architecture/gltf-extensions.md` §2.1.
 
 ---
 

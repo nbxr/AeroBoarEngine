@@ -46,8 +46,9 @@ struct VulkanContext {
     std::vector<VkImageView> swap_chain_image_views{};
     uint32_t swap_chain_image_count = 0;   // Actual images returned by driver (can be > requested min)
 
-    VkPipeline pipeline{VK_NULL_HANDLE};
-    // Depth-only prepass (vertex stage only) for same-frame Hi-Z.
+    VkPipeline pipeline{VK_NULL_HANDLE};              // opaque: depth write on
+    VkPipeline transparent_pipeline{VK_NULL_HANDLE};  // blend: depth write off
+    // Depth-only prepass for same-frame Hi-Z (opaque writers only).
     VkPipeline depth_prepass_pipeline{VK_NULL_HANDLE};
     VkPushConstantRange push_constant_range{
         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, // stageFlags

@@ -87,7 +87,7 @@ This project aims to develop a cross-platform game engine targeting VR via OpenX
   - **Phase 1 (done):** node TRS clips
   - **Phase 2 (done):** skinned meshes (joint palette + VS skin)
   - **Phase 3 (done, CPU):** morph target weights
-  - **Later:** `KHR_animation_pointer` + `KHR_texture_transform` (see `gltf-extensions.md`; sample: AnimationPointerUVs)
+  - **Later:** `KHR_animation_pointer` for animated UV transforms (static `KHR_texture_transform` landed; sample: AnimationPointerUVs)
 - **ECS + Player (near-term; `docs/architecture/ecs-plan.md`):**
   - Custom SoA ECS; `InputFrame` + controllers (no hard-coded keys in main/camera)
   - Camera associated with **Player** entity

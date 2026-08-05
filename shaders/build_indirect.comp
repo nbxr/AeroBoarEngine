@@ -18,12 +18,19 @@ struct BatchMeta {
     uint _pad2;
 };
 
+// Layout must match cull_frustum.comp / GpuCullGlobals (std140).
 layout(set = 0, binding = 0, std140) uniform CullGlobals {
     vec4  planes[6];
     uint  item_count;
     uint  batch_count;
-    uint  _pad0;
-    uint  _pad1;
+    uint  hzb_enabled;
+    uint  hzb_mips;
+    mat4  hzb_view_proj;
+    vec4  hzb_info;
+    uint  emit_filter;
+    uint  instance_base_offset;
+    uint  pad1;
+    uint  pad2;
 } globals;
 
 layout(set = 0, binding = 3, std430) readonly buffer BatchCounts {
@@ -53,6 +60,7 @@ void main() {
     cmds[o + 1u] = visible;
     cmds[o + 2u] = b.first_index;
     cmds[o + 3u] = uint(b.vertex_offset); // bit-identical for non-negative offsets
-    // firstInstance → gl_BaseInstance (batch region base into draw_instances[]).
-    cmds[o + 4u] = b.base;
+    // firstInstance → gl_BaseInstance into combined draw_instances[]
+    // (opaque half starts at 0, transparent half at instance_base_offset).
+    cmds[o + 4u] = b.base + globals.instance_base_offset;
 }

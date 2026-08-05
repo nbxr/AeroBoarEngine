@@ -14,7 +14,7 @@ struct Vertex {
     float normal[3];   // 12-23
     float tangent[4];  // 24-39   (xyz + handedness w)
 
-    // UV0 + UV1 (each packed as two uint16_t)
+    // UV0 + UV1 as IEEE half floats (R16G16B16A16_SFLOAT): xy=UV0, zw=UV1
     uint8_t uv[8]; // 40-47
 
     // Skinning (kept for future animated meshes)
