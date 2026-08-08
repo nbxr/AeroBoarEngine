@@ -2,7 +2,7 @@
 
 Canonical plan for a **custom, permanent, data-oriented ECS** and the first slice: **Player + camera** driven by **injected input**, not hard-coded logic in `AeroBoar.cpp` / `Camera::update`.
 
-**Status:** Planning (docs review). **Not implemented.**
+**Status:** Phase 1–3 **landed** (InputFrame, World, Player, systems, `ECS_Components_v1` load, script registry + `log` example). Phase 4+ (events/timers/triggers) not started.
 
 **See also**
 - `docs/architecture/game-object-implementation.md` — legacy GameObject / RenderMesh; migration toward Entity
@@ -362,6 +362,17 @@ Authoring long-term: KHR physics + filter layers, or ECS component that creates 
 | `health` | `Health` |
 | `script` | See **§11** — name → factory → instance |
 
+**Player + camera (authoring)**
+
+- Put `{ "type": "player" }` on the **feet / body root** node (capsule origin on the ground).
+- Camera = **eye**; body stays **upright** (yaw only — pitch/roll do not flip the capsule).
+- `eye_world = root + yaw_only(R) * eye_offset`
+- Optional on the player entry:
+  - `"eye_height": 0.08` → `(0, 0.08, 0)` local Y (preferred for tabletop)
+  - `"eye_offset": [0, 0.08, 0]` → full local offset (X/Z are side/forward in body space)
+- Default offset `(0, 0.08, 0)`. Human-scale: `"eye_height": 1.6`.
+- Blender: origin at feet, **+Y up**, apply rotation; avoid 180° X export quirks if the mesh looks inverted in a glTF viewer.
+
 Unknown types: log + skip.
 
 ---
@@ -451,23 +462,25 @@ Scripts implement `on_event`; dispatch delivers `TriggerEnter`, `TimerElapsed`, 
 
 ### Phase 1 — Input injection
 
-1. `InputFrame` + edges  
-2. `DesktopMoveSystem` (player fly/look)  
-3. `EditorHotkeySystem` (editor keys; Debug+Release for now)  
-4. Strip `Camera` / `AeroBoar` key logic  
-5. Temporary single player context or minimal World  
+1. [x] `InputFrame` + edges (`core/InputFrame.h`)  
+2. [x] `DesktopMoveSystem` (player fly/look + Y/T speed)  
+3. [x] `EditorHotkeySystem` (Escape, R, Shift+R, P, N; Debug+Release)  
+4. [x] Strip `Camera` / `AeroBoar` key logic → `Camera::apply_desktop_input`  
+5. [x] Minimal World (with Phase 2)  
 
 ### Phase 2 — ECS World + Player
 
-1. World + stores  
-2. PlayerTag, CameraRig, DesktopMove, Health, Script handle  
-3. active_player + camera policy §4.5  
+1. [x] World + ComponentStore  
+2. [x] PlayerTag, CameraRig, DesktopMove, Health, Script, Name  
+3. [x] `active_player` first-wins + default free-fly spawn when no authored player  
+
 
 ### Phase 3 — glTF extras + script registry
 
-1. Parse `ECS_Components_v1`  
-2. Factories for known scripts  
-3. Dual-write Entity for mesh nodes (start GameObject migration)  
+1. [x] Parse `ECS_Components_v1` (`ecs/GltfEcsLoader`)  
+2. [x] `ScriptRegistry` + `REGISTER_SCRIPT` + instance store + `ScriptSystem`  
+3. [x] Dual-write Entity per mesh GameObject; extras on any node  
+4. [x] Example script `"log"`; default free-fly player if no authored `player`
 
 ### Phase 4 — Events + timers  
 
@@ -495,18 +508,19 @@ Scripts implement `on_event`; dispatch delivers `TriggerEnter`, `TimerElapsed`, 
 
 ## 14. Success metrics
 
-- [ ] No gameplay/editor key branching in `AeroBoar.cpp` or `Camera::update`  
-- [ ] Player owns view; DesktopMove on player path only  
-- [ ] Editor keys via **EditorHotkeySystem** (not on Player); Debug+Release until gated later  
-- [ ] `active_player` = first `PlayerTag`  
+- [x] No gameplay/editor key branching in `AeroBoar.cpp` or `Camera::update`  
+- [x] Player owns view; DesktopMove on player path only  
+- [x] Editor keys via **EditorHotkeySystem** (not on Player); Debug+Release until gated later  
+- [x] `active_player` = first `PlayerTag`  
 - [ ] Triggers via Jolt sensors when Phase 5 lands  
-- [ ] No `src/game` package  
-- [ ] Documented path: Entity replaces GameObject  
-- [ ] Script `name` → `REGISTER_SCRIPT` / registry → `on_create` instance  
+- [x] No `src/game` package  
+- [x] Documented path: Entity replaces GameObject  
+- [x] Script `name` → `REGISTER_SCRIPT` / registry → `on_create` instance  
 - [ ] Event queue uses fixed-size POD events (union payloads) for v1  
 - [ ] Triggers use Jolt sensors  
-- [ ] active_player = first PlayerTag  
-- [ ] Custom ECS only  
+- [x] active_player = first PlayerTag  
+- [x] Custom ECS only  
+
 
 ---
 

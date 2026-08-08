@@ -93,9 +93,9 @@ This project aims to develop a cross-platform game engine targeting VR via OpenX
   - Camera associated with **Player** entity
   - glTF `extras.ECS_Components_v1` authoring (Blender)
 - **Physics foundation (landed runtime; asset path open):**
-  - Jolt world step, rigid boxes, transform links (`physics-plan.md`)
-  - **After Player/ECS:** ABeautifulGame piece physics → shrink player → OpenXR knock-over — `vr-chess-physics-plan.md`
-  - glTF load path for Khronos physics extensions (`KHR_physics_rigid_bodies`, `KHR_implicit_shapes`) still TODO
+  - Jolt + KHR rigid-body MVP, `worldScale`, debug draw (`physics-plan.md`)
+  - Desktop chess knock-over working; **next:** FPS player controller, then VR shrink-to-board — `vr-chess-physics-plan.md`
+  - glTF KHR physics load MVP landed; compounds / mesh colliders / character controller remaining
 
 ### Phase 3: VR Features (Weeks 9-12)
 - Full OpenXR integration

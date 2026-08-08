@@ -5,11 +5,16 @@
 #include "gfx/Renderer.h"
 #include "physics/PhysicsWorld.h"
 #include "scene/Camera.h"
+#include "ecs/World.h"
 #include "core/Log.h"
 #include <glm/glm.hpp>
 #include <iostream>
 #include <stdio.h>
 #include <utility>
+
+namespace tinygltf {
+class Model;
+}
 
 namespace gfx {
 class Engine {
@@ -17,6 +22,7 @@ class Engine {
     Renderer renderer{};
     scene::Camera camera{};   // Desktop + future VR camera system
     physics::PhysicsWorld physics{};
+    ecs::World ecs_world{};   // Entities / components (render still dual-writes GameObject)
 
 
     bool initialize();
@@ -45,13 +51,18 @@ class Engine {
     // Advance playing glTF clips → TransformManager locals (call before render).
     void update_animations(float delta_time);
 
-    // Fixed-step Jolt simulation + write body poses into linked transforms.
-    // Call after animations, before render().
+    // Fixed-step Jolt: kinematic from transforms → step → dynamics to transforms.
+    // Call after desktop move + animations, before render().
     void step_physics(float delta_time);
 
     // Floor + falling unit boxes (procedural mesh). Call after load_scene.
     // Rebuilds GPU cull batches. Safe to call once per loaded scene.
     bool spawn_physics_demo();
+
+    // Build colliders from glTF KHR_physics_rigid_bodies + KHR_implicit_shapes.
+    // Call after load_scene (roots already scaled by config worldScale). ECS
+    // player → kinematic; dynamic mass scaled by worldScale^3.
+    bool spawn_scene_physics(const tinygltf::Model& model);
 
   private:
     // devices

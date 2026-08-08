@@ -14,6 +14,7 @@
 #include "gfx/DrawBatch.h"
 #include "gfx/GpuCulling.h"
 #include "gfx/HzbPyramid.h"
+#include "gfx/DebugLinePass.h"
 #include "gfx/AllocatedBuffer.h"
 #include "vk_mem_alloc.h"
 #include <GLFW/glfw3.h>
@@ -62,6 +63,7 @@ struct Renderer {
     std::vector<MeshDrawInfo> mesh_draw_infos{};
     GpuCulling gpu_culling{};
     HzbPyramid hzb{};
+    DebugLinePass debug_lines{};
 
     uint32_t last_visible_instances = 0;
     uint32_t last_total_render_meshes = 0;

@@ -58,6 +58,8 @@ set(SHADER_FILES
     pbr.vert
     pbr.frag
     depth_prepass.frag
+    debug_line.vert
+    debug_line.frag
     cull_frustum.comp
     build_indirect.comp
     hzb_copy.comp
@@ -250,6 +252,14 @@ target_compile_options(glm PRIVATE -w)
 add_executable(Aero_Boar_Engine
     src/main.cpp
     src/AeroBoar.cpp
+    src/ecs/World.cpp
+    src/ecs/DesktopMoveSystem.cpp
+    src/ecs/EditorHotkeySystem.cpp
+    src/ecs/ScriptRegistry.cpp
+    src/ecs/ScriptInstanceStore.cpp
+    src/ecs/ScriptSystem.cpp
+    src/ecs/GltfEcsLoader.cpp
+    src/ecs/scripts/LogScript.cpp
     src/gfx/BufferUtils.cpp
     src/gfx/DoubleBufferedBuffer.cpp
     src/gfx/Engine.Destroy.cpp
@@ -260,6 +270,7 @@ add_executable(Aero_Boar_Engine
     src/gfx/Engine.InitializeScene.cpp
     src/gfx/Engine.Physics.cpp
     src/gfx/Engine.Render.cpp
+    src/gfx/DebugLinePass.cpp
     src/physics/PhysicsWorld.cpp
     src/scene/Animation.cpp
     src/scene/Morph.cpp

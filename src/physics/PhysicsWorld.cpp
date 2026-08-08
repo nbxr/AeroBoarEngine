@@ -8,15 +8,22 @@
 #include <Jolt/Core/JobSystemThreadPool.h>
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/Body/BodyManager.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/PhysicsSettings.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/RegisterTypes.h>
+#ifdef JPH_DEBUG_RENDERER
+#include <Jolt/Renderer/DebugRendererSimple.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
 #include <cstdarg>
 #include <thread>
+#include <vector>
 
 JPH_SUPPRESS_WARNINGS
 
@@ -233,52 +240,135 @@ void PhysicsWorld::shutdown() {
     LOG_INFO("[Physics] shutdown");
 }
 
-BodyHandle PhysicsWorld::create_box(const BoxDesc& desc) {
-    if (!initialized_ || !impl_)
+BodyHandle PhysicsWorld::add_body_with_shape(void* shape_ref,
+                                             const BodyPoseDesc& pose,
+                                             const char* label) {
+    if (!impl_ || !shape_ref)
         return kInvalidBody;
 
-    const Vec3 half(desc.half_extents.x, desc.half_extents.y, desc.half_extents.z);
-    BoxShapeSettings shape_settings(half);
-    shape_settings.SetEmbedded();
-    ShapeSettings::ShapeResult shape_result = shape_settings.Create();
-    if (shape_result.HasError()) {
-        LOG_ERROR("[Physics] BoxShape create failed: "
-                  << shape_result.GetError().c_str());
-        return kInvalidBody;
-    }
-    ShapeRefC shape = shape_result.Get();
+    ShapeRefC shape = *static_cast<ShapeRefC*>(shape_ref);
+    const EMotionType motion = to_jolt_motion(pose.motion);
+    const ObjectLayer layer = layer_for_motion(pose.motion);
+    const RVec3 pos(pose.position.x, pose.position.y, pose.position.z);
 
-    const EMotionType motion = to_jolt_motion(desc.motion);
-    const ObjectLayer layer = layer_for_motion(desc.motion);
-    const RVec3 pos(desc.position.x, desc.position.y, desc.position.z);
-
-    BodyCreationSettings settings(shape, pos, to_jolt_quat(desc.rotation), motion,
+    BodyCreationSettings settings(shape, pos, to_jolt_quat(pose.rotation), motion,
                                   layer);
-    settings.mRestitution = desc.restitution;
-    settings.mFriction = desc.friction;
-    if (desc.motion == MotionType::Dynamic && desc.mass > 0.0f) {
+    settings.mRestitution = pose.restitution;
+    settings.mFriction = pose.friction;
+    // Continuous collision (linear cast) so small/fast dynamics don't tunnel
+    // thin statics like a chessboard slab. Discrete is fine for statics/kinematics.
+    if (pose.motion == MotionType::Dynamic)
+        settings.mMotionQuality = EMotionQuality::LinearCast;
+    if (pose.motion == MotionType::Dynamic && pose.mass > 0.0f) {
         settings.mOverrideMassProperties =
             EOverrideMassProperties::CalculateInertia;
-        settings.mMassPropertiesOverride.mMass = desc.mass;
+        settings.mMassPropertiesOverride.mMass = pose.mass;
     }
 
     BodyInterface& bi = impl_->system.GetBodyInterface();
-    const EActivation act = (desc.motion == MotionType::Static)
+    const EActivation act = (pose.motion == MotionType::Static)
                                 ? EActivation::DontActivate
                                 : EActivation::Activate;
     const BodyID id = bi.CreateAndAddBody(settings, act);
     if (id.IsInvalid()) {
-        LOG_ERROR("[Physics] CreateAndAddBody failed (out of bodies?)");
+        LOG_ERROR("[Physics] CreateAndAddBody failed (" << label << ")");
         return kInvalidBody;
     }
 
     Impl::BodyRecord rec{};
     rec.id = id;
-    rec.transform_index = desc.transform_index;
-    rec.motion = desc.motion;
+    rec.transform_index = pose.transform_index;
+    rec.motion = pose.motion;
     const BodyHandle handle = static_cast<BodyHandle>(impl_->bodies.size());
     impl_->bodies.push_back(rec);
     return handle;
+}
+
+BodyHandle PhysicsWorld::create_box(const BoxDesc& desc) {
+    if (!initialized_ || !impl_)
+        return kInvalidBody;
+
+    // Chess pieces are tiny; Jolt default convex radius (~0.05) exceeds half-extents
+    // and fails with "Invalid convex radius". Scale radius down with the box.
+    const float hx = std::max(desc.half_extents.x, 1e-4f);
+    const float hy = std::max(desc.half_extents.y, 1e-4f);
+    const float hz = std::max(desc.half_extents.z, 1e-4f);
+    const Vec3 half(hx, hy, hz);
+    const float convex_r =
+        std::min(0.05f, 0.25f * std::min({hx, hy, hz}));
+    BoxShapeSettings shape_settings(half, convex_r);
+    shape_settings.SetEmbedded();
+    ShapeSettings::ShapeResult shape_result = shape_settings.Create();
+    if (shape_result.HasError()) {
+        LOG_ERROR("[Physics] BoxShape create failed: "
+                  << shape_result.GetError().c_str() << " half=(" << hx << ","
+                  << hy << "," << hz << ") cr=" << convex_r);
+        return kInvalidBody;
+    }
+    ShapeRefC shape = shape_result.Get();
+    return add_body_with_shape(&shape, desc, "box");
+}
+
+BodyHandle PhysicsWorld::create_capsule(const CapsuleDesc& desc) {
+    if (!initialized_ || !impl_)
+        return kInvalidBody;
+
+    const float radius = std::max(desc.radius, 1e-4f);
+    // Jolt capsule half-height is cylindrical section only (excludes hemispheres).
+    const float hh = std::max(desc.half_height, 1e-4f);
+    CapsuleShapeSettings shape_settings(hh, radius);
+    shape_settings.SetEmbedded();
+    ShapeSettings::ShapeResult shape_result = shape_settings.Create();
+    if (shape_result.HasError()) {
+        LOG_ERROR("[Physics] CapsuleShape create failed: "
+                  << shape_result.GetError().c_str() << " hh=" << hh
+                  << " r=" << radius);
+        return kInvalidBody;
+    }
+    ShapeRefC shape = shape_result.Get();
+    return add_body_with_shape(&shape, desc, "capsule");
+}
+
+BodyHandle PhysicsWorld::create_convex_hull(const ConvexHullDesc& desc) {
+    if (!initialized_ || !impl_)
+        return kInvalidBody;
+    if (desc.points.size() < 4) {
+        LOG_ERROR("[Physics] ConvexHull needs >= 4 points (got "
+                  << desc.points.size() << ")");
+        return kInvalidBody;
+    }
+
+    Array<Vec3> pts;
+    pts.reserve(static_cast<size_t>(desc.points.size()));
+    glm::vec3 bmin(1e30f), bmax(-1e30f);
+    for (const glm::vec3& p : desc.points) {
+        pts.push_back(Vec3(p.x, p.y, p.z));
+        bmin = glm::min(bmin, p);
+        bmax = glm::max(bmax, p);
+    }
+    const glm::vec3 ext = bmax - bmin;
+    const float convex_r =
+        std::min(0.05f, 0.05f * std::max({ext.x, ext.y, ext.z, 1e-3f}));
+
+    ConvexHullShapeSettings shape_settings(pts, convex_r);
+    shape_settings.SetEmbedded();
+    ShapeSettings::ShapeResult shape_result = shape_settings.Create();
+    if (shape_result.HasError()) {
+        LOG_ERROR("[Physics] ConvexHull create failed: "
+                  << shape_result.GetError().c_str()
+                  << " points=" << desc.points.size());
+        BoxDesc box{};
+        static_cast<BodyPoseDesc&>(box) = desc;
+        const glm::vec3 local_half = glm::max(
+            glm::max(glm::abs(bmin), glm::abs(bmax)), glm::vec3(1e-3f));
+        box.half_extents = local_half;
+        LOG_INFO("[Physics] ConvexHull fallback to origin-centered box half=("
+                 << local_half.x << "," << local_half.y << "," << local_half.z
+                 << ")");
+        return create_box(box);
+    }
+    ShapeRefC shape = shape_result.Get();
+    return add_body_with_shape(&shape, desc, "convex");
 }
 
 BodyHandle PhysicsWorld::create_floor(float half_extent_xz, float half_height,
@@ -330,6 +420,29 @@ void PhysicsWorld::step(float delta_time) {
         impl_->accumulator = 0.0f;
 }
 
+void PhysicsWorld::sync_from_transforms(const scene::TransformManager& transforms) {
+    if (!initialized_ || !impl_)
+        return;
+
+    BodyInterface& bi = impl_->system.GetBodyInterface();
+    for (const auto& rec : impl_->bodies) {
+        if (rec.motion != MotionType::Kinematic)
+            continue;
+        if (rec.transform_index == ~0u || !transforms.is_alive(rec.transform_index))
+            continue;
+
+        // Body is authored at the *world* AABB center; mesh root may differ.
+        // For player capsule we create the box centered on the node origin with
+        // half-extents covering the mesh — use node world T+R directly.
+        const glm::mat4& w = transforms.get_world_matrix(rec.transform_index);
+        const glm::vec3 pos(w[3]);
+        const glm::quat rot = glm::normalize(glm::quat_cast(glm::mat3(w)));
+
+        bi.SetPositionAndRotation(rec.id, RVec3(pos.x, pos.y, pos.z),
+                                  to_jolt_quat(rot), EActivation::Activate);
+    }
+}
+
 void PhysicsWorld::sync_to_transforms(scene::TransformManager& transforms) {
     if (!initialized_ || !impl_)
         return;
@@ -340,8 +453,8 @@ void PhysicsWorld::sync_to_transforms(scene::TransformManager& transforms) {
             continue;
         if (!transforms.is_alive(rec.transform_index))
             continue;
-        // Statics still write once so visuals match if linked; dynamics every frame.
-        if (rec.motion == MotionType::Static)
+        // Only dynamics: statics are immovable; kinematics are driven by gameplay.
+        if (rec.motion != MotionType::Dynamic)
             continue;
 
         const RVec3 p = bi.GetPosition(rec.id);
@@ -352,11 +465,23 @@ void PhysicsWorld::sync_to_transforms(scene::TransformManager& transforms) {
         const glm::quat rot = to_glm_quat(r);
 
         scene::LocalTrs trs = transforms.get_local_trs(rec.transform_index);
+        // Body center may not equal node origin if AABB was offset — store as
+        // node translation for MVP (we create boxes with center at node origin
+        // expanded to cover mesh; see spawn_scene_physics).
         trs.translation = pos;
         trs.rotation = rot;
-        // Keep authored scale (collider half-extents separate from mesh scale).
         transforms.set_local_trs(rec.transform_index, trs);
     }
+}
+
+void PhysicsWorld::set_body_pose(BodyHandle body, const glm::vec3& position,
+                                 const glm::quat& rotation) {
+    if (!impl_ || body >= impl_->bodies.size())
+        return;
+    BodyInterface& bi = impl_->system.GetBodyInterface();
+    bi.SetPositionAndRotation(impl_->bodies[body].id,
+                              RVec3(position.x, position.y, position.z),
+                              to_jolt_quat(rotation), EActivation::Activate);
 }
 
 bool PhysicsWorld::get_pose(BodyHandle body, glm::vec3& out_pos,
@@ -375,6 +500,62 @@ bool PhysicsWorld::get_pose(BodyHandle body, glm::vec3& out_pos,
 
 uint32_t PhysicsWorld::body_count() const {
     return impl_ ? static_cast<uint32_t>(impl_->bodies.size()) : 0u;
+}
+
+void PhysicsWorld::collect_debug_lines(std::vector<DebugVertex>& out,
+                                       const glm::vec3& camera_pos) const {
+    out.clear();
+    if (!debug_draw_enabled_ || !initialized_ || !impl_)
+        return;
+
+#ifdef JPH_DEBUG_RENDERER
+    class LineCollector final : public DebugRendererSimple {
+      public:
+        std::vector<DebugVertex>* target = nullptr;
+
+        void DrawLine(RVec3Arg from, RVec3Arg to, ColorArg color) override {
+            if (!target)
+                return;
+            const uint32_t rgba = color.GetUInt32();
+            DebugVertex a{};
+            a.position = glm::vec3(static_cast<float>(from.GetX()),
+                                   static_cast<float>(from.GetY()),
+                                   static_cast<float>(from.GetZ()));
+            a.color = rgba;
+            DebugVertex b = a;
+            b.position = glm::vec3(static_cast<float>(to.GetX()),
+                                   static_cast<float>(to.GetY()),
+                                   static_cast<float>(to.GetZ()));
+            target->push_back(a);
+            target->push_back(b);
+        }
+
+        void DrawText3D(RVec3Arg, const string_view&, ColorArg,
+                        float) override {}
+    };
+
+    LineCollector collector;
+    collector.target = &out;
+    collector.SetCameraPos(RVec3(camera_pos.x, camera_pos.y, camera_pos.z));
+
+    BodyManager::DrawSettings settings;
+    settings.mDrawShape = true;
+    settings.mDrawShapeWireframe = true;
+    settings.mDrawShapeColor = BodyManager::EShapeColor::MotionTypeColor;
+    settings.mDrawBoundingBox = false;
+    settings.mDrawVelocity = false;
+
+    impl_->system.DrawBodies(settings, &collector);
+    (void)camera_pos;
+#else
+    (void)camera_pos;
+    static bool once = false;
+    if (!once) {
+        once = true;
+        LOG_INFO("[Physics] debug draw unavailable (Jolt built without "
+                 "JPH_DEBUG_RENDERER)");
+    }
+#endif
 }
 
 } // namespace physics

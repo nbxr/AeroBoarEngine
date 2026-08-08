@@ -9,6 +9,8 @@
 #include <vulkan/vulkan.h>
 #include "scene/GltfLoader.h"
 #include "scene/SceneManager.h"
+#include "ecs/GltfEcsLoader.h"
+#include "ecs/DesktopMoveSystem.h"
 #include "tiny_gltf.h"
 #include <functional>
 #include <iostream>
@@ -99,6 +101,9 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     if (!scene::GltfLoader::load_model(resolved_filename, model)) {
         return false;
     }
+
+    // Fresh ECS world for this scene (scripts unbound on clear).
+    ecs_world.clear();
 
     // create materials in the material manager and get a lookup
     std::vector<MaterialID> material_lookup =
@@ -323,6 +328,41 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     LOG_INFO("[Transform] Propagated hierarchy (" << xforms.count()
              << " transform slots)");
 
+    // worldScale: uniform load-time scale of scene roots (visual + physics).
+    // Tabletop assets (chess, dice) are often cm–dm thick while Jolt defaults
+    // (e.g. ~2 cm penetration slop) are tuned for larger props — scale them up
+    // in sim space, keep gravity 9.81. Omit or 1.0 = identity. Mass × S³ in
+    // spawn_scene_physics. Legacy key: debugWorldScale.
+    float world_scale = 1.0f;
+    {
+        if (root.contains("worldScale") && root["worldScale"].is_number())
+            world_scale = static_cast<float>(root["worldScale"].get<double>());
+        else if (root.contains("debugWorldScale") &&
+                 root["debugWorldScale"].is_number())
+            world_scale =
+                static_cast<float>(root["debugWorldScale"].get<double>());
+        if (world_scale < 1e-6f)
+            world_scale = 1.0f;
+    }
+    if (std::abs(world_scale - 1.0f) > 1e-5f) {
+        uint32_t n_roots = 0;
+        for (uint32_t i = 0; i < xforms.count(); ++i) {
+            if (!xforms.is_alive(i))
+                continue;
+            if (xforms.get_parent(i) != scene::TransformManager::kInvalid)
+                continue;
+            scene::LocalTrs trs = xforms.get_local_trs(i);
+            trs.translation *= world_scale;
+            trs.scale *= world_scale;
+            xforms.set_local_trs(i, trs);
+            ++n_roots;
+        }
+        xforms.mark_all_dirty();
+        xforms.propagate();
+        LOG_INFO("[Scene] worldScale=" << world_scale << " applied to "
+                 << n_roots << " root transform(s) (mesh + physics)");
+    }
+
     // Morph targets (blend shapes) then skins then animations.
     {
         std::vector<uint32_t> mesh_ids;
@@ -469,6 +509,57 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
                  << ", " << fwd.z << ")");
     }
 
+    // ECS Phase 3: dual-write entities + extras.ECS_Components_v1; default player
+    // if none authored. Player owns view (first PlayerTag wins).
+    {
+        ecs::populate_world_from_gltf(ecs_world, model, renderer.scene_manager);
+        // Authored eye_offset is in asset meters; match worldScale.
+        if (std::abs(world_scale - 1.0f) > 1e-5f) {
+            for (ecs::CameraRig& rig : ecs_world.camera_rigs.data())
+                rig.eye_offset *= world_scale;
+        }
+        if (ecs_world.player_tags.size() == 0) {
+            const ecs::Entity player = ecs_world.spawn_default_desktop_player();
+            ecs::sync_rig_from_camera(ecs_world, player, camera);
+            if (std::abs(world_scale - 1.0f) > 1e-5f) {
+                if (ecs::CameraRig* rig = ecs_world.camera_rigs.try_get(player)) {
+                    rig->movement_speed *= world_scale;
+                    rig->near_plane *= world_scale;
+                    rig->far_plane *= world_scale;
+                    rig->eye_offset *= world_scale;
+                }
+            }
+            ecs::sync_camera_from_rig(ecs_world, player, camera);
+        } else {
+            ecs_world.resolve_active_player();
+            const ecs::Entity player = ecs_world.active_player();
+            // Tunables from framed camera; eye_offset stays authoring-owned
+            // (already scaled once above).
+            ecs::sync_rig_from_camera(ecs_world, player, camera);
+            if (std::abs(world_scale - 1.0f) > 1e-5f) {
+                if (ecs::CameraRig* rig = ecs_world.camera_rigs.try_get(player)) {
+                    rig->movement_speed *= world_scale;
+                    rig->near_plane *= world_scale;
+                    rig->far_plane *= world_scale;
+                }
+            }
+            ecs::sync_camera_from_rig(ecs_world, player, camera);
+            // Place eye at player_root + eye_offset (not at mesh origin / board).
+            ecs::place_camera_on_player(ecs_world, player, camera,
+                                        renderer.scene_manager.transforms());
+            {
+                const glm::vec3 pos = camera.get_position();
+                const ecs::CameraRig* rig = ecs_world.camera_rigs.try_get(player);
+                const glm::vec3 eye =
+                    rig ? rig->eye_offset : glm::vec3(0.f, 0.08f, 0.f);
+                LOG_INFO("[ECS] Player camera at eye pos=("
+                         << pos.x << ", " << pos.y << ", " << pos.z
+                         << ") eye_offset=(" << eye.x << ", " << eye.y << ", "
+                         << eye.z << ")");
+            }
+        }
+    }
+
     // Log scene lights (after world transforms) for import / exposure debugging.
     if (!renderer.lights.empty()) {
         LOG_INFO("[Lights] scene lights=" << renderer.lights.size()
@@ -493,6 +584,21 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     }
 
     camera.reset_mouse_state();
+
+    // Scene physics from KHR_physics_rigid_bodies (pieces as single hulls; pawn
+    // tops are child meshes without their own body — they follow the body node).
+    {
+        bool enable_scene_phys = true;
+        const nlohmann::json& cfg = core::Configuration::get_root();
+        if (cfg.contains("scenePhysics") && cfg["scenePhysics"].is_boolean())
+            enable_scene_phys = cfg["scenePhysics"].get<bool>();
+        if (enable_scene_phys) {
+            if (!spawn_scene_physics(model)) {
+                LOG_ERROR("[Physics] spawn_scene_physics failed "
+                          "(continuing without colliders)");
+            }
+        }
+    }
 
     // Seed both frame slots with lighting, then bind descriptors.
     for (uint32_t i = 0; i < Renderer::MAX_FRAMES_IN_FLIGHT; ++i) {
@@ -700,6 +806,8 @@ void gfx::Engine::cleanup_scene() {
     // Drop rigid bodies so transform links are not dangling after clear.
     if (physics.is_initialized())
         physics.shutdown();
+
+    ecs_world.clear();
 
     renderer.lights.clear();
     renderer.mesh_draw_infos.clear();

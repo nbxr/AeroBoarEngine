@@ -1,7 +1,10 @@
 {
-  "defaultScene": "Sponza",
+  "defaultScene": "ABeautifulGameScene",
   "activeSystem": "Windows",
   "physicsDemo": false,
+  "scenePhysics": true,
+  "worldScale": 10.0,
+  "physicsDebugDraw": true,
   "home": [
     {
       "system": "Windows",
@@ -16,6 +19,10 @@
     {
       "name": "ABeautifulGame",
       "filename": "glTF-Sample-Assets/Models/ABeautifulGame/glTF/ABeautifulGame.gltf"
+    },
+    {
+      "name": "ABeautifulGameScene",
+      "filename": "glTF-Sample-Assets/Models/ABeautifulGameScene/glTF/ABeautifulGameScene.gltf"
     },
     {
       "name": "AlphaBlendModeTest",

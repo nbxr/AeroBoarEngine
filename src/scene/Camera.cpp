@@ -1,4 +1,5 @@
 #include "scene/Camera.h"
+#include "core/InputFrame.h"
 #include "core/InputManager.h"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -30,70 +31,57 @@ void Camera::set_mode(CameraMode new_mode) {
     // scene::Camera decoupled from GLFW details.
 }
 
-void Camera::update(float delta_time, core::InputManager& input) {
-    if (mode == CameraMode::Desktop) {
-        update_desktop(delta_time, input);
-    }
-    // VR mode: view matrix is set externally via set_vr_view_matrix()
+void Camera::update(float /*delta_time*/, core::InputManager& /*input*/) {
+    // Intentionally empty: desktop locomotion is driven by ecs::DesktopMoveSystem
+    // via apply_desktop_input(InputFrame). Kept so older call sites compile.
 }
 
-void Camera::update_desktop(float delta_time, core::InputManager& input) {
-    if (!window) return;
+void Camera::apply_desktop_input(const core::InputFrame& frame) {
+    if (mode != CameraMode::Desktop)
+        return;
 
-    // Get current basis from orientation
-    glm::vec3 front = glm::normalize(orientation * glm::vec3(0, 0, -1)); // -Z is forward in our convention
+    glm::vec3 front = glm::normalize(orientation * glm::vec3(0, 0, -1));
     glm::vec3 right = glm::normalize(orientation * glm::vec3(1, 0, 0));
     glm::vec3 camera_up = glm::normalize(orientation * glm::vec3(0, 1, 0));
 
-    float velocity = movement_speed * delta_time;
+    const float velocity = movement_speed * frame.delta_time;
 
-    // === Keyboard movement (now fully camera-relative) ===
-    if (input.is_key_down(GLFW_KEY_W))
+    if (frame.w)
         position += front * velocity;
-    if (input.is_key_down(GLFW_KEY_S))
+    if (frame.s)
         position -= front * velocity;
-    if (input.is_key_down(GLFW_KEY_A))
+    if (frame.a)
         position -= right * velocity;
-    if (input.is_key_down(GLFW_KEY_D))
+    if (frame.d)
         position += right * velocity;
-    if (input.is_key_down(GLFW_KEY_SPACE))
+    if (frame.space)
         position += camera_up * velocity;
-    if (input.is_key_down(GLFW_KEY_LEFT_SHIFT))
+    if (frame.left_shift)
         position -= camera_up * velocity;
 
-    // === Q/E Roll (around camera forward) ===
-    if (input.is_key_down(GLFW_KEY_Q)) {
-        // Q = roll counterclockwise from the user's perspective when looking forward
-        glm::quat roll = glm::angleAxis(glm::radians(-roll_speed * delta_time), front);
+    if (frame.q) {
+        glm::quat roll =
+            glm::angleAxis(glm::radians(-roll_speed * frame.delta_time), front);
         orientation = glm::normalize(roll * orientation);
     }
-    if (input.is_key_down(GLFW_KEY_E)) {
-        // E = roll clockwise from the user's perspective
-        glm::quat roll = glm::angleAxis(glm::radians(+roll_speed * delta_time), front);
+    if (frame.e) {
+        glm::quat roll =
+            glm::angleAxis(glm::radians(+roll_speed * frame.delta_time), front);
         orientation = glm::normalize(roll * orientation);
     }
 
-    // === Mouse look (only while cursor is captured; deltas come pre-smoothed/accelerated from InputManager) ===
-    if (input.is_cursor_captured()) {
-        glm::vec2 mouse_delta = input.get_mouse_delta();
-        float xoffset = mouse_delta.x * mouse_sensitivity;
+    if (frame.cursor_captured) {
+        const float xoffset = frame.mouse_delta.x * mouse_sensitivity;
+        const float yoffset = -frame.mouse_delta.y * mouse_sensitivity;
 
-        // Negate Y delta to match the original comfortable desktop sign convention
-        // (last_y - current_y behavior from the pre-refactor polling code).
-        // With invert_pitch=false (default): mouse down → camera looks down.
-        float yoffset = -mouse_delta.y * mouse_sensitivity;
-
-        // 1. Mouse X now yaws around the camera's current Up
         if (xoffset != 0.0f) {
             glm::quat yawRot = glm::angleAxis(glm::radians(-xoffset), camera_up);
             orientation = glm::normalize(yawRot * orientation);
         }
-
-        // 2. Mouse Y pitches around the camera's current Right.
-        // invert_pitch controls whether mouse down makes the camera look up or down.
         if (yoffset != 0.0f) {
-            float pitch_sign = invert_pitch ? -1.0f : +1.0f;
-            glm::quat pitchRot = glm::angleAxis(glm::radians(pitch_sign * yoffset), right);
+            const float pitch_sign = invert_pitch ? -1.0f : +1.0f;
+            glm::quat pitchRot =
+                glm::angleAxis(glm::radians(pitch_sign * yoffset), right);
             orientation = glm::normalize(pitchRot * orientation);
         }
     }

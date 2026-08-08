@@ -100,6 +100,13 @@ bool gfx::Engine::init_vulkan() {
     if (!init_depth_prepass_pipeline())
         return false;
 
+    // Physics / editor wireframe overlay (after main_pass render pass exists).
+    if (!renderer.debug_lines.create(renderer.vk.device, renderer.allocator,
+                                     renderer.main_pass.render_pass,
+                                     renderer.vk.msaa_color)) {
+        LOG_ERROR("[Init] DebugLinePass failed (physics debug draw disabled)");
+    }
+
     // Initialize command pool and buffers
     if (!init_command_pool())
         return false;

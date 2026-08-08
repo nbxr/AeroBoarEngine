@@ -2,9 +2,9 @@
 
 **Product fantasy:** Load **ABeautifulGame** (Khronos chess set), put **physics on the pieces and board**, enter **OpenXR / Quest**, **shrink the player** so you can run around on the board, and **knock pieces over** with hands / body collision.
 
-**Status:** Design only. Physics **runtime foundation** (Jolt) exists; no KHR physics load, no OpenXR, no player-scale system yet.
+**Status:** **Desktop Phase A largely working** — KHR rigid bodies on ABeautifulGameScene, `worldScale: 10`, player capsule knocks pieces, physics debug draw. ECS Player + free-fly camera exist. **Not yet:** FPS locomotion, finished multi-part pawn authoring for all pieces, OpenXR / shrink-to-board VR.
 
-**Prerequisite (near-term):** **ECS + Player + input injection** so camera/locomotion are not hard-coded in the main loop — see `docs/architecture/ecs-plan.md`. Chess/VR work resumes after Player can own the view (and later a character body).
+**Next coding priority:** FPS player controller (walk / jump / crouch) on the capsule — see `ecs-plan.md` / `physics-plan.md`.
 
 **See also**
 - `docs/architecture/physics-plan.md` — Jolt foundation + phase checklist  
@@ -46,11 +46,11 @@
 
 | Approach | Recommendation |
 |----------|----------------|
-| **World in meters** | Keep board ~table scale (or one-time load scale of whole glTF) |
-| **Player scale** | Scale avatar / locomotion so a step is a few mm–cm on the board |
-| Avoid | Micro-world + micro-gravity (unstable sim) |
+| **World in meters** | Author board ~table scale in glTF; use config **`worldScale`** (e.g. `10`) so sim sizes clear Jolt contact tolerances on thin boards |
+| **Player scale** | Scale avatar / locomotion so a step is a few mm–cm on the board (relative to scaled world, or reintroduce “tiny player” after XR) |
+| Avoid | Micro-world + micro-gravity (unstable sim); relying on paper-thin colliders at 1× without scale or thickened board |
 
-Physics stays in SI-ish units; **player scale** (and later XR reference space) carries the fantasy.
+Physics stays SI-ish under gravity 9.81; **`worldScale`** enlarges the loaded set for stable contacts. VR “I’m tiny on the board” is still mostly **player / reference-space scale**, not micro-gravity.
 
 ### 2.3 Motion types
 
@@ -64,32 +64,30 @@ Physics stays in SI-ish units; **player scale** (and later XR reference space) c
 
 ## 3. Implementation phases
 
-### Phase A — Desktop physics on ABeautifulGame (**next coding priority after session**)
+### Phase A — Desktop physics on ABeautifulGame (**mostly done**)
 
-1. Load `ABeautifulGame` as default/test scene.  
-2. **Auto-collider pass:** each mesh GO → box (or convex) from local AABB → Jolt body linked to `transform_index`.  
-3. Static board plane / thick box under set.  
-4. Gravity + friction/restitution tuned so pieces topple and settle (sleep OK).  
-5. Desktop debug interaction:  
-   - Click / key **impulse** along camera forward  
-   - Or raycast from mouse  
-6. Disable free-fall `physicsDemo` cubes when scene provides bodies.
+1. [x] Load ABeautifulGameScene as default/test scene.  
+2. [x] KHR rigid bodies / hulls / board (not interim AABB-only).  
+3. [x] Pieces rest / interact under **`worldScale: 10`** + CCD.  
+4. [x] Player capsule contact knocks pieces (no impulse tool required for MVP).  
+5. [x] Physics debug draw (F3).  
+6. [ ] Finish asset: multi-part pawns → joined mesh + one RB; shared meshes for instancing.  
 
-**Exit criteria:** Pieces fall/rest on board; can knock one over from desktop camera.
+**Exit criteria (MVP met):** Pieces rest on board; player can knock pieces over on desktop.
 
-### Phase B — Authoring upgrade
+### Phase B — Authoring polish (**in progress in asset**)
 
-1. Parse `KHR_implicit_shapes` + `KHR_physics_rigid_bodies` (as schemas stabilize).  
-2. Prefer authored shapes/mass over AABB auto-box.  
-3. Optional filter layers (piece vs board vs player).  
-4. Fork or annotate ABeautifulGame with extensions if upstream has none.
+1. [x] Parse `KHR_implicit_shapes` + `KHR_physics_rigid_bodies` (engine MVP).  
+2. [~] Prefer authored full-piece hulls (one pawn pattern validated; roll out to rest).  
+3. [ ] Optional filter layers (piece vs board vs player).  
+4. Keep physics on glTF; no engine hide-mesh workarounds.
 
-### Phase C — Desktop “tiny player” prototype
+### Phase C — Desktop player controller (**next**)
 
-1. Player capsule + simple kinematic controller (WASD already exists).  
-2. Apply **player scale** factor (config: e.g. `playerScale: 0.03`).  
-3. Collision vs board and pieces (push pieces on contact).  
-4. Camera at eye height relative to scaled body.
+1. [x] Player capsule + ECS Player / free-fly DesktopMove.  
+2. [ ] **FPS controller:** grounded walk, mouse look, jump, crouch; camera at `eye_offset`.  
+3. [x] Collision vs board and pieces (push on contact).  
+4. [ ] Optional later: “tiny player” scale fantasy / VR reference space.
 
 ### Phase D — OpenXR / Quest
 
@@ -132,22 +130,20 @@ Physics stays in SI-ish units; **player scale** (and later XR reference space) c
 
 | Risk | Mitigation |
 |------|------------|
-| Tiny player + float precision | Keep world ~1–2 m board, scale player not world to 1e-4 |
-| Thin piece colliders jitter | Prefer slightly inflated boxes/capsules; CCD if needed |
+| Tiny features vs Jolt slop | Config **`worldScale`** (chess `10`); optional thicker board colliders |
+| Thin piece / board tunneling | LinearCast CCD + scale; avoid paper-thin statics |
+| Multi-mesh pieces split | One joined mesh + one RB; share mesh for instancing |
 | Grab vs simulation fight | Kinematic while grabbed; handoff velocity on release |
-| Sample asset has no KHR physics | Phase A auto-box |
-| Transparent / fancy materials on set | Unrelated; chess demo does not block on AnimationPointerUVs |
+| Free-fly camera for “player” | Replace with FPS grounded controller |
 
 ---
 
-## 7. Suggested first PR after this session
+## 7. Next session
 
-1. `create_sphere` / better half-extents from AABB  
-2. `Engine::spawn_physics_from_scene()` — walk render meshes → dynamic boxes (skip huge board by name/AABB heuristic or static flag)  
-3. Static floor at scene min Y  
-4. Desktop **F** key: ray impulse  
-5. Doc: mark Phase A in progress in `current_state.md`
+1. **FPS player controller** (walk / look / jump / crouch) on existing capsule + `eye_offset`  
+2. Finish remaining pawn/piece authoring (joined multi-material mesh, shared instances)  
+3. Optional: ray impulse tool; ECS Phase 4 events  
 
 ---
 
-*Captured end of session 2026-08-03 from product discussion: ABeautifulGame + KHR physics direction + shrink-to-board VR knock-over.*
+*Updated end of session 2026-08-07: desktop knock-over + worldScale + debug draw; FPS controller next.*

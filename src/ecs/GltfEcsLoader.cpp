@@ -1,0 +1,201 @@
+#include "ecs/GltfEcsLoader.h"
+#include "ecs/ScriptSystem.h"
+#include "ecs/World.h"
+#include "scene/SceneManager.h"
+#include "core/Log.h"
+
+#include <tiny_gltf.h>
+#include <cstdio>
+
+namespace ecs {
+namespace {
+
+const tinygltf::Value* find_ecs_array(const tinygltf::Value& extras) {
+    if (!extras.IsObject())
+        return nullptr;
+    const auto& obj = extras.Get<tinygltf::Value::Object>();
+    auto it = obj.find("ECS_Components_v1");
+    if (it == obj.end() || !it->second.IsArray())
+        return nullptr;
+    return &it->second;
+}
+
+float get_number(const tinygltf::Value::Object& obj, const char* key, float def) {
+    auto it = obj.find(key);
+    if (it == obj.end() || !it->second.IsNumber())
+        return def;
+    return static_cast<float>(it->second.GetNumberAsDouble());
+}
+
+std::string get_string(const tinygltf::Value::Object& obj, const char* key) {
+    auto it = obj.find(key);
+    if (it == obj.end() || !it->second.IsString())
+        return {};
+    return it->second.Get<std::string>();
+}
+
+uint32_t apply_component_entry(World& world, Entity entity,
+                               const tinygltf::Value& entry) {
+    if (!entry.IsObject())
+        return 0;
+    const auto& obj = entry.Get<tinygltf::Value::Object>();
+    const std::string type = get_string(obj, "type");
+    if (type.empty()) {
+        LOG_ERROR("[ECS] ECS_Components_v1 entry missing \"type\"");
+        return 0;
+    }
+
+    if (type == "player") {
+        world.player_tags.get_or_emplace(entity);
+        world.desktop_moves.get_or_emplace(entity);
+        CameraRig& rig = world.camera_rigs.get_or_emplace(entity);
+        // Optional eye height: "eye_offset": [x,y,z] or string "[x, y, z]"
+        // (Blender custom props often export the vector as a string).
+        auto eit = obj.find("eye_offset");
+        if (eit != obj.end()) {
+            if (eit->second.IsArray()) {
+                const auto& arr = eit->second.Get<tinygltf::Value::Array>();
+                if (arr.size() >= 3 && arr[0].IsNumber() && arr[1].IsNumber() &&
+                    arr[2].IsNumber()) {
+                    rig.eye_offset = glm::vec3(
+                        static_cast<float>(arr[0].GetNumberAsDouble()),
+                        static_cast<float>(arr[1].GetNumberAsDouble()),
+                        static_cast<float>(arr[2].GetNumberAsDouble()));
+                }
+            } else if (eit->second.IsString()) {
+                float x = 0.f, y = 0.08f, z = 0.f;
+                if (std::sscanf(eit->second.Get<std::string>().c_str(),
+                                " [ %f , %f , %f ]", &x, &y, &z) >= 2 ||
+                    std::sscanf(eit->second.Get<std::string>().c_str(),
+                                "[%f,%f,%f]", &x, &y, &z) >= 2 ||
+                    std::sscanf(eit->second.Get<std::string>().c_str(),
+                                "%f,%f,%f", &x, &y, &z) >= 2) {
+                    rig.eye_offset = glm::vec3(x, y, z);
+                }
+            }
+        }
+        // Optional scalar shorthand: "eye_height": 0.08  →  (0, h, 0)
+        auto hit = obj.find("eye_height");
+        if (hit != obj.end() && hit->second.IsNumber()) {
+            rig.eye_offset =
+                glm::vec3(0.0f, static_cast<float>(hit->second.GetNumberAsDouble()),
+                          0.0f);
+        }
+        return 1;
+    }
+    if (type == "health") {
+        Health h{};
+        h.current = get_number(obj, "current", 100.0f);
+        h.max = get_number(obj, "max", h.current);
+        world.healths.get_or_emplace(entity, h);
+        return 1;
+    }
+    if (type == "script") {
+        Script sc{};
+        sc.name = get_string(obj, "name");
+        if (sc.name.empty()) {
+            LOG_ERROR("[ECS] script component missing \"name\"");
+            return 0;
+        }
+        world.scripts.get_or_emplace(entity, sc);
+        script_system_bind(world, entity);
+        return 1;
+    }
+    if (type == "name") {
+        Name n{};
+        n.value = get_string(obj, "value");
+        if (n.value.empty())
+            n.value = get_string(obj, "name");
+        world.names.get_or_emplace(entity, n);
+        return 1;
+    }
+
+    LOG_INFO("[ECS] Unknown ECS_Components_v1 type '" << type << "' (skipped)");
+    return 0;
+}
+
+} // namespace
+
+uint32_t apply_ecs_components_v1(World& world, Entity entity,
+                                 const tinygltf::Model& model, int node_index) {
+    if (node_index < 0 || node_index >= static_cast<int>(model.nodes.size()))
+        return 0;
+    const auto& node = model.nodes[static_cast<size_t>(node_index)];
+    const tinygltf::Value* arr = find_ecs_array(node.extras);
+    if (!arr)
+        return 0;
+
+    uint32_t applied = 0;
+    const auto& list = arr->Get<tinygltf::Value::Array>();
+    for (const auto& entry : list)
+        applied += apply_component_entry(world, entity, entry);
+    return applied;
+}
+
+uint32_t populate_world_from_gltf(World& world, const tinygltf::Model& model,
+                                  scene::SceneManager& scene) {
+    world.clear();
+    world.gltf_node_to_entity.assign(model.nodes.size(), kInvalidEntity);
+
+    // Dual-write: Entity per mesh GameObject.
+    const uint32_t go_count = scene.game_object_count();
+    for (uint32_t gi = 0; gi < go_count; ++gi) {
+        const auto& go = scene.get_game_object(gi);
+        Entity e = world.create_entity();
+        if (go.root_transform_index != ~0u) {
+            TransformLink link{};
+            link.transform_index = go.root_transform_index;
+            world.transform_links.get_or_emplace(e, link);
+        }
+        if (go.gltf_node_index != ~0u &&
+            go.gltf_node_index < world.gltf_node_to_entity.size()) {
+            world.gltf_node_to_entity[go.gltf_node_index] = e;
+            if (go.gltf_node_index < model.nodes.size() &&
+                !model.nodes[go.gltf_node_index].name.empty()) {
+                world.names.get_or_emplace(
+                    e, Name{model.nodes[go.gltf_node_index].name});
+            }
+        }
+        world.game_object_to_entity.push_back(e);
+    }
+
+    // Non-mesh nodes (or any node) with ECS extras: ensure entity exists.
+    uint32_t extras_hits = 0;
+    for (size_t ni = 0; ni < model.nodes.size(); ++ni) {
+        if (!find_ecs_array(model.nodes[ni].extras))
+            continue;
+
+        Entity e = kInvalidEntity;
+        if (ni < world.gltf_node_to_entity.size())
+            e = world.gltf_node_to_entity[ni];
+
+        if (e == kInvalidEntity) {
+            e = world.create_entity();
+            const auto& node_to_x = scene.gltf_node_to_transform();
+            if (ni < node_to_x.size() &&
+                node_to_x[ni] != scene::TransformManager::kInvalid) {
+                TransformLink link{};
+                link.transform_index = node_to_x[ni];
+                world.transform_links.get_or_emplace(e, link);
+            }
+            if (!model.nodes[ni].name.empty())
+                world.names.get_or_emplace(e, Name{model.nodes[ni].name});
+            world.gltf_node_to_entity[ni] = e;
+        }
+
+        extras_hits += apply_ecs_components_v1(world, e, model, static_cast<int>(ni));
+    }
+
+    world.resolve_active_player();
+
+    LOG_INFO("[ECS] populate_world_from_gltf: game_objects=" << go_count
+             << " ecs_component_entries=" << extras_hits
+             << " players=" << world.player_tags.size()
+             << " active_player="
+             << (world.active_player() == kInvalidEntity
+                     ? -1
+                     : static_cast<int>(world.active_player())));
+    return extras_hits;
+}
+
+} // namespace ecs

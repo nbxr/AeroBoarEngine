@@ -26,6 +26,7 @@ void gfx::Engine::destroy() {
 
 void gfx::Engine::destroy_buffers() {
     renderer.scene_manager.skins().destroy(renderer.vk.device, renderer.allocator);
+    renderer.debug_lines.destroy(renderer.vk.device, renderer.allocator);
     renderer.hzb.destroy(renderer.vk.device, renderer.allocator);
     renderer.gpu_culling.destroy(renderer.vk.device, renderer.allocator);
     renderer.ibl.destroy(renderer.vk.device, renderer.allocator);

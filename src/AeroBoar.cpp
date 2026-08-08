@@ -9,8 +9,12 @@
 #include "gfx/Renderer.h"
 #include "scene/Camera.h"
 #include "core/InputManager.h"
+#include "core/InputFrame.h"
 #include "core/Configuration.h"
 #include "core/Log.h"
+#include "ecs/DesktopMoveSystem.h"
+#include "ecs/EditorHotkeySystem.h"
+#include "ecs/ScriptSystem.h"
 #include <glm/glm.hpp>
 #include <nlohmann/json.hpp>
 #include <GLFW/glfw3.h>
@@ -80,11 +84,10 @@ int AeroBoar::fly() {
         return -1;
     }
 
-    // Physics foundation demo: static floor + falling unit cubes (Jolt).
-    // Can be disabled via configuration.json: "physicsDemo": false
+    // Optional floating-cube demo (scene KHR physics is built during load_scene).
     {
-        bool enable_demo = true;
         const nlohmann::json& root = core::Configuration::get_root();
+        bool enable_demo = false;
         if (root.contains("physicsDemo") && root["physicsDemo"].is_boolean())
             enable_demo = root["physicsDemo"].get<bool>();
         if (enable_demo) {
@@ -92,6 +95,13 @@ int AeroBoar::fly() {
                 LOG_ERROR("[Physics] spawn_physics_demo failed (continuing without demo)");
             }
         }
+        // Physics collider wireframes (F3 toggles at runtime).
+        bool phys_debug = false;
+        if (root.contains("physicsDebugDraw") && root["physicsDebugDraw"].is_boolean())
+            phys_debug = root["physicsDebugDraw"].get<bool>();
+        engine.physics.set_debug_draw_enabled(phys_debug);
+        if (phys_debug)
+            LOG_INFO("[Physics] debug draw ON (config physicsDebugDraw; F3 to toggle)");
     }
 
     // Optional config override for startup camera (Hi-Z / cull debug).
@@ -129,14 +139,14 @@ int AeroBoar::fly() {
     // (and Shift+R for generic framing) can restore it.
     engine.camera.save_initial_pose();
 
-    // Start with cursor visible (not captured). The user can move the mouse over the
-    // window with no effect on the camera. Once the mouse is positioned over the view,
-    // press Escape to toggle capture on and begin mouse look. This avoids any jump
-    // when the mouse first enters the window area. Escape always toggles capture on/off.
+    // ECS world populated during load_scene (entities + optional extras.ECS_Components_v1).
+    // Start with cursor visible (not captured). Escape (EditorHotkeySystem) toggles.
     core::InputManager::get_instance().set_cursor_captured(false);
     engine.camera.reset_mouse_state();
 
-    // Main render loop
+    core::InputFrameBuilder input_frames;
+
+    // Main render loop — order matches ecs-plan §9
     double last_frame_time = glfwGetTime();
 
     while (!glfwWindowShouldClose(engine.renderer.window.glfw_handle)) {
@@ -144,147 +154,62 @@ int AeroBoar::fly() {
         float delta_time = static_cast<float>(current_time - last_frame_time);
         last_frame_time = current_time;
 
-        // poll for window events
         glfwPollEvents();
-        core::InputManager::get_instance().update(delta_time);
+        auto& input = core::InputManager::get_instance();
+        input.update(delta_time);
 
         // handle resizing
         int width, height;
         glfwGetFramebufferSize(engine.renderer.window.glfw_handle, &width, &height);
         if (width > 0 && height > 0) {
-        
-            // Only handle resizing if the new dimensions are valid
-        if (width != engine.renderer.window.width || 
-            height != engine.renderer.window.height) {
-            LOG_INFO("[Main] Window size changed: " << engine.renderer.window.width << "x" << engine.renderer.window.height
-                     << " -> " << width << "x" << height << " (triggering swapchain recreate)");
-            engine.renderer.window.width = width;
-            engine.renderer.window.height = height;
-            // Recreate swapchain and related resources here
-            engine.recreate_swapchain();
+            if (width != engine.renderer.window.width ||
+                height != engine.renderer.window.height) {
+                LOG_INFO("[Main] Window size changed: "
+                         << engine.renderer.window.width << "x"
+                         << engine.renderer.window.height << " -> " << width << "x"
+                         << height << " (triggering swapchain recreate)");
+                engine.renderer.window.width = width;
+                engine.renderer.window.height = height;
+                engine.recreate_swapchain();
+            }
         }
 
-        } else {
-            // window is minimized: pause rendering
-        }
-
-        // Update camera (desktop WASD + mouse for now)
-        auto& input = core::InputManager::get_instance();
-
-        // On the very first frame after load, force a mouse state reset. This clears
-        // any deltas that may have accumulated during window creation, init, or load
-        // (before the user has had a chance to position the mouse over the window and
-        // explicitly toggle capture with Escape). The large-delta guards in
-        // InputManager provide additional protection on capture changes.
         static bool first_frame_after_load = true;
         if (first_frame_after_load) {
             input.reset_mouse_state();
             engine.camera.reset_mouse_state();
+            input_frames.reset_edges();
             first_frame_after_load = false;
         }
 
-        engine.camera.update(delta_time, input);
+        // 3) InputFrame  4) EditorHotkeys  5) DesktopMove (player)
+        const core::InputFrame frame = input_frames.build(input, delta_time);
 
-        // glTF node animations → dirty locals; sync_scene_transforms in render()
-        // after the frame fence applies worlds + GPU cull models.
+        ecs::EditorHotkeyContext editor_ctx{};
+        editor_ctx.input = &input;
+        editor_ctx.camera = &engine.camera;
+        editor_ctx.scene = &engine.renderer.scene_manager;
+        editor_ctx.physics = &engine.physics;
+        ecs::editor_hotkey_system_update(frame, editor_ctx);
+
+        // Animations first, then player move — otherwise clips that key the
+        // capsule/player node would overwrite locomotion every frame.
         engine.update_animations(delta_time);
 
-        // Jolt fixed-step + write linked body poses into TransformManager.
-        // Runs after animation so physics wins on dual-owned nodes (demo bodies
-        // are not animated).
+        ecs::desktop_move_system_update(
+            engine.ecs_world, frame, engine.camera,
+            &engine.renderer.scene_manager.transforms());
+
+        ecs::script_system_update(engine.ecs_world, delta_time);
+
+        // Kinematic player → Jolt, step, dynamics → meshes.
         engine.step_physics(delta_time);
 
-        // If the device was lost (DEVICE_LOST from acquire/submit/present/wait),
-        // stop the render loop instead of spinning at full speed and flooding
-        // the validation log with millions of repeated errors.
         if (engine.renderer.vk.device_lost) {
             LOG_ERROR("Device lost - exiting main loop to avoid log spam and further invalid calls.");
             glfwSetWindowShouldClose(engine.renderer.window.glfw_handle, GLFW_TRUE);
             break;
         }
-
-        // Escape toggles mouse capture (cursor visible vs. look control).
-        // At startup we begin uncaptured so the user can position the mouse over
-        // the window without causing any camera movement or jumps. Once ready,
-        // press Escape to capture and use the mouse to look around.
-        static bool escape_was_pressed = false;
-        bool escape_pressed = input.is_key_down(GLFW_KEY_ESCAPE);
-        if (escape_pressed && !escape_was_pressed) {
-            if (engine.camera.get_mode() == scene::CameraMode::Desktop) {
-                bool currently = input.is_cursor_captured();
-                input.set_cursor_captured(!currently);
-            }
-        }
-        escape_was_pressed = escape_pressed;
-
-        // R key handling (Escape is the toggle for mouse capture):
-        //   R      -> restore the exact pose from when the scene finished loading
-        //             (the glTF camera node if one was present, otherwise the
-        //             initial framing used at load time).
-        //   Shift+R -> perform a generic AABB-based framing of the model.
-        static bool r_was_pressed = false;
-        bool r_pressed = input.is_key_down(GLFW_KEY_R);
-        if (r_pressed && !r_was_pressed) {
-            bool shift = input.is_key_down(GLFW_KEY_LEFT_SHIFT) ||
-                         input.is_key_down(GLFW_KEY_RIGHT_SHIFT);
-            if (shift) {
-                auto [center, radius] =
-                    engine.renderer.scene_manager.get_scene_framing_sphere();
-                engine.camera.frame(center, radius);
-            } else {
-                engine.camera.restore_initial_pose();
-            }
-        }
-        r_was_pressed = r_pressed;
-
-        // P: log camera pose (debug aid for Hi-Z / framing / culling).
-        static bool p_was_pressed = false;
-        bool p_pressed = input.is_key_down(GLFW_KEY_P);
-        if (p_pressed && !p_was_pressed) {
-            const glm::vec3 pos = engine.camera.get_position();
-            const glm::vec3 fwd = engine.camera.get_forward();
-            LOG_INFO("[Camera] pos=(" << pos.x << ", " << pos.y << ", " << pos.z
-                     << ") forward=(" << fwd.x << ", " << fwd.y << ", " << fwd.z
-                     << ")");
-        }
-        p_was_pressed = p_pressed;
-
-        // N: cycle exclusive glTF animation clip (Fox Walk/Run/Survey, etc.).
-        static bool n_was_pressed = false;
-        bool n_pressed = input.is_key_down(GLFW_KEY_N);
-        if (n_pressed && !n_was_pressed) {
-            auto& anims = engine.renderer.scene_manager.animations();
-            if (anims.clip_count() > 0) {
-                const uint32_t idx = anims.cycle_next_clip(true);
-                if (idx != ~0u) {
-                    LOG_INFO("[Anim] Active clip [" << idx << "] '"
-                             << anims.clip(idx).name << "'");
-                }
-            }
-        }
-        n_was_pressed = n_pressed;
-
-        // Y / T: keyboard move speed (WASD / Space / Shift only — not mouse look).
-        // Multiplicative steps so fine control near slow speeds and big jumps when fast.
-        static bool y_was_pressed = false;
-        static bool t_was_pressed = false;
-        const bool y_pressed = input.is_key_down(GLFW_KEY_Y);
-        const bool t_pressed = input.is_key_down(GLFW_KEY_T);
-        constexpr float kSpeedMin = 0.01f;
-        constexpr float kSpeedMax = 200.0f;
-        constexpr float kSpeedStep = 1.25f; // +25% / -20% per press
-        if (y_pressed && !y_was_pressed) {
-            engine.camera.movement_speed = std::min(
-                kSpeedMax, engine.camera.movement_speed * kSpeedStep);
-            LOG_INFO("[Camera] movement_speed=" << engine.camera.movement_speed);
-        }
-        if (t_pressed && !t_was_pressed) {
-            engine.camera.movement_speed = std::max(
-                kSpeedMin, engine.camera.movement_speed / kSpeedStep);
-            LOG_INFO("[Camera] movement_speed=" << engine.camera.movement_speed);
-        }
-        y_was_pressed = y_pressed;
-        t_was_pressed = t_pressed;
 
         engine.render();
     }

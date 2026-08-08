@@ -12,6 +12,7 @@ struct GLFWwindow;
 
 namespace core {
 class InputManager;
+struct InputFrame;
 }
 
 namespace scene {
@@ -31,30 +32,17 @@ enum class CameraMode {
  *     - X: Yaw (rotate left/right) around the camera's current Up vector.
  *     - Y: Pitch up/down (direction controlled by `invert_pitch`).
  * - Q / E: Roll the camera counterclockwise / clockwise around its forward axis.
- * - R: Restore the exact camera pose from when the scene was loaded (authored
- *   glTF camera node if present, otherwise the initial AABB framing). This is the
- *   "get me back to the starting view" action.
- * - Shift+R: Perform a generic AABB-based "frame the model nicely" (old R behavior).
+ * Locomotion/look (Desktop mode) is driven by ecs::DesktopMoveSystem via
+ * apply_desktop_input(InputFrame). Editor keys (Escape, R, P, N) live in
+ * ecs::EditorHotkeySystem — not on Camera.
  *
- * Startup behavior: The app starts with the cursor visible (mouse capture off).
- * Move the mouse over the window freely (no camera effect). Press Escape to
- * toggle capture on and start mouse-look control. Escape always toggles.
- * - Escape: Toggle mouse capture (robust jump prevention is handled by InputManager).
+ * Desktop free-fly (via InputFrame / DesktopMoveSystem):
+ * - WASD / Space / Left-Shift, Q/E roll, mouse look when captured
+ * - Y / T movement speed (player path)
  *
  * Public tunables:
- * - `movement_speed` (WASD / Space / Shift; runtime: **Y** faster, **T** slower)
- * - `mouse_sensitivity` (mouse look only; not affected by Y/T)
- * - `roll_speed` (Q/E roll rate in degrees per second)
- * - `invert_pitch` (default false = normal behavior)
+ * - `movement_speed`, `mouse_sensitivity`, `roll_speed`, `invert_pitch`
  * - `fov_degrees`, `near_plane`, `far_plane`
- *
- * The camera maintains a quaternion `orientation` internally for robust 6DOF
- * rotation (including roll). `get_view_matrix()` is derived from the current
- * position + orientation.
- *
- * Note: The user may have applied personal sign tweaks inside the implementation
- * to match their preferred feel. The public API and documented behavior above
- * should be treated as the intended interface.
  */
 class Camera {
 public:
@@ -63,9 +51,11 @@ public:
     void set_mode(CameraMode new_mode);
     [[nodiscard]] CameraMode get_mode() const { return mode; }
 
-    // Main update - call once per frame
-    // input: provides processed keyboard + smoothed mouse deltas (and capture state)
+    // Legacy entry (no-op for keys). Prefer ecs DesktopMoveSystem + apply_desktop_input.
     void update(float delta_time, core::InputManager& input);
+
+    // Apply free-fly locomotion + look from a frame snapshot (Desktop mode only).
+    void apply_desktop_input(const core::InputFrame& frame);
 
     // TODO(desktop-input): Consider exposing runtime tuning for smoothing/acceleration
     // (currently only available via InputManager setters) or a small debug UI.
@@ -79,6 +69,10 @@ public:
     // === Configuration / Queries ===
     void set_position(const glm::vec3& position);
     [[nodiscard]] glm::vec3 get_position() const { return position; }
+
+    // World orientation (camera local -Z is look direction). Used to drive player transforms.
+    [[nodiscard]] glm::quat get_orientation() const { return orientation; }
+    void set_orientation(const glm::quat& q) { orientation = glm::normalize(q); }
 
     // Returns the world-space direction the camera is facing (our "front").
     // Equivalent to normalize(orientation * vec3(0,0,-1)).
@@ -138,8 +132,6 @@ private:
 
     // VR override
     glm::mat4 vr_view_matrix{1.0f};
-
-    void update_desktop(float delta_time, core::InputManager& input);
 
     // Saved pose from right after load (for 'R' reset to "where it was when loaded")
     bool has_initial_pose_ = false;

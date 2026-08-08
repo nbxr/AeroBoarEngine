@@ -14,6 +14,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <array>
+#include <vector>
 
 namespace {
 
@@ -271,6 +272,16 @@ void gfx::Engine::render() {
             record_indirect_draws(frame.command_buffer, renderer,
                                   vk.transparent_pipeline, viewProj,
                                   gfx::CullPass::Transparent);
+        }
+    }
+
+    // Physics collider wireframes (after shade so they sit on top with depth test).
+    if (physics.is_debug_draw_enabled() && renderer.debug_lines.is_ready()) {
+        std::vector<physics::DebugVertex> lines;
+        physics.collect_debug_lines(lines, camera.get_position());
+        if (!lines.empty()) {
+            renderer.debug_lines.draw(frame.command_buffer, vk.swap_chain_extent,
+                                      viewProj, lines);
         }
     }
 

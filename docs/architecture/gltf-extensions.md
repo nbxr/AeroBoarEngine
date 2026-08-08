@@ -6,7 +6,7 @@ Update this file when adding loader, material, or animation support.
 **See also**
 - `docs/agents/current_state.md` — overall status
 - `docs/architecture/animation-plan.md` — node TRS / skin / morph
-- `docs/architecture/physics-plan.md` — Jolt + KHR physics (planned)
+- `docs/architecture/physics-plan.md` — Jolt + KHR physics (MVP load landed)
 - `docs/agents/tech_context.md` — stack decisions
 
 ---
@@ -98,14 +98,14 @@ These appear on **AnimationPointerUVs** and many material samples. The engine us
 
 ---
 
-### 2.3 Physics authoring (planned, not loader-backed)
+### 2.3 Physics authoring (MVP loader-backed)
 
 | Extension | Status |
 |-----------|--------|
-| `KHR_physics_rigid_bodies` | **Planned** — see `physics-plan.md` / VR chess plan |
-| `KHR_implicit_shapes` | **Planned** |
+| `KHR_physics_rigid_bodies` | **MVP** — `spawn_scene_physics`; see `physics-plan.md` |
+| `KHR_implicit_shapes` | **MVP** — box / capsule; sphere≈box; mesh → convex hull |
 
-Runtime **Jolt** exists; glTF physics load does **not**.
+Runtime **Jolt** + KHR spawn path. Not yet: compounds, triangle meshes, full filter systems.
 
 ---
 
@@ -139,7 +139,7 @@ Runtime **Jolt** exists; glTF physics load does **not**.
 2. **`KHR_materials_unlit`** — cheap correctness for that sample’s required ext  
 3. Clearcoat/iridescence maps; variants UI  
 4. **Optional desktop glass tier** (parse → stub → desktop refraction/volume; off on Quest) — §2.2  
-5. **Physics KHR** — product path for ABeautifulGame / VR chess (separate plan)
+5. **Physics KHR polish** — compounds / filters; FPS controller; VR chess (separate plans)
 
 ---
 

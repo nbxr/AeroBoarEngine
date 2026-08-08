@@ -19,29 +19,29 @@
 - **glTF extension matrix**: `docs/architecture/gltf-extensions.md` (supported vs backlog; AnimationPointerUVs, materials, physics)
 - **VR chess product plan**: `docs/architecture/vr-chess-physics-plan.md`
 
-### Physics runtime (foundation)
+### Physics runtime
 
-- **Code:** `src/physics/PhysicsWorld.{h,cpp}`, `Engine::step_physics` / `spawn_physics_demo`, plan in `docs/architecture/physics-plan.md`
+- **Code:** `src/physics/PhysicsWorld.{h,cpp}`, `Engine::step_physics` / `spawn_scene_physics` / `spawn_physics_demo`, plan in `docs/architecture/physics-plan.md`
 - **Step:** fixed 1/60 with accumulator (max 4 substeps); gravity Y-up `-9.81`
 - **Layers:** static `NON_MOVING` vs dynamic/kinematic `MOVING`
+- **CCD:** dynamic bodies use Jolt `LinearCast` motion quality
 - **Scene link:** optional `transform_index` per body; dynamic poses write local T+R each frame
-- **Demo:** `configuration.json` `"physicsDemo": true|false` (default true) spawns floor + procedural boxes after scene load
+- **Config:** `physicsDemo`, `scenePhysics`, **`worldScale`** (root scale at load; mass × S³; chess uses `10`), **`physicsDebugDraw`** (+ **F3** toggle)
+- **Debug draw:** Jolt wireframe → `gfx::DebugLinePass` (LINE_LIST overlay in main pass)
+- **Demo:** `"physicsDemo": true|false` spawns floor + procedural boxes after scene load
 
-### Physics assets (glTF Khronos extensions) — planned
+### Physics assets (glTF Khronos extensions)
 
-**Decision:** Model physics properties (collision shapes, rigid-body parameters, materials/filters, joints as supported) are **authored in glTF** using Khronos physics extensions, not inventing a parallel proprietary asset format for production content.
-
-**Primary extensions to track / implement against:**
+**Decision:** Model physics properties are **authored in glTF** using Khronos physics extensions (not a long-term proprietary physics format).
 
 | Extension | Role |
 |-----------|------|
-| **`KHR_physics_rigid_bodies`** | Rigid bodies, motion type, mass / inertia related data, collision filtering (name during draft may appear as `KHR_rigid_bodies` in discussions) |
-| **`KHR_implicit_shapes`** | Analytic colliders (box, sphere, capsule, …) so not every body needs a mesh collider |
+| **`KHR_physics_rigid_bodies`** | Rigid bodies, motion, mass, materials, filters |
+| **`KHR_implicit_shapes`** | Analytic colliders (box, sphere, capsule, …) |
 
-- Spec work and samples live in the Khronos 3D Formats / glTF physics efforts (e.g. public drafts and samples under the community physics glTF repos; watch [KhronosGroup/glTF](https://github.com/KhronosGroup/glTF) extension registry for ratification).
-- **Runtime:** Jolt is the simulation backend. The loader will map extension data → engine physics components → Jolt shapes/bodies.
-- **Status:** runtime foundation yes; **extension parse not yet implemented**.
-- Prefer following ratified / widely agreed KHR schemas; avoid baking MSFT-only or one-off vendor physics into the long-term pipeline unless needed for interim tooling.
+- **Runtime:** `Engine::spawn_scene_physics` → Jolt (`PhysicsWorld`).
+- **Status:** MVP (box/capsule/implicit + mesh convex hulls). Compound / triangle mesh later.
+- **Authoring tip:** multi-material pieces → joined mesh + one RB; share mesh indices for GPU instancing; Blender “Render off” is **not** read by the engine.
 
 ### Shader tooling (future)
 Today shaders are compiled with **`glslc`** via the CMake `compile_shaders` target. That is intentional while development is desktop-first.
