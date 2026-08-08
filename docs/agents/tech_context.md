@@ -21,14 +21,14 @@
 
 ### Physics runtime
 
-- **Code:** `src/physics/PhysicsWorld.{h,cpp}`, `Engine::step_physics` / `spawn_scene_physics` / `spawn_physics_demo`, plan in `docs/architecture/physics-plan.md`
+- **Code:** `src/physics/PhysicsWorld.{h,cpp}`, `Engine::step_physics` / `spawn_scene_physics` / kill floor, plan in `docs/architecture/physics-plan.md`
 - **Step:** fixed 1/60 with accumulator (max 4 substeps); gravity Y-up `-9.81`
 - **Layers:** static `NON_MOVING` vs dynamic/kinematic `MOVING`
 - **CCD:** dynamic bodies use Jolt `LinearCast` motion quality
 - **Scene link:** optional `transform_index` per body; dynamic poses write local T+R each frame
-- **Config:** `physicsDemo`, `scenePhysics`, **`worldScale`** (root scale at load; mass × S³; chess uses `10`), **`physicsDebugDraw`** (+ **F3** toggle)
-- **Debug draw:** Jolt wireframe → `gfx::DebugLinePass` (LINE_LIST overlay in main pass)
-- **Demo:** `"physicsDemo": true|false` spawns floor + procedural boxes after scene load
+- **Config:** `scenePhysics`, **`worldScale`** (root scale; mass × S³; chess `10`), **`physicsDebugDraw`** (+ **F3**), **`killFloor`** (`enabled` / `margin` or absolute `y`)
+- **Debug draw:** Jolt wireframe → `gfx::DebugLinePass` (LINE_LIST overlay)
+- **Kill floor:** destroy dynamic bodies below Y; hide linked mesh (scale 0)
 
 ### Physics assets (glTF Khronos extensions)
 

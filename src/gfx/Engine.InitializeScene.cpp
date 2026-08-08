@@ -597,6 +597,9 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
                 LOG_ERROR("[Physics] spawn_scene_physics failed "
                           "(continuing without colliders)");
             }
+            configure_kill_floor();
+        } else {
+            kill_floor_enabled_ = false;
         }
     }
 

@@ -1,107 +1,19 @@
 #include "gfx/Engine.h"
 #include "gfx/BufferUtils.h"
 #include "gfx/DrawBatch.h"
-#include "gfx/Material.h"
-#include "gfx/MeshData.h"
-#include "gfx/Vertex.h"
 #include "ecs/Components.h"
 #include "ecs/Entity.h"
 #include "core/Configuration.h"
 #include "core/Log.h"
+#include "scene/TransformManager.h"
 #include "tiny_gltf.h"
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <cctype>
-#include <cstring>
+#include <cmath>
 #include <string>
 #include <unordered_map>
 #include <vector>
-
-namespace {
-
-void pack_uv0(gfx::Vertex& v, float u, float vcoord) {
-    const uint16_t uu =
-        static_cast<uint16_t>(std::clamp(u, 0.0f, 1.0f) * 65535.0f + 0.5f);
-    const uint16_t vv =
-        static_cast<uint16_t>(std::clamp(vcoord, 0.0f, 1.0f) * 65535.0f + 0.5f);
-    v.uv[0] = static_cast<uint8_t>(uu & 0xFF);
-    v.uv[1] = static_cast<uint8_t>((uu >> 8) & 0xFF);
-    v.uv[2] = static_cast<uint8_t>(vv & 0xFF);
-    v.uv[3] = static_cast<uint8_t>((vv >> 8) & 0xFF);
-    v.uv[4] = v.uv[0];
-    v.uv[5] = v.uv[1];
-    v.uv[6] = v.uv[2];
-    v.uv[7] = v.uv[3];
-}
-
-gfx::Vertex make_vertex(const glm::vec3& p, const glm::vec3& n, float u,
-                        float v) {
-    gfx::Vertex out{};
-    out.position[0] = p.x;
-    out.position[1] = p.y;
-    out.position[2] = p.z;
-    out.normal[0] = n.x;
-    out.normal[1] = n.y;
-    out.normal[2] = n.z;
-    // Tangent +handedness
-    out.tangent[0] = 1.0f;
-    out.tangent[1] = 0.0f;
-    out.tangent[2] = 0.0f;
-    out.tangent[3] = 1.0f;
-    pack_uv0(out, u, v);
-    out.color[0] = out.color[1] = out.color[2] = out.color[3] = 255;
-    out.blend_weights[0] = 255;
-    out.blend_weights[1] = out.blend_weights[2] = out.blend_weights[3] = 0;
-    out.blend_indices[0] = out.blend_indices[1] = out.blend_indices[2] =
-        out.blend_indices[3] = 0;
-    return out;
-}
-
-// Unit cube centered at origin, half-extent 0.5 (matches BoxDesc default).
-gfx::MeshData make_unit_cube_mesh() {
-    gfx::MeshData mesh{};
-    const float h = 0.5f;
-    struct Face {
-        glm::vec3 n;
-        glm::vec3 p[4];
-    };
-    const Face faces[6] = {
-        {{0, 0, 1},
-         {{-h, -h, h}, {h, -h, h}, {h, h, h}, {-h, h, h}}},
-        {{0, 0, -1},
-         {{h, -h, -h}, {-h, -h, -h}, {-h, h, -h}, {h, h, -h}}},
-        {{1, 0, 0},
-         {{h, -h, h}, {h, -h, -h}, {h, h, -h}, {h, h, h}}},
-        {{-1, 0, 0},
-         {{-h, -h, -h}, {-h, -h, h}, {-h, h, h}, {-h, h, -h}}},
-        {{0, 1, 0},
-         {{-h, h, h}, {h, h, h}, {h, h, -h}, {-h, h, -h}}},
-        {{0, -1, 0},
-         {{-h, -h, -h}, {h, -h, -h}, {h, -h, h}, {-h, -h, h}}},
-    };
-
-    mesh.vertices.reserve(24);
-    mesh.indices.reserve(36);
-    for (const Face& f : faces) {
-        const uint32_t base = static_cast<uint32_t>(mesh.vertices.size());
-        mesh.vertices.push_back(make_vertex(f.p[0], f.n, 0.0f, 0.0f));
-        mesh.vertices.push_back(make_vertex(f.p[1], f.n, 1.0f, 0.0f));
-        mesh.vertices.push_back(make_vertex(f.p[2], f.n, 1.0f, 1.0f));
-        mesh.vertices.push_back(make_vertex(f.p[3], f.n, 0.0f, 1.0f));
-        mesh.indices.push_back(base + 0);
-        mesh.indices.push_back(base + 1);
-        mesh.indices.push_back(base + 2);
-        mesh.indices.push_back(base + 0);
-        mesh.indices.push_back(base + 2);
-        mesh.indices.push_back(base + 3);
-    }
-    mesh.local_aabb.min = glm::vec3(-h);
-    mesh.local_aabb.max = glm::vec3(h);
-    return mesh;
-}
-
-} // namespace
 
 void gfx::Engine::step_physics(float delta_time) {
     if (!physics.is_initialized())
@@ -112,6 +24,97 @@ void gfx::Engine::step_physics(float delta_time) {
     physics.sync_from_transforms(xforms);
     physics.step(delta_time);
     physics.sync_to_transforms(xforms);
+    process_kill_floor();
+}
+
+void gfx::Engine::configure_kill_floor() {
+    // World-level policy (not ECS components): one plane for the loaded scene.
+    // Y is in simulation meters after worldScale.
+    kill_floor_enabled_ = true;
+    float margin = 2.0f;
+    bool have_explicit_y = false;
+    float explicit_y = 0.0f;
+
+    const nlohmann::json& cfg = core::Configuration::get_root();
+    if (cfg.contains("killFloor") && cfg["killFloor"].is_object()) {
+        const auto& kf = cfg["killFloor"];
+        if (kf.contains("enabled") && kf["enabled"].is_boolean())
+            kill_floor_enabled_ = kf["enabled"].get<bool>();
+        if (kf.contains("margin") && kf["margin"].is_number())
+            margin = static_cast<float>(kf["margin"].get<double>());
+        if (kf.contains("y") && kf["y"].is_number()) {
+            have_explicit_y = true;
+            explicit_y = static_cast<float>(kf["y"].get<double>());
+        }
+    } else if (cfg.contains("killFloorY") && cfg["killFloorY"].is_number()) {
+        // Flat alias: absolute Y, always on.
+        have_explicit_y = true;
+        explicit_y = static_cast<float>(cfg["killFloorY"].get<double>());
+        kill_floor_enabled_ = true;
+    } else if (cfg.contains("killFloorEnabled") &&
+               cfg["killFloorEnabled"].is_boolean()) {
+        kill_floor_enabled_ = cfg["killFloorEnabled"].get<bool>();
+    }
+
+    if (!kill_floor_enabled_) {
+        LOG_INFO("[Physics] kill floor disabled");
+        return;
+    }
+
+    if (have_explicit_y) {
+        kill_floor_y_ = explicit_y;
+    } else {
+        // Auto: below scene framing sphere (already includes worldScale).
+        const auto [center, radius] =
+            renderer.scene_manager.get_scene_framing_sphere();
+        kill_floor_y_ = center.y - radius - margin;
+    }
+
+    LOG_INFO("[Physics] kill floor ON at y=" << kill_floor_y_
+             << (have_explicit_y ? " (config)" : " (auto scene bounds + margin)")
+             << " margin=" << margin);
+}
+
+void gfx::Engine::process_kill_floor() {
+    if (!kill_floor_enabled_ || !physics.is_initialized())
+        return;
+
+    auto& xforms = renderer.scene_manager.transforms();
+    uint32_t killed = 0;
+
+    const uint32_t slots = physics.body_slot_count();
+    for (physics::BodyHandle h = 0; h < slots; ++h) {
+        if (!physics.is_body_alive(h))
+            continue;
+        // Only free-falling dynamics — leave static board and kinematic player.
+        if (physics.get_motion_type(h) != physics::MotionType::Dynamic)
+            continue;
+
+        glm::vec3 pos{};
+        glm::quat rot{};
+        if (!physics.get_pose(h, pos, rot))
+            continue;
+        if (pos.y >= kill_floor_y_)
+            continue;
+
+        const uint32_t ti = physics.get_transform_link(h);
+        if (ti != ~0u && xforms.is_alive(ti)) {
+            // Hide mesh (and any children that inherit scale) without full GO teardown.
+            scene::LocalTrs trs = xforms.get_local_trs(ti);
+            trs.scale = glm::vec3(0.0f);
+            trs.translation = pos; // last known world-ish pose for roots
+            xforms.set_local_trs(ti, trs);
+        }
+
+        physics.destroy_body(h);
+        ++killed;
+    }
+
+    if (killed > 0) {
+        xforms.propagate_if_dirty();
+        LOG_INFO("[Physics] kill floor removed " << killed
+                 << " dynamic body(ies) (y < " << kill_floor_y_ << ")");
+    }
 }
 
 bool gfx::Engine::rebuild_draw_batches() {
@@ -174,107 +177,6 @@ bool gfx::Engine::rebuild_draw_batches() {
     LOG_INFO("[Draw] GPU cull ready: " << n_rm << " renderMeshes / "
              << renderer.scene_manager.game_object_count() << " gameObjects / "
              << renderer.mesh_draw_infos.size() << " batches");
-    return true;
-}
-
-bool gfx::Engine::spawn_physics_demo() {
-    if (!physics.is_initialized()) {
-        if (!physics.initialize()) {
-            LOG_ERROR("[Physics] failed to initialize for demo");
-            return false;
-        }
-    }
-
-    // Static floor (physics only — no mesh yet).
-    const physics::BodyHandle floor =
-        physics.create_floor(/*half_xz=*/20.0f, /*half_h=*/0.5f, /*y=*/-0.5f);
-    if (floor == physics::kInvalidBody) {
-        LOG_ERROR("[Physics] floor create failed");
-        return false;
-    }
-
-    // Procedural unit cube + simple orange PBR material (no textures).
-    gfx::MeshData cube = make_unit_cube_mesh();
-    const core::AABB cube_aabb = cube.local_aabb;
-    const gfx::MeshPrimitiveID mesh_id = renderer.mesh_manager.add_mesh(cube);
-
-    gfx::Material mat{};
-    mat.albedo = glm::vec4(0.92f, 0.45f, 0.12f, 1.0f);
-    mat.roughness = 0.45f;
-    mat.metallic = 0.05f;
-    mat.emissive_factor = glm::vec4(0.f, 0.f, 0.f, 1.f);
-    mat.normalStrength = 1.0f;
-    mat.flags = 0;
-    const gfx::MaterialID mat_id = renderer.material_manager.create_material(mat);
-
-    auto& xforms = renderer.scene_manager.transforms();
-
-    // A few falling boxes at different heights / x offsets.
-    constexpr int kBoxes = 5;
-    const glm::vec3 starts[kBoxes] = {
-        {0.0f, 4.0f, 0.0f},
-        {1.2f, 5.5f, 0.3f},
-        {-1.0f, 6.0f, -0.5f},
-        {0.5f, 7.2f, 1.0f},
-        {-0.7f, 8.0f, 0.2f},
-    };
-
-    for (int i = 0; i < kBoxes; ++i) {
-        const uint32_t ti = xforms.allocate();
-        scene::LocalTrs trs{};
-        trs.translation = starts[i];
-        trs.rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
-        trs.scale = glm::vec3(1.0f);
-        xforms.set_local_trs(ti, trs);
-        xforms.set_parent(ti, scene::TransformManager::kInvalid);
-
-        const uint32_t go =
-            renderer.scene_manager.create_game_object(ti, /*gltf_node=*/~0u);
-        if (go == ~0u) {
-            LOG_ERROR("[Physics] create_game_object failed");
-            continue;
-        }
-        renderer.scene_manager.add_render_mesh(go, static_cast<uint32_t>(mesh_id),
-                                               static_cast<uint32_t>(mat_id),
-                                               cube_aabb, ti);
-
-        physics::BoxDesc desc{};
-        desc.half_extents = glm::vec3(0.5f);
-        desc.position = starts[i];
-        desc.motion = physics::MotionType::Dynamic;
-        desc.restitution = 0.35f;
-        desc.friction = 0.6f;
-        desc.mass = 1.0f;
-        desc.transform_index = ti;
-        const physics::BodyHandle body = physics.create_box(desc);
-        if (body == physics::kInvalidBody)
-            LOG_ERROR("[Physics] dynamic box create failed");
-    }
-
-    xforms.mark_all_dirty();
-    xforms.propagate();
-    renderer.scene_manager.refresh_instance_worlds();
-
-    // Upload new mesh / material / instances to the inactive buffer side, then
-    // flip so they are visible next frame.
-    renderer.mesh_manager.update_buffers();
-    renderer.material_manager.update_buffers();
-    renderer.scene_manager.update_buffers();
-    renderer.mesh_manager.toggle_buffers();
-    renderer.material_manager.toggle_buffers();
-    renderer.scene_manager.toggle_buffers();
-
-    for (uint32_t i = 0; i < renderer.vk.bindless_descriptor_sets.size(); ++i) {
-        auto& set = renderer.vk.bindless_descriptor_sets[i];
-        renderer.material_manager.bind_descriptor(2, set);
-        renderer.mesh_manager.bind_descriptor(3, 4, 5, set);
-    }
-
-    if (!rebuild_draw_batches())
-        return false;
-
-    LOG_INFO("[Physics] demo spawned: floor + " << kBoxes
-             << " dynamic boxes (bodies=" << physics.body_count() << ")");
     return true;
 }
 

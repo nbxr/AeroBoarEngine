@@ -1,10 +1,13 @@
 {
   "defaultScene": "ABeautifulGameScene",
   "activeSystem": "Windows",
-  "physicsDemo": false,
   "scenePhysics": true,
   "worldScale": 10.0,
   "physicsDebugDraw": false,
+  "killFloor": {
+    "enabled": true,
+    "margin": 2.0
+  },
   "home": [
     {
       "system": "Windows",

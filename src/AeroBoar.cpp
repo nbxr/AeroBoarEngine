@@ -84,18 +84,10 @@ int AeroBoar::fly() {
         return -1;
     }
 
-    // Optional floating-cube demo (scene KHR physics is built during load_scene).
+    // Physics collider wireframes (F3 toggles at runtime). Scene KHR bodies
+    // are built during load_scene; kill floor is configured there too.
     {
         const nlohmann::json& root = core::Configuration::get_root();
-        bool enable_demo = false;
-        if (root.contains("physicsDemo") && root["physicsDemo"].is_boolean())
-            enable_demo = root["physicsDemo"].get<bool>();
-        if (enable_demo) {
-            if (!engine.spawn_physics_demo()) {
-                LOG_ERROR("[Physics] spawn_physics_demo failed (continuing without demo)");
-            }
-        }
-        // Physics collider wireframes (F3 toggles at runtime).
         bool phys_debug = false;
         if (root.contains("physicsDebugDraw") && root["physicsDebugDraw"].is_boolean())
             phys_debug = root["physicsDebugDraw"].get<bool>();

@@ -498,7 +498,46 @@ bool PhysicsWorld::get_pose(BodyHandle body, glm::vec3& out_pos,
     return true;
 }
 
+bool PhysicsWorld::destroy_body(BodyHandle body) {
+    if (!impl_ || body >= impl_->bodies.size())
+        return false;
+    Impl::BodyRecord& rec = impl_->bodies[body];
+    if (rec.id.IsInvalid())
+        return false;
+
+    BodyInterface& bi = impl_->system.GetBodyInterface();
+    bi.RemoveBody(rec.id);
+    bi.DestroyBody(rec.id);
+    rec.id = BodyID();
+    rec.transform_index = ~0u;
+    rec.motion = MotionType::Static;
+    return true;
+}
+
+bool PhysicsWorld::is_body_alive(BodyHandle body) const {
+    if (!impl_ || body >= impl_->bodies.size())
+        return false;
+    return !impl_->bodies[body].id.IsInvalid();
+}
+
+MotionType PhysicsWorld::get_motion_type(BodyHandle body) const {
+    if (!impl_ || body >= impl_->bodies.size())
+        return MotionType::Static;
+    return impl_->bodies[body].motion;
+}
+
 uint32_t PhysicsWorld::body_count() const {
+    if (!impl_)
+        return 0u;
+    uint32_t n = 0;
+    for (const auto& rec : impl_->bodies) {
+        if (!rec.id.IsInvalid())
+            ++n;
+    }
+    return n;
+}
+
+uint32_t PhysicsWorld::body_slot_count() const {
     return impl_ ? static_cast<uint32_t>(impl_->bodies.size()) : 0u;
 }
 

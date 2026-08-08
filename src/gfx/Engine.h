@@ -52,19 +52,24 @@ class Engine {
     void update_animations(float delta_time);
 
     // Fixed-step Jolt: kinematic from transforms → step → dynamics to transforms.
-    // Call after desktop move + animations, before render().
+    // Then kill-floor cull for dynamic bodies. Call after move + animations.
     void step_physics(float delta_time);
-
-    // Floor + falling unit boxes (procedural mesh). Call after load_scene.
-    // Rebuilds GPU cull batches. Safe to call once per loaded scene.
-    bool spawn_physics_demo();
 
     // Build colliders from glTF KHR_physics_rigid_bodies + KHR_implicit_shapes.
     // Call after load_scene (roots already scaled by config worldScale). ECS
     // player → kinematic; dynamic mass scaled by worldScale^3.
     bool spawn_scene_physics(const tinygltf::Model& model);
 
+    // After scene load: enable kill floor from config and/or scene AABB.
+    // Sim-space Y (after worldScale). Dynamics below the plane are destroyed.
+    void configure_kill_floor();
+
   private:
+    // World policy (not per-entity ECS): drop dynamics below this Y.
+    bool kill_floor_enabled_ = false;
+    float kill_floor_y_ = -1000.0f;
+    void process_kill_floor();
+
     // devices
     void add_features(vkb::PhysicalDeviceSelector &selector);
     std::pair<bool, vkb::PhysicalDevice>

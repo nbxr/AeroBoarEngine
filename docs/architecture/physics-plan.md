@@ -43,10 +43,10 @@ Canonical plan for rigid-body physics in AeroBoarEngine.
 | Step + transform sync | `Engine::step_physics` → `PhysicsWorld::step` + `sync_to_transforms` |
 | Main loop | `AeroBoar.cpp` after `update_animations`, before `render` |
 | Draw rebuild | `Engine::rebuild_draw_batches` (shared with scene load) |
-| Demo | `Engine::spawn_physics_demo` — static floor + 5 unit cubes (procedural mesh) |
-| Config | `physicsDemo`, `scenePhysics`, **`worldScale`**, **`physicsDebugDraw`** in `configuration.json` |
+| Config | `scenePhysics`, **`worldScale`**, **`physicsDebugDraw`**, **`killFloor`** in `configuration.json` |
 | Debug draw | `gfx::DebugLinePass` + Jolt `DebugRendererSimple`; **F3** toggles |
 | Scene KHR spawn | `Engine::spawn_scene_physics` (players → kinematic) |
+| Kill floor | World policy (not ECS): destroy **dynamic** bodies below Y; hide mesh via scale 0. Auto from scene AABB − margin, or explicit `y` |
 
 ### API (runtime)
 
@@ -71,6 +71,21 @@ After step, linked **dynamic** bodies push pose into `TransformManager` locals; 
 4. `render` → fence wait → `sync_scene_transforms` → cull / shade → optional physics debug lines  
 
 Physics wins on dual-owned nodes if both animation and physics write the same transform (demo bodies are not animated).
+
+### Kill floor (world policy)
+
+Prefer **one scene/world setting**, not a component on every piece:
+
+```json
+"killFloor": { "enabled": true, "margin": 2.0 }
+// or absolute sim Y (after worldScale):
+"killFloor": { "enabled": true, "y": -5.0 }
+```
+
+- Default when `scenePhysics` loads: **enabled**, Y = framing center.y − radius − **margin** (sim meters).  
+- Only **dynamic** bodies (pieces). Static board + **kinematic** player are ignored.  
+- On kill: remove Jolt body; set linked transform **scale = 0** (hides mesh; no full GO GC yet).  
+- ECS scene-level component later is optional; config is enough for tabletop.
 
 ### Multi-part pieces (authoring — model, not engine)
 
@@ -102,6 +117,8 @@ For pieces with separate materials/meshes (e.g. pawn body + top):
 - [x] Dynamic **LinearCast** CCD; scaled box/hull convex radius for small shapes
 - [x] **`worldScale`** for tabletop / thin-collider scenes
 - [x] Physics wireframe debug draw
+- [x] Kill floor (config / auto scene bounds)
+- [x] Removed free-fall `physicsDemo` cubes path
 - [ ] Desktop ray / key impulse (optional; capsule contact already knocks pieces)
 - [ ] Static mesh collider path (Jolt `MeshShape`)
 - [ ] Clear/re-init physics on scene reload without full process teardown  
@@ -146,10 +163,9 @@ Full product sequencing: **`vr-chess-physics-plan.md`**.
 ## 5. Testing checklist
 
 - [x] Debug build links `Jolt.lib` and runs desktop loop  
-- [x] With `physicsDemo` true: orange boxes fall and rest on floor  
-- [x] With `physicsDemo` false: no extra boxes, no crash  
-- [x] KHR scene (`scenePhysics` + ABeautifulGameScene): bodies spawn; pieces interact with board under `worldScale: 10`  
+- [x] KHR scene (`scenePhysics` + ABeautifulGameScene): bodies spawn; pieces interact under `worldScale: 10`  
 - [x] F3 / `physicsDebugDraw`: wire colliders visible  
+- [x] Kill floor removes fallen dynamics  
 - [ ] FPS controller: walk on board, jump/crouch, keep knock-over  
 - [ ] Validation clean after long run with physics + debug draw  
 

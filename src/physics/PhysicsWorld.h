@@ -99,7 +99,16 @@ class PhysicsWorld {
 
     bool get_pose(BodyHandle body, glm::vec3& out_pos, glm::quat& out_rot);
 
+    // Remove body from the sim. Handle slot is invalidated (not recycled).
+    // Returns false if handle was already dead / invalid.
+    bool destroy_body(BodyHandle body);
+
+    [[nodiscard]] bool is_body_alive(BodyHandle body) const;
+    [[nodiscard]] MotionType get_motion_type(BodyHandle body) const;
+
     [[nodiscard]] uint32_t body_count() const;
+    // Highest handle index + 1 (includes destroyed slots). For iteration.
+    [[nodiscard]] uint32_t body_slot_count() const;
 
     // Wireframe colliders via Jolt DebugRenderer (Debug/Release Jolt builds).
     void set_debug_draw_enabled(bool enabled) { debug_draw_enabled_ = enabled; }
