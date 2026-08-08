@@ -4,6 +4,9 @@
 #include <cstring>
 #include <iostream>
 #include <mutex>
+#include <stack>
+#include <string>
+#include <unordered_map>
 #include <stb_image.h>
 
 bool gfx::TextureManager::is_initialized() { return device != VK_NULL_HANDLE; }
@@ -194,48 +197,155 @@ bool gfx::TextureManager::create_dummy_texture() {
 gfx::TextureID gfx::TextureManager::get_texture_handle(const std::string &name,
                                                   const std::string &filepath,
                                                   bool is_srgb) {
-
     std::scoped_lock lock(texture_mutex);
 
-    // check if key is name or filepath
-    const std::string *key = nullptr;
-    if (name.empty())
-        key = &filepath;
-    else
-        key = &name;
-
-    // check if texture was already added
-    auto it = texture_lookup.find(*key);
-    if (it != texture_lookup.end()) {
+    const std::string key = name.empty() ? filepath : name;
+    auto it = texture_lookup.find(key);
+    if (it != texture_lookup.end())
         return it->second;
-    } else {
-        // not added previously, so load texture and
-        // add to upload list
 
-        gfx::TextureInfo texture_info;
-        texture_info.name = name.empty() ? filepath : name;
-        texture_info.filepath = filepath;
-        texture_info.format = is_srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
+    gfx::TextureInfo texture_info;
+    texture_info.name = key;
+    texture_info.filepath = filepath;
+    texture_info.format =
+        is_srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
 
-        // use a recycled value if available
-        if (!recycle_cache.empty()) {
-            gfx::TextureID id = recycle_cache.top();
-            recycle_cache.pop();
-            if (id < texture_cache.size()) {
-                texture_cache[id] = texture_info;
-                pending_upload.push_back(id);
-                texture_lookup[*key] = id;
-                return id;
-            }
-            // If recycled ID is invalid, treat as new
+    if (!recycle_cache.empty()) {
+        gfx::TextureID id = recycle_cache.top();
+        recycle_cache.pop();
+        if (id < texture_cache.size()) {
+            texture_cache[id] = std::move(texture_info);
+            pending_upload.push_back(id);
+            texture_lookup[key] = id;
+            return id;
         }
-
-        texture_cache.push_back(texture_info);
-        gfx::TextureID id(texture_cache.size() - 1);
-        pending_upload.push_back(id);
-        texture_lookup[*key] = id;
-        return id;
     }
+
+    texture_cache.push_back(std::move(texture_info));
+    gfx::TextureID id(texture_cache.size() - 1);
+    pending_upload.push_back(id);
+    texture_lookup[key] = id;
+    return id;
+}
+
+gfx::TextureID gfx::TextureManager::get_texture_handle_from_pixels(
+    const std::string& name, const uint8_t* pixels, int width, int height,
+    int channels, bool is_srgb) {
+    std::scoped_lock lock(texture_mutex);
+
+    const std::string key =
+        name.empty() ? ("pixels_" + std::to_string(width) + "x" +
+                        std::to_string(height))
+                     : name;
+
+    auto it = texture_lookup.find(key);
+    if (it != texture_lookup.end())
+        return it->second;
+
+    gfx::TextureInfo texture_info;
+    texture_info.name = key;
+    texture_info.format =
+        is_srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
+
+    if (!pixels || width <= 0 || height <= 0) {
+        LOG_ERROR("[TextureManager] from_pixels: invalid args for '" << key
+                  << "'");
+        texture_info.cpu_pixels = {255, 0, 255, 255};
+        texture_info.width = 1;
+        texture_info.height = 1;
+        texture_info.channels = 4;
+    } else {
+        texture_info.width = static_cast<uint32_t>(width);
+        texture_info.height = static_cast<uint32_t>(height);
+        texture_info.channels = 4;
+        const size_t n =
+            static_cast<size_t>(width) * static_cast<size_t>(height);
+        texture_info.cpu_pixels.resize(n * 4);
+        if (channels >= 4) {
+            std::memcpy(texture_info.cpu_pixels.data(), pixels, n * 4);
+        } else if (channels == 3) {
+            for (size_t i = 0; i < n; ++i) {
+                texture_info.cpu_pixels[i * 4 + 0] = pixels[i * 3 + 0];
+                texture_info.cpu_pixels[i * 4 + 1] = pixels[i * 3 + 1];
+                texture_info.cpu_pixels[i * 4 + 2] = pixels[i * 3 + 2];
+                texture_info.cpu_pixels[i * 4 + 3] = 255;
+            }
+        } else if (channels == 1) {
+            for (size_t i = 0; i < n; ++i) {
+                const uint8_t g = pixels[i];
+                texture_info.cpu_pixels[i * 4 + 0] = g;
+                texture_info.cpu_pixels[i * 4 + 1] = g;
+                texture_info.cpu_pixels[i * 4 + 2] = g;
+                texture_info.cpu_pixels[i * 4 + 3] = 255;
+            }
+        } else if (channels == 2) {
+            for (size_t i = 0; i < n; ++i) {
+                const uint8_t g = pixels[i * 2 + 0];
+                const uint8_t a = pixels[i * 2 + 1];
+                texture_info.cpu_pixels[i * 4 + 0] = g;
+                texture_info.cpu_pixels[i * 4 + 1] = g;
+                texture_info.cpu_pixels[i * 4 + 2] = g;
+                texture_info.cpu_pixels[i * 4 + 3] = a;
+            }
+        } else {
+            LOG_ERROR("[TextureManager] from_pixels: unsupported channels="
+                      << channels);
+            texture_info.cpu_pixels = {255, 0, 255, 255};
+            texture_info.width = 1;
+            texture_info.height = 1;
+        }
+    }
+
+    if (!recycle_cache.empty()) {
+        gfx::TextureID id = recycle_cache.top();
+        recycle_cache.pop();
+        if (id < texture_cache.size()) {
+            texture_cache[id] = std::move(texture_info);
+            pending_upload.push_back(id);
+            texture_lookup[key] = id;
+            return id;
+        }
+    }
+
+    texture_cache.push_back(std::move(texture_info));
+    gfx::TextureID id(texture_cache.size() - 1);
+    pending_upload.push_back(id);
+    texture_lookup[key] = id;
+    return id;
+}
+
+gfx::TextureID gfx::TextureManager::get_texture_handle_from_encoded(
+    const std::string& name, const uint8_t* data, size_t size, bool is_srgb) {
+    if (!data || size == 0) {
+        LOG_ERROR("[TextureManager] from_encoded: empty data");
+        std::vector<uint8_t> mag = {255, 0, 255, 255};
+        return get_texture_handle_from_pixels(
+            name.empty() ? "invalid_encoded" : name, mag.data(), 1, 1, 4,
+            is_srgb);
+    }
+
+    int width = 0, height = 0, channels = 0;
+    uint8_t* decoded = stbi_load_from_memory(data, static_cast<int>(size),
+                                             &width, &height, &channels, 4);
+    if (!decoded || width <= 0 || height <= 0) {
+        if (decoded)
+            stbi_image_free(decoded);
+        LOG_ERROR("[TextureManager] from_encoded: stbi_load_from_memory failed ("
+                  << (name.empty() ? "?" : name) << ")");
+        std::vector<uint8_t> mag = {255, 0, 255, 255};
+        return get_texture_handle_from_pixels(
+            name.empty() ? "decode_fail" : name, mag.data(), 1, 1, 4, is_srgb);
+    }
+
+    const std::string key = name.empty()
+                                ? ("encoded_" + std::to_string(size) + "_" +
+                                   std::to_string(width) + "x" +
+                                   std::to_string(height))
+                                : name;
+    const TextureID id = get_texture_handle_from_pixels(
+        key, decoded, width, height, /*channels=*/4, is_srgb);
+    stbi_image_free(decoded);
+    return id;
 }
 
 void gfx::TextureManager::remove_texture(const gfx::TextureID texture_id) {
@@ -567,29 +677,37 @@ void gfx::TextureManager::shutdown() {
 
 void gfx::TextureManager::load_pixel_data(std::vector<uint8_t> &pixels,
                                           gfx::TextureInfo &info) {
-
-    // Load image using stb_image
-    int width = 0, height = 0, channels = 0;
-    uint8_t *file_pixels =
-        stbi_load(info.filepath.c_str(), &width, &height, &channels,
-                  4 // Force load as RGBA (4 channels)
-        );
-
-    if (file_pixels && width > 0 && height > 0) {
-        pixels.resize(static_cast<size_t>(width * height * 4));
-        std::memcpy(pixels.data(), file_pixels, pixels.size());
-        info.width = static_cast<uint32_t>(width);
-        info.height = static_cast<uint32_t>(height);
-        info.channels = static_cast<uint32_t>(channels);
-        stbi_image_free(file_pixels);
+    // Prefer CPU pixels already staged (embedded .glb / decoded bufferView).
+    if (!info.cpu_pixels.empty() && info.width > 0 && info.height > 0) {
+        pixels = std::move(info.cpu_pixels);
+        info.cpu_pixels.clear();
+        info.cpu_pixels.shrink_to_fit();
+        if (info.channels == 0)
+            info.channels = 4;
         return;
     }
 
-    // Fallback: 1x1 magenta placeholder (very visible during development)
-    if (file_pixels) {
-        stbi_image_free(file_pixels);
+    // Load image using stb_image from disk (classic .gltf + external files).
+    if (!info.filepath.empty()) {
+        int width = 0, height = 0, channels = 0;
+        uint8_t* file_pixels =
+            stbi_load(info.filepath.c_str(), &width, &height, &channels, 4);
+
+        if (file_pixels && width > 0 && height > 0) {
+            pixels.resize(static_cast<size_t>(width * height * 4));
+            std::memcpy(pixels.data(), file_pixels, pixels.size());
+            info.width = static_cast<uint32_t>(width);
+            info.height = static_cast<uint32_t>(height);
+            info.channels = static_cast<uint32_t>(channels);
+            stbi_image_free(file_pixels);
+            return;
+        }
+        if (file_pixels)
+            stbi_image_free(file_pixels);
     }
-    std::cerr << "[TextureManager] Failed to load texture '" << info.filepath
+
+    std::cerr << "[TextureManager] Failed to load texture '"
+              << (info.filepath.empty() ? info.name : info.filepath)
               << "' (or invalid size). Using 1x1 placeholder.\n";
 
     pixels = {255, 0, 255, 255}; // RGBA magenta

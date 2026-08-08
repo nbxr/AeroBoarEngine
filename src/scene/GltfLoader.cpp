@@ -3,6 +3,7 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 
 #include "scene/GltfLoader.h"
+#include "core/Handle.h"
 #include "gfx/MeshData.h"
 #include <algorithm>
 #include <cmath>
@@ -180,22 +181,57 @@ scene::GltfLoader::extract_material_data(const std::string &filename,
     material_lookup.reserve(model.materials.size());
     auto texture_path = std::filesystem::path(filename).parent_path();
 
-    auto get_safe_image_path = [&](int texture_index) -> std::pair<std::string, std::filesystem::path> {
+    // Resolve a glTF texture index to a TextureManager handle.
+    // Supports external files (.gltf), data-URI / bufferView embeds (.glb), and
+    // pixels already decoded by tinygltf into image.image.
+    auto resolve_texture = [&](int texture_index,
+                               bool is_srgb) -> gfx::TextureID {
         if (texture_index < 0 || texture_index >= (int)model.textures.size())
-            return {"", {}};
+            return gfx::TextureID{};
         const auto& tex = model.textures[texture_index];
         if (tex.source < 0 || tex.source >= (int)model.images.size())
-            return {"", {}};
-        const auto& img = model.images[tex.source];
-        std::filesystem::path uri_path;
-        if (!img.uri.empty()) {
-            uri_path = texture_path / img.uri;
-        } else if (img.bufferView >= 0) {
-            // Embedded image via bufferView (common in .glb). Not supported in current path.
-            // Future: decode via tinygltf or custom loader and pass raw pixels to TextureManager.
-            std::cerr << "[GLTF] Warning: Image uses bufferView (embedded) - currently unsupported, skipping texture.\n";
+            return gfx::TextureID{};
+        const auto& img = model.images[static_cast<size_t>(tex.source)];
+        const std::string key =
+            !img.name.empty()
+                ? img.name
+                : ("gltf_img_" + std::to_string(tex.source));
+
+        // External file URI (not data:).
+        if (!img.uri.empty() && img.uri.rfind("data:", 0) != 0) {
+            const auto uri_path = (texture_path / img.uri).lexically_normal();
+            return renderer.texture_manager.get_texture_handle(
+                key, uri_path.string(), is_srgb);
         }
-        return {img.name, uri_path};
+
+        // tinygltf already decoded (common for .glb after LoadBinaryFromFile).
+        if (img.width > 0 && img.height > 0 && !img.image.empty()) {
+            return renderer.texture_manager.get_texture_handle_from_pixels(
+                key, img.image.data(), img.width, img.height, img.component,
+                is_srgb);
+        }
+
+        // Raw bufferView blob (PNG/JPEG/…) — decode with stb.
+        if (img.bufferView >= 0 &&
+            img.bufferView < static_cast<int>(model.bufferViews.size())) {
+            const auto& bv =
+                model.bufferViews[static_cast<size_t>(img.bufferView)];
+            if (bv.buffer >= 0 &&
+                bv.buffer < static_cast<int>(model.buffers.size())) {
+                const auto& buf = model.buffers[static_cast<size_t>(bv.buffer)];
+                // Image data starts at bufferView.byteOffset.
+                const size_t start = static_cast<size_t>(bv.byteOffset);
+                const size_t len = static_cast<size_t>(bv.byteLength);
+                if (start + len <= buf.data.size()) {
+                    return renderer.texture_manager.get_texture_handle_from_encoded(
+                        key, buf.data.data() + start, len, is_srgb);
+                }
+            }
+        }
+
+        std::cerr << "[GLTF] Warning: could not resolve texture source "
+                  << tex.source << " ('" << key << "') — skipping.\n";
+        return gfx::TextureID{};
     };
 
     // Apply texCoord + KHR_texture_transform from a tinygltf texture info.
@@ -266,63 +302,71 @@ scene::GltfLoader::extract_material_data(const std::string &filename,
         material.roughness = static_cast<float>(pbr.roughnessFactor);
         material.normalStrength = 1.0f;
 
-        // --- Textures (indices + texCoord + KHR_texture_transform) ---
+        // --- Textures (file URI, data URI, or .glb bufferView embed) ---
         {
             const auto& info = pbr.baseColorTexture;
-            auto [img_name, uri] = get_safe_image_path(info.index);
-            if (!uri.empty()) {
-                material.albedo_texture_index =
-                    renderer.texture_manager.get_texture_handle(img_name, uri.string(),
-                                                               /*is_srgb=*/true);
-                material.flags |= gfx::Material::kFlagHasAlbedoTex;
-                apply_tex_info(material, gfx::Material::kUvAlbedo, info.texCoord,
-                               info.extensions);
+            if (info.index >= 0) {
+                const gfx::TextureID id =
+                    resolve_texture(info.index, /*is_srgb=*/true);
+                if (id.value != core::INVALID_HANDLE) {
+                    material.albedo_texture_index = id;
+                    material.flags |= gfx::Material::kFlagHasAlbedoTex;
+                    apply_tex_info(material, gfx::Material::kUvAlbedo,
+                                   info.texCoord, info.extensions);
+                }
             }
         }
         {
             const auto& info = pbr.metallicRoughnessTexture;
-            auto [img_name, uri] = get_safe_image_path(info.index);
-            if (!uri.empty()) {
-                material.roughness_texture_index =
-                    renderer.texture_manager.get_texture_handle(img_name, uri.string());
-                material.flags |= gfx::Material::kFlagHasOrmTex;
-                apply_tex_info(material, gfx::Material::kUvOrm, info.texCoord,
-                               info.extensions);
+            if (info.index >= 0) {
+                const gfx::TextureID id =
+                    resolve_texture(info.index, /*is_srgb=*/false);
+                if (id.value != core::INVALID_HANDLE) {
+                    material.roughness_texture_index = id;
+                    material.flags |= gfx::Material::kFlagHasOrmTex;
+                    apply_tex_info(material, gfx::Material::kUvOrm, info.texCoord,
+                                   info.extensions);
+                }
             }
         }
         {
             const auto& info = mat.normalTexture;
-            auto [img_name, uri] = get_safe_image_path(info.index);
-            if (!uri.empty()) {
-                material.normal_texture_index =
-                    renderer.texture_manager.get_texture_handle(img_name, uri.string());
-                material.flags |= gfx::Material::kFlagHasNormalMap;
-                if (info.scale != 0.0)
-                    material.normalStrength = static_cast<float>(info.scale);
-                apply_tex_info(material, gfx::Material::kUvNormal, info.texCoord,
-                               info.extensions);
+            if (info.index >= 0) {
+                const gfx::TextureID id =
+                    resolve_texture(info.index, /*is_srgb=*/false);
+                if (id.value != core::INVALID_HANDLE) {
+                    material.normal_texture_index = id;
+                    material.flags |= gfx::Material::kFlagHasNormalMap;
+                    if (info.scale != 0.0)
+                        material.normalStrength = static_cast<float>(info.scale);
+                    apply_tex_info(material, gfx::Material::kUvNormal,
+                                   info.texCoord, info.extensions);
+                }
             }
         }
         {
             const auto& info = mat.emissiveTexture;
-            auto [img_name, uri] = get_safe_image_path(info.index);
-            if (!uri.empty()) {
-                material.emissive_texture_index =
-                    renderer.texture_manager.get_texture_handle(img_name, uri.string(),
-                                                               /*is_srgb=*/true);
-                material.flags |= gfx::Material::kFlagHasEmissiveTex;
-                apply_tex_info(material, gfx::Material::kUvEmissive, info.texCoord,
-                               info.extensions);
+            if (info.index >= 0) {
+                const gfx::TextureID id =
+                    resolve_texture(info.index, /*is_srgb=*/true);
+                if (id.value != core::INVALID_HANDLE) {
+                    material.emissive_texture_index = id;
+                    material.flags |= gfx::Material::kFlagHasEmissiveTex;
+                    apply_tex_info(material, gfx::Material::kUvEmissive,
+                                   info.texCoord, info.extensions);
+                }
             }
         }
         {
             const auto& info = mat.occlusionTexture;
-            auto [img_name, uri] = get_safe_image_path(info.index);
-            if (!uri.empty()) {
-                material.ao_texture_index =
-                    renderer.texture_manager.get_texture_handle(img_name, uri.string());
-                apply_tex_info(material, gfx::Material::kUvAo, info.texCoord,
-                               info.extensions);
+            if (info.index >= 0) {
+                const gfx::TextureID id =
+                    resolve_texture(info.index, /*is_srgb=*/false);
+                if (id.value != core::INVALID_HANDLE) {
+                    material.ao_texture_index = id;
+                    apply_tex_info(material, gfx::Material::kUvAo, info.texCoord,
+                                   info.extensions);
+                }
             }
         }
 

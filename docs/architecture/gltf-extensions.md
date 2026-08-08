@@ -16,6 +16,7 @@ Update this file when adding loader, material, or animation support.
 | Extension / feature | Status | Notes |
 |---------------------|--------|--------|
 | Core glTF 2.0 mesh / materials (metallic-roughness) | **Yes** | Base color, MR, normal, emissive, AO textures |
+| **`.glb` embedded images** (`bufferView` / no external URI) | **Yes** | Decoded via tinygltf pixels or `stbi_load_from_memory` |
 | Vertex colors (`COLOR_0`) | **Yes** | RGBA8 unorm in vertex (VEC3/VEC4 float or unorm); multiplies albedo; default white |
 | Multi-UV (`TEXCOORD_0` / `TEXCOORD_1`) | **Yes** | Vertex packs both; material picks set per texture |
 | `KHR_texture_transform` | **Yes (MVP)** | Static scale / offset / rotation at load (animated needs animation_pointer) |

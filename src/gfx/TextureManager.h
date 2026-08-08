@@ -55,6 +55,19 @@ class TextureManager {
     TextureID get_texture_handle(const std::string &name,
                                  const std::string &filepath,
                                  bool is_srgb = false);
+
+    // RGBA8 (or RGB expanded to RGBA) pixels already in memory (.glb embedded).
+    // width/height must match pixels size (w*h*4 after expansion).
+    TextureID get_texture_handle_from_pixels(const std::string& name,
+                                             const uint8_t* pixels, int width,
+                                             int height, int channels,
+                                             bool is_srgb = false);
+
+    // Encoded image bytes (PNG/JPEG/…) e.g. raw bufferView contents.
+    TextureID get_texture_handle_from_encoded(const std::string& name,
+                                              const uint8_t* data, size_t size,
+                                              bool is_srgb = false);
+
     void remove_texture(const TextureID texture_id);
     void upload_textures();
     void transfer_queue_ownership();

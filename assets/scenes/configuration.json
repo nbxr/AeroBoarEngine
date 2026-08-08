@@ -4,7 +4,7 @@
   "physicsDemo": false,
   "scenePhysics": true,
   "worldScale": 10.0,
-  "physicsDebugDraw": true,
+  "physicsDebugDraw": false,
   "home": [
     {
       "system": "Windows",
@@ -22,7 +22,7 @@
     },
     {
       "name": "ABeautifulGameScene",
-      "filename": "glTF-Sample-Assets/Models/ABeautifulGameScene/glTF/ABeautifulGameScene.gltf"
+      "filename": "glTF-Sample-Assets/Models/ABeautifulGameScene/glTF-Binary/ABeautifulGameScene.glb"
     },
     {
       "name": "AlphaBlendModeTest",
