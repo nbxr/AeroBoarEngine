@@ -40,13 +40,22 @@ void editor_hotkey_system_update(const core::InputFrame& frame,
                  << ")");
     }
 
-    // N: cycle exclusive glTF animation clip.
+    // N: cycle exclusive glTF animation clip (works without a player body).
     if (frame.n_pressed && ctx.scene) {
         auto& anims = ctx.scene->animations();
-        if (anims.clip_count() > 0) {
+        const uint32_t n = anims.clip_count();
+        if (n == 0) {
+            LOG_INFO("[Anim] N: no animation clips in this scene");
+        } else if (n == 1) {
+            // Still restart/play so user gets feedback; cannot cycle.
+            const uint32_t idx = anims.cycle_next_clip(true);
+            LOG_INFO("[Anim] N: only 1 clip in scene — '"
+                     << anims.clip(idx).name
+                     << "' (need multiple animations to switch)");
+        } else {
             const uint32_t idx = anims.cycle_next_clip(true);
             if (idx != ~0u) {
-                LOG_INFO("[Anim] Active clip [" << idx << "] '"
+                LOG_INFO("[Anim] Active clip [" << idx << "/" << n << "] '"
                          << anims.clip(idx).name << "'");
             }
         }

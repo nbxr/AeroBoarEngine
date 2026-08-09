@@ -23,6 +23,7 @@ struct InputFrame {
     bool right_shift = false;
     bool q = false;
     bool e = false;
+    bool left_control = false; // crouch (FPS)
 
     // Rising edges (true only on the frame the key was pressed)
     bool escape_pressed = false;
@@ -32,6 +33,7 @@ struct InputFrame {
     bool y_pressed = false;
     bool t_pressed = false;
     bool f3_pressed = false; // physics debug draw toggle
+    bool space_pressed = false; // jump (FPS)
 
     [[nodiscard]] bool shift_held() const {
         return left_shift || right_shift;
@@ -56,6 +58,7 @@ class InputFrameBuilder {
         f.right_shift = input.is_key_down(GLFW_KEY_RIGHT_SHIFT);
         f.q = input.is_key_down(GLFW_KEY_Q);
         f.e = input.is_key_down(GLFW_KEY_E);
+        f.left_control = input.is_key_down(GLFW_KEY_LEFT_CONTROL);
 
         const bool escape = input.is_key_down(GLFW_KEY_ESCAPE);
         const bool r = input.is_key_down(GLFW_KEY_R);
@@ -64,6 +67,7 @@ class InputFrameBuilder {
         const bool y = input.is_key_down(GLFW_KEY_Y);
         const bool t = input.is_key_down(GLFW_KEY_T);
         const bool f3 = input.is_key_down(GLFW_KEY_F3);
+        const bool space = f.space;
 
         f.escape_pressed = edge(escape, prev_escape_);
         f.r_pressed = edge(r, prev_r_);
@@ -72,6 +76,7 @@ class InputFrameBuilder {
         f.y_pressed = edge(y, prev_y_);
         f.t_pressed = edge(t, prev_t_);
         f.f3_pressed = edge(f3, prev_f3_);
+        f.space_pressed = edge(space, prev_space_);
 
         prev_escape_ = escape;
         prev_r_ = r;
@@ -80,12 +85,13 @@ class InputFrameBuilder {
         prev_y_ = y;
         prev_t_ = t;
         prev_f3_ = f3;
+        prev_space_ = space;
         return f;
     }
 
     void reset_edges() {
         prev_escape_ = prev_r_ = prev_p_ = prev_n_ = prev_y_ = prev_t_ =
-            prev_f3_ = false;
+            prev_f3_ = prev_space_ = false;
     }
 
   private:
@@ -98,6 +104,7 @@ class InputFrameBuilder {
     bool prev_y_ = false;
     bool prev_t_ = false;
     bool prev_f3_ = false;
+    bool prev_space_ = false;
 };
 
 } // namespace core

@@ -20,6 +20,10 @@
   ],
   "scenes": [
     {
+      "name": "_Barbarian",
+      "filename": "glTF-Sample-Assets/Models/PlayerCharacters/glTF/Barbarian.gltf"
+    },
+    {
       "name": "ABeautifulGame",
       "filename": "glTF-Sample-Assets/Models/ABeautifulGame/glTF/ABeautifulGame.gltf"
     },
@@ -78,6 +82,10 @@
     {
       "name": "Avocado",
       "filename": "glTF-Sample-Assets/Models/Avocado/glTF/Avocado.gltf"
+    },
+    {
+      "name": "Barbarian",
+      "filename": "glTF-Sample-Assets/Models/KayKit_Adventurers_2.0_FREE/Character/gltf/Barbarian.glb"
     },
     {
       "name": "BarramundiFish",
@@ -300,6 +308,10 @@
       "filename": "glTF-Sample-Assets/Models/Fox/glTF/Fox.gltf"
     },
     {
+      "name": "FuturisticRobot",
+      "filename": "glTF-Sample-Assets/Models/FuturisticRobot/glTF/FuturisticRobot.gltf"
+    },
+    {
       "name": "GlamVelvetSofa",
       "filename": "glTF-Sample-Assets/Models/GlamVelvetSofa/glTF/GlamVelvetSofa.gltf"
     },
@@ -346,6 +358,10 @@
     {
       "name": "IridescentDishWithOlives",
       "filename": "glTF-Sample-Assets/Models/IridescentDishWithOlives/glTF/IridescentDishWithOlives.gltf"
+    },
+    {
+      "name": "IronMan",
+      "filename": "glTF-Sample-Assets/Models/IronManMark7/glTF/IronMan.gltf"
     },
     {
       "name": "Lantern",
@@ -446,6 +462,10 @@
     {
       "name": "RecursiveSkeletons",
       "filename": "glTF-Sample-Assets/Models/RecursiveSkeletons/glTF/RecursiveSkeletons.gltf"
+    },
+    {
+      "name": "Rig_Medium_MovementBasic",
+      "filename": "glTF-Sample-Assets/Models/KayKit_Adventurers_2.0_FREE/Animations/gltf/Rig_Medium/Rig_Medium_MovementBasic.glb"
     },
     {
       "name": "RiggedFigure",

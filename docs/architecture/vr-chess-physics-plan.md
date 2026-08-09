@@ -78,16 +78,17 @@ Physics stays SI-ish under gravity 9.81; **`worldScale`** enlarges the loaded se
 ### Phase B — Authoring polish (**in progress in asset**)
 
 1. [x] Parse `KHR_implicit_shapes` + `KHR_physics_rigid_bodies` (engine MVP).  
-2. [~] Prefer authored full-piece hulls (one pawn pattern validated; roll out to rest).  
+2. [x] Shared multi-prim pawn meshes (body+top) for black/white + one RB each.  
 3. [ ] Optional filter layers (piece vs board vs player).  
 4. Keep physics on glTF; no engine hide-mesh workarounds.
 
-### Phase C — Desktop player controller (**next**)
+### Phase C — Desktop player controller
 
-1. [x] Player capsule + ECS Player / free-fly DesktopMove.  
-2. [ ] **FPS controller:** grounded walk, mouse look, jump, crouch; camera at `eye_offset`.  
+1. [x] Player capsule + ECS Player.  
+2. [x] **FPS controller** (`FpsMove`): grounded walk, mouse look, jump, crouch.  
 3. [x] Collision vs board and pieces (push on contact).  
-4. [ ] Optional later: “tiny player” scale fantasy / VR reference space.
+4. [ ] **Third-person** + skinned player + smooth animation transitions.  
+5. [ ] Optional later: “tiny player” scale fantasy / VR reference space.
 
 ### Phase D — OpenXR / Quest
 
@@ -140,10 +141,10 @@ Physics stays SI-ish under gravity 9.81; **`worldScale`** enlarges the loaded se
 
 ## 7. Next session
 
-1. **FPS player controller** (walk / look / jump / crouch) on existing capsule + `eye_offset`  
-2. Finish remaining pawn/piece authoring (joined multi-material mesh, shared instances)  
-3. Optional: ray impulse tool; ECS Phase 4 events  
+1. **Third-person controller** + animated player model  
+2. Smooth animation transitions (crossfade / blend between clips)  
+3. Optional: ray impulse; ECS Phase 4 events  
 
 ---
 
-*Updated end of session 2026-08-07: desktop knock-over + worldScale + debug draw; FPS controller next.*
+*Updated: FPS mover landed; pawns shared multi-prim meshes; next 3rd-person + animation.*

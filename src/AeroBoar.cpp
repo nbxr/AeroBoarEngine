@@ -13,6 +13,7 @@
 #include "core/Configuration.h"
 #include "core/Log.h"
 #include "ecs/DesktopMoveSystem.h"
+#include "ecs/FpsMoveSystem.h"
 #include "ecs/EditorHotkeySystem.h"
 #include "ecs/ScriptSystem.h"
 #include <glm/glm.hpp>
@@ -188,9 +189,28 @@ int AeroBoar::fly() {
         // capsule/player node would overwrite locomotion every frame.
         engine.update_animations(delta_time);
 
-        ecs::desktop_move_system_update(
-            engine.ecs_world, frame, engine.camera,
-            &engine.renderer.scene_manager.transforms());
+        {
+            auto& tw = engine.renderer.scene_manager.transforms();
+            const ecs::Entity ap = engine.ecs_world.active_player();
+            // FPS only when FpsMove + valid body TransformLink (chess capsule).
+            // Otherwise free-fly DesktopMove for scene inspection / demos.
+            bool used_fps = false;
+            if (ap != ecs::kInvalidEntity &&
+                engine.ecs_world.fps_moves.has(ap)) {
+                const ecs::TransformLink* link =
+                    engine.ecs_world.transform_links.try_get(ap);
+                if (link && link->transform_index != ~0u &&
+                    tw.is_alive(link->transform_index)) {
+                    ecs::fps_move_system_update(engine.ecs_world, frame,
+                                                engine.camera, tw);
+                    used_fps = true;
+                }
+            }
+            if (!used_fps) {
+                ecs::desktop_move_system_update(engine.ecs_world, frame,
+                                                engine.camera, &tw);
+            }
+        }
 
         ecs::script_system_update(engine.ecs_world, delta_time);
 

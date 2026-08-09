@@ -47,7 +47,8 @@ uint32_t apply_component_entry(World& world, Entity entity,
 
     if (type == "player") {
         world.player_tags.get_or_emplace(entity);
-        world.desktop_moves.get_or_emplace(entity);
+        // Grounded FPS for demo player; free-fly still available via DesktopMove only.
+        world.fps_moves.get_or_emplace(entity);
         CameraRig& rig = world.camera_rigs.get_or_emplace(entity);
         // Optional eye height: "eye_offset": [x,y,z] or string "[x, y, z]"
         // (Blender custom props often export the vector as a string).

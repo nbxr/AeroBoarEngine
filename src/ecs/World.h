@@ -22,12 +22,14 @@ class World {
     [[nodiscard]] Entity active_player() const { return active_player_; }
     void set_active_player(Entity e) { active_player_ = e; }
 
-    // Spawn free-fly player (PlayerTag + DesktopMove + CameraRig).
+    // Spawn free-fly inspector (PlayerTag + DesktopMove + CameraRig).
+    // Authored glTF player nodes get FpsMove via GltfEcsLoader.
     Entity spawn_default_desktop_player(const CameraRig& rig = CameraRig{});
 
     ComponentStore<TransformLink> transform_links;
     ComponentStore<PlayerTag> player_tags;
     ComponentStore<DesktopMove> desktop_moves;
+    ComponentStore<FpsMove> fps_moves;
     ComponentStore<CameraRig> camera_rigs;
     ComponentStore<Health> healths;
     ComponentStore<Name> names;

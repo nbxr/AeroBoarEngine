@@ -135,7 +135,8 @@ Full product sequencing: **`vr-chess-physics-plan.md`**.
 
 ### Phase 3 — Gameplay systems
 
-- [ ] **FPS / grounded player controller** (engine + ECS; capsule already present)
+- [x] **FPS / grounded player controller** (`ecs::FpsMove`; capsule already present)
+- [ ] Third-person controller + animated player (smooth transitions)
 - [ ] Collision filters / layers beyond static/dynamic
 - [ ] Triggers / contact callbacks (engine-facing)
 - [ ] Constraints / joints as KHR supports them
