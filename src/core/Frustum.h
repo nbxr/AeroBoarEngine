@@ -54,7 +54,7 @@ struct Frustum {
 
         // Pad so edge-on / partially-on-screen bounds are not dropped early.
         const glm::vec3 ext = box.extents();
-        const glm::vec3 pad = ext * 0.05f + glm::vec3(0.05f);
+        const glm::vec3 pad = glm::max(ext * 0.01f, glm::vec3(1e-4f));
         const AABB expanded{box.min - pad, box.max + pad};
 
         for (const auto& plane : planes) {

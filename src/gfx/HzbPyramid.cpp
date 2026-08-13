@@ -160,7 +160,7 @@ bool HzbPyramid::create_images(VkDevice device, VmaAllocator allocator, uint32_t
     VkImageCreateInfo ici{};
     ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     ici.imageType = VK_IMAGE_TYPE_2D;
-    ici.format = VK_FORMAT_R32_SFLOAT;
+    ici.format = VK_FORMAT_R32G32_SFLOAT; // R=min, G=max
     ici.extent = {width_, height_, 1};
     ici.mipLevels = mip_count_;
     ici.arrayLayers = 1;
@@ -185,7 +185,7 @@ bool HzbPyramid::create_images(VkDevice device, VmaAllocator allocator, uint32_t
         vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         vci.image = images_[frame].handle;
         vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        vci.format = VK_FORMAT_R32_SFLOAT;
+        vci.format = VK_FORMAT_R32G32_SFLOAT;
         vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         vci.subresourceRange.baseMipLevel = m;
         vci.subresourceRange.levelCount = 1;
@@ -199,7 +199,7 @@ bool HzbPyramid::create_images(VkDevice device, VmaAllocator allocator, uint32_t
     full.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     full.image = images_[frame].handle;
     full.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    full.format = VK_FORMAT_R32_SFLOAT;
+    full.format = VK_FORMAT_R32G32_SFLOAT;
     full.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     full.subresourceRange.baseMipLevel = 0;
     full.subresourceRange.levelCount = mip_count_;

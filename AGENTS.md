@@ -21,6 +21,7 @@ This file is the primary contract for all AI coding agents (Grok Build, Continue
 - `docs/architecture/physics-plan.md` — Jolt + KHR MVP, worldScale, debug draw
 - `docs/architecture/vr-chess-physics-plan.md` — ABeautifulGame desktop knock-over → FPS → VR
 - `docs/architecture/lighting-implementation.md` — lighting / IBL
+- `docs/architecture/visibility-lod-plan.md` — frustum / Hi-Z / meshlets / city LOD / impostors
 
 When making lasting decisions, update the documentation above rather than tool-private memory.
 

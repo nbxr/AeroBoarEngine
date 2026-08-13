@@ -101,7 +101,7 @@ This project aims to develop a cross-platform game engine targeting VR via OpenX
 - Full OpenXR integration
 - VR-specific features
 - **Reverse-Z depth** (near→1 / far→0, `GREATER` compare, clear 0) coordinated with stereo/multiview
-- Same-frame occlusion (depth prepass → Hi-Z → shade) is **landed on desktop** (no hysteresis). Quest work: multiview / per-eye prepass + reverse-Z HZB compares.
+- Visibility: GPU frustum always; optional conservative Hi-Z (`occlusionCull`, default off; off on Adreno). Quest: GMEM path, not extra prepass — `visibility-lod-plan.md` (meshlets via meshoptimizer, impostors, city skybox, later cluster raster).
 - **VR chess / tabletop scale demo** (see `vr-chess-physics-plan.md`)
 - Performance optimization
 - Testing and debugging

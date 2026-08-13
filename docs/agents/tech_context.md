@@ -96,6 +96,8 @@ Until then, prefer keeping `glslc` and avoiding a mid-feature toolchain swap.
 
 #### Current path (desktop, VR-ready shape)
 
+**Same-frame occlusion** — **optional** (`occlusionCull`, default **false**). Adreno/Quest (`AERO_TARGET_ADRENO`) **forces off**. When on: RG min/max pyramid, conservative AABB query (fully on-screen + in front of near). See `docs/architecture/visibility-lod-plan.md`.
+
 **Same-frame occlusion (depth prepass)** — hysteresis removed:
 
 1. Frustum cull → candidates (indirect draws)  
@@ -106,7 +108,7 @@ Until then, prefer keeping `glslc` and avoiding a mid-feature toolchain swap.
 
 Depth prepass and HZB cull use the **same** `view_proj`. No camera-stability gate. Pyramid is double-buffered per frame-in-flight only to avoid concurrent submit stomps.
 
-Pyramid quality: min-downsample full-res depth into mip0 (`hzb_copy.comp`), min-reduce mips (`hzb_reduce.comp`). Main-pass MSAA depth resolve remains available but is **not** the HZB source anymore.
+Pyramid quality: **RG32F** min+max downsample (`hzb_copy.comp` / `hzb_reduce.comp`). Occlusion uses **max** (G). Main-pass MSAA depth resolve is **not** the HZB source.
 
 **Removed (dead end for VR):** previous-frame HZB + `should_use_occlusion` hysteresis.
 

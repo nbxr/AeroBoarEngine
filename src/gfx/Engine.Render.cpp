@@ -167,7 +167,8 @@ void gfx::Engine::render() {
 
     const uint32_t fi = renderer.current_frame;
     const bool can_cull = renderer.gpu_culling.is_ready();
-    const bool can_hzb = can_cull && renderer.hzb.is_ready() &&
+    const bool can_hzb = occlusion_cull_enabled_ && can_cull &&
+                         renderer.hzb.is_ready() &&
                          fi < renderer.depth_prepass.framebuffers.size() &&
                          fi < renderer.depth_prepass.depth_images.size() &&
                          renderer.vk.depth_prepass_pipeline != VK_NULL_HANDLE;

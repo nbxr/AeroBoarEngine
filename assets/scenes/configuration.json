@@ -8,6 +8,7 @@
     "enabled": true,
     "margin": 2.0
   },
+  "occlusionCull": false,
   "home": [
     {
       "system": "Windows",

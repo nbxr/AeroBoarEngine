@@ -1,17 +1,15 @@
 #version 450
 
-// Build HZB mip0 by taking the MIN depth over the full-res region covered by
-// each pyramid texel (conservative for 0=near, 1=far occlusion).
-// depth_src: single-sample resolved depth (full resolution)
-// hzb_mip0:  R32F storage image (pyramid resolution, often half-res)
+// Build HZB mip0: R = min depth, G = max depth over the full-res block.
+// 0=near, 1=far. Max is what conservative occlusion needs (farthest surface).
 layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(set = 0, binding = 0) uniform sampler2D depth_src;
-layout(set = 0, binding = 1, r32f) writeonly uniform image2D hzb_mip0;
+layout(set = 0, binding = 1, rg32f) writeonly uniform image2D hzb_mip0;
 
 layout(push_constant) uniform PC {
-    uvec2 hzb_extent;   // mip0 size
-    uvec2 depth_extent; // full-res depth size
+    uvec2 hzb_extent;
+    uvec2 depth_extent;
 } pc;
 
 void main() {
@@ -19,8 +17,6 @@ void main() {
     if (p.x >= pc.hzb_extent.x || p.y >= pc.hzb_extent.y)
         return;
 
-    // Inclusive-exclusive [block, block_end) in full-res depth pixels.
-    // For half-res this is typically a 2x2 (or 2x3 at edges).
     uvec2 block = uvec2(
         (p.x * pc.depth_extent.x) / pc.hzb_extent.x,
         (p.y * pc.depth_extent.y) / pc.hzb_extent.y);
@@ -28,20 +24,22 @@ void main() {
         ((p.x + 1u) * pc.depth_extent.x + pc.hzb_extent.x - 1u) / pc.hzb_extent.x,
         ((p.y + 1u) * pc.depth_extent.y + pc.hzb_extent.y - 1u) / pc.hzb_extent.y);
     block_end = min(block_end, pc.depth_extent);
-    // Ensure at least one sample
     if (block_end.x <= block.x)
         block_end.x = min(block.x + 1u, pc.depth_extent.x);
     if (block_end.y <= block.y)
         block_end.y = min(block.y + 1u, pc.depth_extent.y);
 
-    float m = 1.0;
+    float mn = 1.0;
+    float mx = 0.0;
     const vec2 inv_depth = 1.0 / vec2(pc.depth_extent);
     for (uint y = block.y; y < block_end.y; ++y) {
         for (uint x = block.x; x < block_end.x; ++x) {
             vec2 uv = (vec2(uint(x), uint(y)) + vec2(0.5)) * inv_depth;
-            m = min(m, textureLod(depth_src, uv, 0.0).r);
+            float d = textureLod(depth_src, uv, 0.0).r;
+            mn = min(mn, d);
+            mx = max(mx, d);
         }
     }
 
-    imageStore(hzb_mip0, ivec2(p), vec4(m, 0.0, 0.0, 0.0));
+    imageStore(hzb_mip0, ivec2(p), vec4(mn, mx, 0.0, 0.0));
 }

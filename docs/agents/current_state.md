@@ -4,7 +4,7 @@ Lightweight snapshot of the AeroBoarEngine project status. Intended to be read q
 
 ## Overall Status
 
-Desktop foundation is solid. The engine loads glTF scenes (multi-material, hierarchy, punctual lights), uploads bindless resources, and renders with **GPU frustum + Hi-Z cull**, **mesh-grouped instancing**, and **one multi-draw indirect** call path plus procedural IBL. **Animation:** node TRS, skinned meshes, CPU morph weights. **ECS Phase 1–3:** World, Player, `InputFrame`, DesktopMove + EditorHotkeys, glTF `extras.ECS_Components_v1`, scripts. **Physics:** Jolt + KHR MVP, LinearCast CCD, **`worldScale`** (chess `10`), **debug draw** (F3), **kill floor** for fallen dynamics; player capsule knocks pieces. Scene list includes the full glTF-Sample-Assets set. OpenXR / Quest / reverse-Z remain roadmap. **Next product focus:** FPS-style player controller (walk / jump / crouch), then finish chess piece authoring + VR path — `vr-chess-physics-plan.md` / `ecs-plan.md`.
+Desktop foundation is solid. The engine loads glTF scenes (multi-material, hierarchy, punctual lights), uploads bindless resources, and renders with **GPU frustum cull** (always), **optional conservative Hi-Z** (`occlusionCull`, off by default / off on Adreno), **mesh-grouped instancing**, and **one multi-draw indirect** call path plus procedural IBL. **Animation:** node TRS, skinned meshes, CPU morph weights. **ECS Phase 1–3:** World, Player, `InputFrame`, DesktopMove + EditorHotkeys, glTF `extras.ECS_Components_v1`, scripts. **Physics:** Jolt + KHR MVP, LinearCast CCD, **`worldScale`** (chess `10`), **debug draw** (F3), **kill floor** for fallen dynamics; player capsule knocks pieces. Scene list includes the full glTF-Sample-Assets set. OpenXR / Quest / reverse-Z remain roadmap. **Next product focus:** FPS-style player controller (walk / jump / crouch), then finish chess piece authoring + VR path — `vr-chess-physics-plan.md` / `ecs-plan.md`.
 
 ## Major Completed Areas
 
@@ -76,6 +76,7 @@ Desktop foundation is solid. The engine loads glTF scenes (multi-material, hiera
   - BRDF integration LUT (128²) → binding 8 `sampler2D`
   - Split-sum specular in `pbr.frag` when IBL is ready
   Spot packing complete (pos + emission dir + cos cones). Dynamic lights via per-frame upload + `Engine::set_light` / `refresh_lights_from_transforms`. Optional HDR equirect IBL (`environmentHdr` in configuration.json). Still deferred: clustered many-lights, shadows.
+- **GPU frustum (always) + optional conservative Hi-Z** (`occlusionCull`, default **false**; **off on Adreno**). RG min/max pyramid. City / meshlets / impostors: `docs/architecture/visibility-lod-plan.md`.
 - **GPU frustum + same-frame Hi-Z + opaque/transparent shade (landed)**:
   - Frame order (compute **outside** render passes): frustum cull opaque → depth prepass → HZB build → frustum+HZB cull opaque **and** transparent → main RP: opaque shade then transparent shade
   - `gfx::GpuCulling`: emit filter (all / opaque-depth / transparent); **combined** instance SSBO (opaque half + transparent half via `instance_base_offset`) so binding 1 is never flipped mid-CB (`UPDATE_AFTER_BIND`); dual indirect buffers; GPU `vkCmdFillBuffer` zeros batch counts

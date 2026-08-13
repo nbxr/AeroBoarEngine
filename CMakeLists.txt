@@ -225,6 +225,15 @@ set(FETCHCONTENT_QUIET OFF)
 # Fetch and make dependencies available
 FetchContent_MakeAvailable(VulkanMemoryAllocator vk-bootstrap tinygltf glfw glm nlohmann_json JoltPhysics)
 
+# Quest / Adreno: skip extra-pass Hi-Z (GMEM). Desktop can enable via config.
+# Planned meshlets: meshoptimizer (zeux/meshoptimizer) — see visibility-lod-plan.md
+option(AERO_TARGET_ADRENO
+    "Adreno/Quest target: force occlusionCull off (no extra depth prepass)"
+    OFF)
+if(ANDROID)
+    set(AERO_TARGET_ADRENO ON CACHE BOOL "" FORCE)
+endif()
+
 # -----------------------------------------------------------------------------
 # Build Configuration
 # -----------------------------------------------------------------------------
@@ -319,6 +328,11 @@ target_link_libraries(Aero_Boar_Engine PRIVATE
     glm::glm
     Jolt
 )
+
+if(AERO_TARGET_ADRENO)
+    target_compile_definitions(Aero_Boar_Engine PRIVATE AERO_TARGET_ADRENO=1)
+    message(STATUS "AERO_TARGET_ADRENO: Hi-Z extra prepass forced off")
+endif()
 
 # Jolt headers live next to the Build/ SOURCE_SUBDIR.
 if(DEFINED joltphysics_SOURCE_DIR)

@@ -10,7 +10,7 @@
 
 namespace gfx {
 
-// Hierarchical-Z (min-depth) pyramid for **same-frame** occlusion culling.
+// Hierarchical-Z (RG: min + max depth) pyramid for **same-frame** occlusion.
 // Built after a depth prepass at the current pose; cull immediately after
 // in the same command buffer. Double-buffered for frames-in-flight so
 // concurrent submissions do not stomp each other's pyramid.
@@ -37,7 +37,7 @@ class HzbPyramid {
     void record_init_layouts(VkCommandBuffer cmd);
     [[nodiscard]] bool needs_layout_init() const { return needs_layout_init_; }
 
-    // After depth prepass: min-downsample full-res depth into mip0, reduce mips.
+    // After depth prepass: min/max downsample full-res depth into mip0, reduce mips.
     // Descriptors must already be bound (bind_depth_source + create_images).
     // Pyramid stays in GENERAL for sampling (matches bind_hzb layout).
     void record_build(VkCommandBuffer cmd, uint32_t frame_index, VkExtent2D depth_extent);

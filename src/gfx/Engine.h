@@ -70,6 +70,11 @@ class Engine {
     float kill_floor_y_ = -1000.0f;
     void process_kill_floor();
 
+    // Same-frame Hi-Z occlusion (desktop-only extra prepass). Off by default;
+    // Adreno/Quest builds force off (GMEM). Config: "occlusionCull": true.
+    bool occlusion_cull_enabled_ = false;
+    void configure_occlusion_cull();
+
     // devices
     void add_features(vkb::PhysicalDeviceSelector &selector);
     std::pair<bool, vkb::PhysicalDevice>

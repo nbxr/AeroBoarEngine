@@ -52,7 +52,8 @@ layout(set = 0, binding = 6) uniform sampler2D hzb;
 // Plane: dot(n, p) + d >= 0 is inside (matches core::Frustum).
 bool frustum_intersects_aabb(vec3 wmin, vec3 wmax) {
     vec3 ext = wmax - wmin;
-    vec3 pad = ext * 0.05 + vec3(0.05);
+    // Scale-relative pad only (no +0.05 m — that wrecks tabletop / worldScale).
+    vec3 pad = max(ext * 0.01, vec3(1e-4));
     wmin -= pad;
     wmax += pad;
 
@@ -83,13 +84,10 @@ void transform_aabb(mat4 m, vec3 bmin, vec3 bmax, out vec3 wmin, out vec3 wmax) 
     }
 }
 
-// Same-frame Hi-Z (Vulkan depth 0=near, 1=far, LESS). Min pyramid stores the
-// closest surface. Conservative cull: only reject if the AABB's nearest Z is
-// still farther than the *farthest* of several HZB samples over its screen rect.
-//
-// Min pyramids *dilate* close geometry at coarse mips — that makes occluders look
-// larger than they are and false-culls neighbors. Prefer finer mips, no extra
-// percent padding, and bail when the footprint has mixed depths.
+// Conservative same-frame Hi-Z (0=near, 1=far). Pyramid is RG: R=min, G=max.
+// Cull only if the AABB is fully in front of the near plane and fully on-screen,
+// and its nearest Z is still farther than the tile's MAX depth (+ bias).
+// A hole / sky in the tile raises max ≈ 1 → no cull. No 4x4 / spread heuristics.
 bool hzb_occluded(vec3 wmin, vec3 wmax) {
     if (globals.hzb_enabled == 0u)
         return false;
@@ -98,28 +96,22 @@ bool hzb_occluded(vec3 wmin, vec3 wmax) {
     vec2 uv_min = vec2( 1e30);
     vec2 uv_max = vec2(-1e30);
 
-    // Require a fully valid projected AABB. Skipping clipped corners shrinks the
-    // UV rect while keeping a close z_near → samples the wrong (often occluder)
-    // footprint and false-culls.
     for (int i = 0; i < 8; ++i) {
         vec3 c = vec3(
             (i & 1) != 0 ? wmax.x : wmin.x,
             (i & 2) != 0 ? wmax.y : wmin.y,
             (i & 4) != 0 ? wmax.z : wmin.z);
         vec4 clip = globals.hzb_view_proj * vec4(c, 1.0);
-
         if (clip.w <= 1e-3)
             return false;
-
         vec3 ndc = clip.xyz / clip.w;
-        // Outside clip volume in Z → do not occlude-cull (projection unreliable).
         if (ndc.z < 0.0 || ndc.z > 1.0)
             return false;
-        // Outside NDC xy: still expand the rect (clamped), but only if not wildly off.
-        if (abs(ndc.x) > 1.5 || abs(ndc.y) > 1.5)
+        // Fully on-screen — off-screen corners would clamp UV and lie.
+        if (abs(ndc.x) > 1.0 || abs(ndc.y) > 1.0)
             return false;
 
-        vec2 uv = clamp(ndc.xy * 0.5 + 0.5, vec2(0.0), vec2(1.0));
+        vec2 uv = ndc.xy * 0.5 + 0.5;
         z_near = min(z_near, ndc.z);
         uv_min = min(uv_min, uv);
         uv_max = max(uv_max, uv);
@@ -127,62 +119,24 @@ bool hzb_occluded(vec3 wmin, vec3 wmax) {
 
     if (z_near >= 0.999 || z_near < 1e-4)
         return false;
-
-    vec2 uv_size = uv_max - uv_min;
-    if (uv_size.x <= 1e-6 || uv_size.y <= 1e-6)
-        return false;
-
-    vec2 hzb_size = max(globals.hzb_info.xy, vec2(1.0));
-    vec2 size_px = uv_size * hzb_size;
-    float max_extent = max(size_px.x, size_px.y);
-
-    // Prefer *fine* mips. Min-Z pyramids dilate occluders at coarse levels, which
-    // false-culls hollow assemblies (car body vs interior seats through windows).
-    float max_mip = float(max(globals.hzb_mips, 1u) - 1u);
-    float mip_f = floor(log2(max(max_extent, 1.0)) - 3.0);
-    // Never climb too high: coarse mips are unsafe for complex interiors.
-    mip_f = clamp(mip_f, 0.0, min(max_mip, 5.0));
-
-    // No UV padding into neighboring texels (that grows body over window holes).
     if (uv_min.x >= uv_max.x || uv_min.y >= uv_max.y)
         return false;
 
-    // Dense samples: any deeper sample (window hole / interior surface) raises
-    // `farthest` and blocks the cull.
-    float farthest = 0.0;
-    float closest = 1.0;
-    const int kGrid = 4;
-    for (int y = 0; y < kGrid; ++y) {
-        for (int x = 0; x < kGrid; ++x) {
-            vec2 t = vec2(float(x), float(y)) / float(kGrid - 1);
-            vec2 uv = mix(uv_min, uv_max, t);
-            float s = textureLod(hzb, uv, mip_f).r;
-            farthest = max(farthest, s);
-            closest  = min(closest, s);
-        }
-    }
+    vec2 hzb_size = max(globals.hzb_info.xy, vec2(1.0));
+    vec2 size_px = (uv_max - uv_min) * hzb_size;
+    float max_extent = max(max(size_px.x, size_px.y), 1.0);
+    float max_mip = float(max(globals.hzb_mips, 1u) - 1u);
+    // One (or two) texels cover the rect — conservative for a max pyramid.
+    float mip_f = clamp(floor(log2(max_extent)), 0.0, max_mip);
 
-    // Clear / far sample → not fully covered by an occluder.
-    if (farthest >= 0.998)
+    // Sample tile center at that mip: G = farthest surface in the tile.
+    vec2 uv = 0.5 * (uv_min + uv_max);
+    float z_max = textureLod(hzb, uv, mip_f).g;
+    if (z_max >= 0.999)
         return false;
 
-    // Any meaningful depth variation under the rect → silhouette / hollow /
-    // layered geometry (body + cabin). Do not occlude-cull.
-    float depth_spread = farthest - closest;
-    float spread_limit = max(0.004, z_near * 0.015);
-    if (depth_spread > spread_limit)
-        return false;
-
-    // Also: if the closest surface is clearly in front of the AABB near plane
-    // *and* the farthest sample reaches past the AABB near plane, the rect is
-    // mixed (occluder + hole). Skip cull.
-    if (closest + 0.002 < z_near && farthest + 0.002 >= z_near)
-        return false;
-
-    // Fully covered only if every sample is still closer than the object.
-    float bias = max(globals.hzb_info.z, 0.004);
-    bias = max(bias, z_near * 0.02);
-    return z_near > farthest + bias;
+    float bias = max(globals.hzb_info.z, 1e-4);
+    return z_near > z_max + bias;
 }
 
 void main() {

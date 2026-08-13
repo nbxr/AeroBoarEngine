@@ -1,11 +1,10 @@
 #version 450
 
-// Hierarchical Z reduce: each output texel = min of a 2x2 block in the source mip.
-// Depth is 0=near, 1=far; min keeps the closest surface for conservative occlusion.
+// Hierarchical Z reduce: R = min of 2x2 mins, G = max of 2x2 maxes.
 layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(set = 0, binding = 0) uniform sampler2D src_mip;
-layout(set = 0, binding = 1, r32f) writeonly uniform image2D dst_mip;
+layout(set = 0, binding = 1, rg32f) writeonly uniform image2D dst_mip;
 
 layout(push_constant) uniform PC {
     uvec2 src_extent;
@@ -17,15 +16,15 @@ void main() {
     if (p.x >= pc.dst_extent.x || p.y >= pc.dst_extent.y)
         return;
 
-    // Sample centers of the 2x2 block in the source mip.
     vec2 inv = 1.0 / vec2(pc.src_extent);
     vec2 base = (vec2(p) * 2.0 + vec2(0.5)) * inv;
 
-    float d00 = texture(src_mip, base).r;
-    float d10 = texture(src_mip, base + vec2(inv.x, 0.0)).r;
-    float d01 = texture(src_mip, base + vec2(0.0, inv.y)).r;
-    float d11 = texture(src_mip, base + vec2(inv.x, inv.y)).r;
+    vec2 d00 = texture(src_mip, base).rg;
+    vec2 d10 = texture(src_mip, base + vec2(inv.x, 0.0)).rg;
+    vec2 d01 = texture(src_mip, base + vec2(0.0, inv.y)).rg;
+    vec2 d11 = texture(src_mip, base + vec2(inv.x, inv.y)).rg;
 
-    float m = min(min(d00, d10), min(d01, d11));
-    imageStore(dst_mip, ivec2(p), vec4(m, 0.0, 0.0, 0.0));
+    float mn = min(min(d00.r, d10.r), min(d01.r, d11.r));
+    float mx = max(max(d00.g, d10.g), max(d01.g, d11.g));
+    imageStore(dst_mip, ivec2(p), vec4(mn, mx, 0.0, 0.0));
 }

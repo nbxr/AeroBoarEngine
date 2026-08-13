@@ -258,7 +258,24 @@ bool gfx::Engine::init_resource_managers() {
         wire_hzb_descriptors();
     }
 
+    configure_occlusion_cull();
+
     return true;
+}
+
+void gfx::Engine::configure_occlusion_cull() {
+    // Default off: frustum always; extra depth prepass is optional on desktop.
+#ifdef AERO_TARGET_ADRENO
+    occlusion_cull_enabled_ = false;
+    LOG_INFO("[Cull] occlusionCull forced OFF (AERO_TARGET_ADRENO / GMEM)");
+    return;
+#else
+    const auto& cfg = core::Configuration::get_instance();
+    // find<bool> accepts a root bool or { "enabled": bool }. Missing → false.
+    occlusion_cull_enabled_ = cfg.is_loaded() && cfg.find<bool>("occlusionCull");
+    LOG_INFO("[Cull] occlusionCull="
+             << (occlusion_cull_enabled_ ? "ON (same-frame Hi-Z)" : "OFF (frustum only)"));
+#endif
 }
 
 void gfx::Engine::wire_hzb_descriptors() {

@@ -39,7 +39,7 @@ bool GpuCulling::initialize(VkDevice device, VmaAllocator allocator) {
     VkImageCreateInfo ici{};
     ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     ici.imageType = VK_IMAGE_TYPE_2D;
-    ici.format = VK_FORMAT_R32_SFLOAT;
+    ici.format = VK_FORMAT_R32G32_SFLOAT;
     ici.extent = {1, 1, 1};
     ici.mipLevels = 1;
     ici.arrayLayers = 1;
@@ -58,7 +58,7 @@ bool GpuCulling::initialize(VkDevice device, VmaAllocator allocator) {
     vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     vci.image = dummy_hzb_.handle;
     vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    vci.format = VK_FORMAT_R32_SFLOAT;
+    vci.format = VK_FORMAT_R32G32_SFLOAT;
     vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     if (vkCreateImageView(device, &vci, nullptr, &dummy_hzb_.view) != VK_SUCCESS)
         return false;
