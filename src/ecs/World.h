@@ -34,6 +34,7 @@ class World {
     ComponentStore<Health> healths;
     ComponentStore<Name> names;
     ComponentStore<Script> scripts;
+    ComponentStore<LocomotionAnim> locomotion_anims;
 
     ScriptInstanceStore script_instances;
 

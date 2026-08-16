@@ -1,10 +1,50 @@
 #include "core/InputManager.h"
+#include "core/Log.h"
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <cstring>
 #include <glm/gtc/epsilon.hpp>
 
 namespace core {
+namespace {
+
+bool detect_remote_session() {
+#ifdef _WIN32
+    if (GetSystemMetrics(SM_REMOTESESSION) != 0)
+        return true;
+    if (const char* session = std::getenv("SESSIONNAME")) {
+        // Typical: "RDP-Tcp#0". Console is local.
+        if (std::strncmp(session, "RDP-", 4) == 0)
+            return true;
+    }
+#endif
+    // xRDP / FreeRDP-style sessions (Linux). Not SSH_CONNECTION — that is
+    // X11-forward / ssh and is not this mouse-path problem.
+    static const char* kRemoteEnv[] = {"XRDP_SESSION", "XRDP_SOCKET_PATH",
+                                       "XRDP_SOCKET_IN_PORT", "RDP_SESSION"};
+    for (const char* key : kRemoteEnv) {
+        const char* val = std::getenv(key);
+        if (val && val[0] != '\0')
+            return true;
+    }
+    return false;
+}
+
+constexpr int kRemoteSettleCallbacks = 4;
+
+} // namespace
 
 InputManager &InputManager::get_instance() {
     static InputManager instance;
@@ -18,6 +58,14 @@ void InputManager::initialize(GLFWwindow *window) {
     glfwSetCursorPosCallback(window_, cursor_position_callback);
     glfwSetKeyCallback(window_, key_callback);
     glfwSetMouseButtonCallback(window_, mouse_button_callback);
+
+    remote_session_ = detect_remote_session();
+#if AERO_DEBUG_FORCE_NORMAL_CURSOR
+    LOG_INFO("[Input] remote_session=" << (remote_session_ ? "yes" : "no")
+             << " AERO_DEBUG_FORCE_NORMAL_CURSOR=1 (HIDDEN instead of DISABLED)");
+#else
+    LOG_INFO("[Input] remote_session=" << (remote_session_ ? "yes" : "no"));
+#endif
 
     // Initialize mouse position and tracking baseline
     double x, y;
@@ -90,9 +138,22 @@ void InputManager::set_cursor_captured(bool captured) {
     if (!window_)
         return;
 
-    glfwSetInputMode(window_, GLFW_CURSOR,
-                     captured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+    // Capture flag still follows the caller (Escape). GLFW mode:
+    //   local     → DISABLED (relative / infinite look)
+    //   remote    → HIDDEN   (RDP absolute coords + DISABLED stalls)
+    //   diagnostic → HIDDEN even locally
+    int mode = GLFW_CURSOR_NORMAL;
+    if (captured) {
+#if AERO_DEBUG_FORCE_NORMAL_CURSOR
+        mode = GLFW_CURSOR_HIDDEN;
+#else
+        mode = remote_session_ ? GLFW_CURSOR_HIDDEN : GLFW_CURSOR_DISABLED;
+#endif
+    }
+    glfwSetInputMode(window_, GLFW_CURSOR, mode);
     cursor_captured_ = captured;
+    remote_settle_remaining_ =
+        (captured && remote_session_) ? kRemoteSettleCallbacks : 0;
     reset_mouse_state();  // centralizes baseline snapshot + suppress for jump-free toggle
 }
 
@@ -138,9 +199,28 @@ void InputManager::cursor_position_callback(GLFWwindow *window, double xpos,
         // This ensures mouse look "updates" (responds) immediately after capture.
         self->suppress_next_mouse_delta_ = false;
 
-        if (glm::length(delta) > self->mouse_delta_threshold_) {
-            // Do not accumulate; last already updated above so the next
-            // event will be measured from the post-jump position.
+        const float mag = glm::length(delta);
+#if AERO_DEBUG_FORCE_NORMAL_CURSOR
+        LOG_INFO("[Input] captured raw |delta|=" << mag << " d=(" << delta.x
+                 << ", " << delta.y << ")");
+#endif
+
+        if (self->remote_session_ && self->remote_settle_remaining_ > 0) {
+            --self->remote_settle_remaining_;
+            return;
+        }
+
+        // Local: 1000px warp guard (unchanged). Remote: RDP often reports
+        // absolute coords as 100–800px "moves" — treat those as reposition.
+#if AERO_DEBUG_FORCE_NORMAL_CURSOR
+        const float thresh = 1.0e6f; // see raw numbers; do not swallow
+#else
+        const float thresh = self->remote_session_
+                                 ? self->remote_warp_threshold_
+                                 : self->mouse_delta_threshold_;
+#endif
+        if (mag > thresh) {
+            // Absolute reposition: last_pos already updated; do not look.
             return;
         }
 

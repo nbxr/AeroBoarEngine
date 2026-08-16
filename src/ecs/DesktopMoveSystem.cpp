@@ -99,6 +99,29 @@ void sync_rig_from_camera(World& world, Entity player, const scene::Camera& came
     rig.invert_pitch = camera.invert_pitch;
 }
 
+void apply_follow_boom(scene::Camera& camera, const glm::vec3& root,
+                       const glm::vec3& boom_offset) {
+    const glm::vec3 world_up(0.0f, 1.0f, 0.0f);
+    const glm::vec3 target = root + world_up * boom_offset.y;
+
+    glm::vec3 look = camera.get_forward();
+    if (glm::dot(look, look) < 1e-10f)
+        look = glm::vec3(0.0f, 0.0f, -1.0f);
+    else
+        look = glm::normalize(look);
+
+    glm::vec3 up_ref = world_up;
+    if (std::abs(glm::dot(look, world_up)) > 0.999f)
+        up_ref = glm::vec3(0.0f, 0.0f, 1.0f);
+    const glm::vec3 right = glm::normalize(glm::cross(look, up_ref));
+
+    const glm::vec3 eye = target - look * boom_offset.z + right * boom_offset.x;
+    glm::vec3 to_target = target - eye;
+    if (glm::dot(to_target, to_target) < 1e-10f)
+        to_target = look;
+    camera.set_position_and_forward(eye, to_target);
+}
+
 void place_camera_on_player(const World& world, Entity player,
                             scene::Camera& camera,
                             scene::TransformManager& xforms) {
@@ -111,8 +134,20 @@ void place_camera_on_player(const World& world, Entity player,
     const glm::mat4& w = xforms.get_world_matrix(link->transform_index);
     const glm::vec3 root_pos(w[3]);
 
-    // Keep current / framed look direction; only lift the eye above the root.
     const CameraRig* rig = world.camera_rigs.try_get(player);
+    if (rig && rig->third_person) {
+        apply_follow_boom(camera, root_pos, rig->boom_offset);
+        const glm::vec3 eye = camera.get_position();
+        LOG_INFO("[ECS] place_camera_on_player third_person root=("
+                 << root_pos.x << ", " << root_pos.y << ", " << root_pos.z
+                 << ") eye=(" << eye.x << ", " << eye.y << ", " << eye.z
+                 << ") boom=(" << rig->boom_offset.x << ", " << rig->boom_offset.y
+                 << ", " << rig->boom_offset.z << ") xform="
+                 << link->transform_index);
+        return;
+    }
+
+    // Keep current / framed look direction; only lift the eye above the root.
     const glm::vec3 offset = eye_offset_or_default(rig);
     // World-Y eye height from feet (do not use full mesh rotation on offset —
     // avoids inverted/sideways eyes if the node basis is odd).

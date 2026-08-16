@@ -9,6 +9,8 @@ Canonical plan for a **custom, permanent, data-oriented ECS** and the first slic
 - `docs/architecture/desktop-inputs.md` — device input (`InputManager`)
 - `docs/architecture/vr-chess-physics-plan.md` — later; Player/ECS first
 - `docs/architecture/physics-plan.md` — Jolt
+- `docs/architecture/cascadebake-plan.md` — CascadeOven reads animation + rigid-body motion
+- `docs/architecture/animation-plan.md` — §9 third-person boom + locomotion anim graph
 - `docs/agents/current_state.md` — priorities
 
 ---
@@ -333,13 +335,14 @@ Authoring long-term: KHR physics + filter layers, or ECS component that creates 
 2. InputManager::update
 3. build InputFrame
 4. EditorHotkeySystem(frame)            // app/editor — not on Player; Debug+Release for now
-5. DesktopMoveSystem(world, frame, dt)  // Player entities with DesktopMove
-6. ScriptSystem::on_update(world, dt)
-7. update_animations
-8. step_physics  (+ Jolt sensor contacts → Trigger* events when implemented)
-9. TimerSystem → EventQueue
-10. EventDispatchSystem (+ script on_event)
-11. render (scene::Camera already updated)
+5. FpsMove / DesktopMoveSystem          // Player; writes Camera + body
+6. LocomotionAnimSystem                 // speed → Idle/Walk/Run crossfade
+7. update_animations                    // player-root channels masked
+8. ScriptSystem::on_update(world, dt)
+9. step_physics  (+ Jolt sensor contacts → Trigger* events when implemented)
+10. TimerSystem → EventQueue
+11. EventDispatchSystem (+ script on_event)
+12. render (scene::Camera already updated)
 ```
 
 ---
@@ -370,8 +373,15 @@ Authoring long-term: KHR physics + filter layers, or ECS component that creates 
 - Optional on the player entry:
   - `"eye_height": 0.08` → `(0, 0.08, 0)` local Y (preferred for tabletop)
   - `"eye_offset": [0, 0.08, 0]` → full local offset (X/Z are side/forward in body space)
-- Default offset `(0, 0.08, 0)`. Human-scale: `"eye_height": 1.6`.
+  - `"camera": "third_person"` → follow boom (default is first-person)
+  - `"boom_offset": [right, up, back]` → meters; implies third-person if present
+- `{ "type": "locomotion_anim", "idle": "T-Pose", "walk": "Walking_A", "run": "Running_A", "fade": 0.2 }`
+  - Typo `locomation_anim` is accepted.
+  - Optional `walk_speed` / `run_speed` are **thresholds** (m/s). Omit `run_speed` to stay on walk for any WASD.
+- Default offset `(0, 0.08, 0)`. Human-scale: `"eye_height": 1.6`. Default boom `(0, 1.6, 3)`.
+- `eye_offset` and `boom_offset` are asset meters; load scales them by `worldScale`.
 - Blender: origin at feet, **+Y up**, apply rotation; avoid 180° X export quirks if the mesh looks inverted in a glTF viewer.
+- Do **not** key the player extras node in clips (gameplay owns that TRS). Bone `root` translation is masked so Walk/Run stay in place.
 
 Unknown types: log + skip.
 

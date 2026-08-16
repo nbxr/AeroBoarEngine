@@ -14,6 +14,7 @@
 #include "core/Log.h"
 #include "ecs/DesktopMoveSystem.h"
 #include "ecs/FpsMoveSystem.h"
+#include "ecs/LocomotionAnimSystem.h"
 #include "ecs/EditorHotkeySystem.h"
 #include "ecs/ScriptSystem.h"
 #include <glm/glm.hpp>
@@ -185,10 +186,8 @@ int AeroBoar::fly() {
         editor_ctx.physics = &engine.physics;
         ecs::editor_hotkey_system_update(frame, editor_ctx);
 
-        // Animations first, then player move — otherwise clips that key the
-        // capsule/player node would overwrite locomotion every frame.
-        engine.update_animations(delta_time);
-
+        // Move first so LocomotionAnim sees this-frame speed; player-root
+        // channels are masked so clips cannot overwrite FpsMove.
         {
             auto& tw = engine.renderer.scene_manager.transforms();
             const ecs::Entity ap = engine.ecs_world.active_player();
@@ -211,6 +210,10 @@ int AeroBoar::fly() {
                                                 engine.camera, &tw);
             }
         }
+
+        ecs::locomotion_anim_system_update(
+            engine.ecs_world, engine.renderer.scene_manager.animations());
+        engine.update_animations(delta_time);
 
         ecs::script_system_update(engine.ecs_world, delta_time);
 

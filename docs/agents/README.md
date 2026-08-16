@@ -18,6 +18,8 @@ Architecture plans live under `docs/architecture/` (not only this folder), inclu
 - `ecs-plan.md` — **near-term** custom ECS, InputFrame, Player + camera
 - `gltf-extensions.md` — Khronos extension support matrix (e.g. AnimationPointerUVs gaps)
 - `animation-plan.md` / `physics-plan.md` / `vr-chess-physics-plan.md`
+- `visibility-lod-plan.md` — frustum / Hi-Z / Quest GMEM
+- `cascadebake-plan.md` — CascadeBake LOD (`CascadeOven`)
 - `pipeline-implementation.md`, `lighting-implementation.md`, `game-object-implementation.md`, `desktop-inputs.md`
 
 ## Usage

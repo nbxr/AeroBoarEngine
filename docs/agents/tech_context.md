@@ -98,6 +98,8 @@ Until then, prefer keeping `glslc` and avoiding a mid-feature toolchain swap.
 
 **Same-frame occlusion** — **optional** (`occlusionCull`, default **false**). Adreno/Quest (`AERO_TARGET_ADRENO`) **forces off**. When on: RG min/max pyramid, conservative AABB query (fully on-screen + in front of near). See `docs/architecture/visibility-lod-plan.md`.
 
+**Distance LOD (planned):** **CascadeBake** (`CascadeOven`) — meshoptimizer meshlets → octahedral impostors → static-only skybox bake; job-system background work. Classification from animation + KHR rigid-body motion. See `docs/architecture/cascadebake-plan.md`.
+
 **Same-frame occlusion (depth prepass)** — hysteresis removed:
 
 1. Frustum cull → candidates (indirect draws)  

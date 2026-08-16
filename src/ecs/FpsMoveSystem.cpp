@@ -1,4 +1,5 @@
 #include "ecs/FpsMoveSystem.h"
+#include "ecs/DesktopMoveSystem.h"
 #include "ecs/World.h"
 #include "scene/Camera.h"
 #include "scene/TransformManager.h"
@@ -6,6 +7,7 @@
 
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <algorithm>
 #include <cmath>
 
@@ -124,8 +126,10 @@ void fps_move_system_update(World& world, const core::InputFrame& frame,
     camera.set_orientation(
         orientation_from_yaw_pitch(fps.yaw_deg, fps.pitch_deg));
 
-    // Horizontal basis from camera look (not a separate sin/cos that can drift).
-    glm::vec3 forward = camera.get_forward();
+    // Horizontal basis from yaw (independent of boom look-at / shoulder offset).
+    const glm::quat yaw_q =
+        glm::angleAxis(glm::radians(fps.yaw_deg), glm::vec3(0.0f, 1.0f, 0.0f));
+    glm::vec3 forward = yaw_q * glm::vec3(0.0f, 0.0f, -1.0f);
     forward.y = 0.0f;
     if (glm::dot(forward, forward) < 1e-8f)
         forward = glm::vec3(0.0f, 0.0f, -1.0f);
@@ -133,6 +137,8 @@ void fps_move_system_update(World& world, const core::InputFrame& frame,
         forward = glm::normalize(forward);
     const glm::vec3 right =
         glm::normalize(glm::cross(forward, glm::vec3(0.0f, 1.0f, 0.0f)));
+
+    const bool third_person = rig && rig->third_person;
 
     // --- Crouch (hold Ctrl) ---
     fps.crouching = frame.left_control;
@@ -153,6 +159,7 @@ void fps_move_system_update(World& world, const core::InputFrame& frame,
     float speed = camera.movement_speed;
     if (fps.crouching)
         speed *= fps.crouch_speed_scale;
+    fps.horizontal_speed = (glm::dot(wish, wish) > 1e-8f) ? speed : 0.0f;
     root += wish * (speed * dt);
 
     // --- Jump / gravity ---
@@ -174,8 +181,26 @@ void fps_move_system_update(World& world, const core::InputFrame& frame,
         fps.vertical_velocity = 0.0f;
     }
 
-    // Write root transform: translation only (preserve mesh rotation/scale).
+    // Write root transform: translation always; yaw the body in third-person
+    // so Walk/Run face the camera heading. First-person keeps authored rotation
+    // (Blender capsules were not always Y-up-clean).
     scene::LocalTrs trs = transforms.get_local_trs(ti);
+    if (third_person) {
+        if (!fps.body_rest_captured) {
+            fps.body_rest_rotation = trs.rotation;
+            fps.body_rest_captured = true;
+        }
+        glm::vec3 rest_fwd = fps.body_rest_rotation * glm::vec3(0.0f, 0.0f, -1.0f);
+        rest_fwd.y = 0.0f;
+        float rest_yaw = 0.0f;
+        if (glm::dot(rest_fwd, rest_fwd) > 1e-8f) {
+            rest_fwd = glm::normalize(rest_fwd);
+            rest_yaw = glm::degrees(std::atan2(rest_fwd.x, -rest_fwd.z));
+        }
+        const glm::quat yaw_delta = glm::angleAxis(
+            glm::radians(fps.yaw_deg - rest_yaw), glm::vec3(0.0f, 1.0f, 0.0f));
+        trs.rotation = glm::normalize(yaw_delta * fps.body_rest_rotation);
+    }
     const uint32_t parent = transforms.get_parent(ti);
     if (parent == scene::TransformManager::kInvalid) {
         trs.translation = root;
@@ -188,18 +213,24 @@ void fps_move_system_update(World& world, const core::InputFrame& frame,
         transforms.set_local_trs(ti, trs);
     }
 
-    // --- Camera at eye ---
-    glm::vec3 eye_off =
-        rig ? rig->eye_offset : glm::vec3(0.0f, 0.08f, 0.0f);
-    if (fps.crouching)
-        eye_off.y *= fps.crouch_eye_scale;
+    // --- Camera ---
+    if (third_person) {
+        glm::vec3 boom = rig->boom_offset;
+        if (fps.crouching)
+            boom.y *= fps.crouch_eye_scale;
+        apply_follow_boom(camera, root, boom);
+    } else {
+        glm::vec3 eye_off =
+            rig ? rig->eye_offset : glm::vec3(0.0f, 0.08f, 0.0f);
+        if (fps.crouching)
+            eye_off.y *= fps.crouch_eye_scale;
 
-    // Eye = root + world-up height + look-relative horizontal offset.
-    const glm::vec3 eye = root + right * eye_off.x +
-                         glm::vec3(0.0f, 1.0f, 0.0f) * eye_off.y -
-                         forward * eye_off.z;
-
-    camera.set_position(eye);
+        // Eye = root + world-up height + look-relative horizontal offset.
+        const glm::vec3 eye = root + right * eye_off.x +
+                             glm::vec3(0.0f, 1.0f, 0.0f) * eye_off.y -
+                             forward * eye_off.z;
+        camera.set_position(eye);
+    }
 }
 
 } // namespace ecs

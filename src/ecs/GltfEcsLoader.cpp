@@ -34,6 +34,32 @@ std::string get_string(const tinygltf::Value::Object& obj, const char* key) {
     return it->second.Get<std::string>();
 }
 
+bool parse_vec3(const tinygltf::Value& v, glm::vec3& out) {
+    if (v.IsArray()) {
+        const auto& arr = v.Get<tinygltf::Value::Array>();
+        if (arr.size() >= 3 && arr[0].IsNumber() && arr[1].IsNumber() &&
+            arr[2].IsNumber()) {
+            out = glm::vec3(static_cast<float>(arr[0].GetNumberAsDouble()),
+                            static_cast<float>(arr[1].GetNumberAsDouble()),
+                            static_cast<float>(arr[2].GetNumberAsDouble()));
+            return true;
+        }
+        return false;
+    }
+    if (!v.IsString())
+        return false;
+    float x = 0.f, y = 0.f, z = 0.f;
+    if (std::sscanf(v.Get<std::string>().c_str(), " [ %f , %f , %f ]", &x, &y,
+                    &z) >= 3 ||
+        std::sscanf(v.Get<std::string>().c_str(), "[%f,%f,%f]", &x, &y, &z) >=
+            3 ||
+        std::sscanf(v.Get<std::string>().c_str(), "%f,%f,%f", &x, &y, &z) >= 3) {
+        out = glm::vec3(x, y, z);
+        return true;
+    }
+    return false;
+}
+
 uint32_t apply_component_entry(World& world, Entity entity,
                                const tinygltf::Value& entry) {
     if (!entry.IsObject())
@@ -51,36 +77,27 @@ uint32_t apply_component_entry(World& world, Entity entity,
         world.fps_moves.get_or_emplace(entity);
         CameraRig& rig = world.camera_rigs.get_or_emplace(entity);
         // Optional eye height: "eye_offset": [x,y,z] or string "[x, y, z]"
-        // (Blender custom props often export the vector as a string).
         auto eit = obj.find("eye_offset");
-        if (eit != obj.end()) {
-            if (eit->second.IsArray()) {
-                const auto& arr = eit->second.Get<tinygltf::Value::Array>();
-                if (arr.size() >= 3 && arr[0].IsNumber() && arr[1].IsNumber() &&
-                    arr[2].IsNumber()) {
-                    rig.eye_offset = glm::vec3(
-                        static_cast<float>(arr[0].GetNumberAsDouble()),
-                        static_cast<float>(arr[1].GetNumberAsDouble()),
-                        static_cast<float>(arr[2].GetNumberAsDouble()));
-                }
-            } else if (eit->second.IsString()) {
-                float x = 0.f, y = 0.08f, z = 0.f;
-                if (std::sscanf(eit->second.Get<std::string>().c_str(),
-                                " [ %f , %f , %f ]", &x, &y, &z) >= 2 ||
-                    std::sscanf(eit->second.Get<std::string>().c_str(),
-                                "[%f,%f,%f]", &x, &y, &z) >= 2 ||
-                    std::sscanf(eit->second.Get<std::string>().c_str(),
-                                "%f,%f,%f", &x, &y, &z) >= 2) {
-                    rig.eye_offset = glm::vec3(x, y, z);
-                }
-            }
-        }
-        // Optional scalar shorthand: "eye_height": 0.08  →  (0, h, 0)
+        if (eit != obj.end())
+            parse_vec3(eit->second, rig.eye_offset);
         auto hit = obj.find("eye_height");
         if (hit != obj.end() && hit->second.IsNumber()) {
-            rig.eye_offset =
-                glm::vec3(0.0f, static_cast<float>(hit->second.GetNumberAsDouble()),
-                          0.0f);
+            rig.eye_offset = glm::vec3(
+                0.0f, static_cast<float>(hit->second.GetNumberAsDouble()), 0.0f);
+        }
+
+        const std::string cam = get_string(obj, "camera");
+        if (cam == "third_person" || cam == "thirdperson" || cam == "3rd")
+            rig.third_person = true;
+        else if (cam == "first_person" || cam == "firstperson" || cam == "fps")
+            rig.third_person = false;
+        auto bit = obj.find("boom_offset");
+        if (bit != obj.end() && parse_vec3(bit->second, rig.boom_offset))
+            rig.third_person = true; // boom implies follow cam
+        if (rig.third_person) {
+            LOG_INFO("[ECS] player third_person boom=("
+                     << rig.boom_offset.x << ", " << rig.boom_offset.y << ", "
+                     << rig.boom_offset.z << ")");
         }
         return 1;
     }
@@ -108,6 +125,34 @@ uint32_t apply_component_entry(World& world, Entity entity,
         if (n.value.empty())
             n.value = get_string(obj, "name");
         world.names.get_or_emplace(entity, n);
+        return 1;
+    }
+    if (type == "locomotion_anim" || type == "locomation_anim") {
+        LocomotionAnim loco{};
+        const std::string idle = get_string(obj, "idle");
+        const std::string walk = get_string(obj, "walk");
+        const std::string run = get_string(obj, "run");
+        if (!idle.empty())
+            loco.idle_name = idle;
+        if (!walk.empty())
+            loco.walk_name = walk;
+        if (!run.empty())
+            loco.run_name = run;
+        auto wit = obj.find("walk_speed");
+        if (wit != obj.end() && wit->second.IsNumber())
+            loco.walk_threshold =
+                static_cast<float>(wit->second.GetNumberAsDouble());
+        auto rit = obj.find("run_speed");
+        if (rit != obj.end() && rit->second.IsNumber())
+            loco.run_threshold =
+                static_cast<float>(rit->second.GetNumberAsDouble());
+        auto fit = obj.find("fade");
+        if (fit != obj.end() && fit->second.IsNumber())
+            loco.fade = static_cast<float>(fit->second.GetNumberAsDouble());
+        world.locomotion_anims.get_or_emplace(entity, loco);
+        LOG_INFO("[ECS] locomotion_anim idle='" << loco.idle_name << "' walk='"
+                 << loco.walk_name << "' run='" << loco.run_name
+                 << "' fade=" << loco.fade);
         return 1;
     }
 

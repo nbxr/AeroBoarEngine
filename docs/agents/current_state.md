@@ -4,7 +4,7 @@ Lightweight snapshot of the AeroBoarEngine project status. Intended to be read q
 
 ## Overall Status
 
-Desktop foundation is solid. The engine loads glTF scenes (multi-material, hierarchy, punctual lights), uploads bindless resources, and renders with **GPU frustum cull** (always), **optional conservative Hi-Z** (`occlusionCull`, off by default / off on Adreno), **mesh-grouped instancing**, and **one multi-draw indirect** call path plus procedural IBL. **Animation:** node TRS, skinned meshes, CPU morph weights. **ECS Phase 1–3:** World, Player, `InputFrame`, DesktopMove + EditorHotkeys, glTF `extras.ECS_Components_v1`, scripts. **Physics:** Jolt + KHR MVP, LinearCast CCD, **`worldScale`** (chess `10`), **debug draw** (F3), **kill floor** for fallen dynamics; player capsule knocks pieces. Scene list includes the full glTF-Sample-Assets set. OpenXR / Quest / reverse-Z remain roadmap. **Next product focus:** FPS-style player controller (walk / jump / crouch), then finish chess piece authoring + VR path — `vr-chess-physics-plan.md` / `ecs-plan.md`.
+Desktop foundation is solid. The engine loads glTF scenes (multi-material, hierarchy, punctual lights), uploads bindless resources, and renders with **GPU frustum cull** (always), **optional conservative Hi-Z** (`occlusionCull`, off by default / off on Adreno), **mesh-grouped instancing**, and **one multi-draw indirect** call path plus procedural IBL. **Animation:** node TRS, skinned meshes, CPU morph weights. **ECS Phase 1–3:** World, Player, `InputFrame`, DesktopMove + **FpsMove** + EditorHotkeys, glTF `extras.ECS_Components_v1`, scripts. **Third-person boom** when authored (`camera` / `boom_offset`). **Physics:** Jolt + KHR MVP, LinearCast CCD, **`worldScale`** (chess `10`), **debug draw** (F3), **kill floor** for fallen dynamics; player capsule knocks pieces. Scene list includes the full glTF-Sample-Assets set. OpenXR / Quest / reverse-Z remain roadmap. **Next product focus:** locomotion polish or VR path — `animation-plan.md` §9 / `ecs-plan.md`.
 
 ## Major Completed Areas
 
@@ -51,9 +51,9 @@ Desktop foundation is solid. The engine loads glTF scenes (multi-material, hiera
 
 ## Current Focus Areas
 
-**Near-term priority:** **Third-person controller** + **animated player** (smooth clip crossfade / blend). FPS mover landed for chess knock-over. Plans: `ecs-plan.md`, `animation-plan.md`, `vr-chess-physics-plan.md`.
+**Near-term priority:** polish locomotion (hysteresis / jump clips) or VR path. **Phase 4 crossfade + Idle/Walk/Run** landed. See `animation-plan.md` §9.
 
-- **ECS Phase 1–3 + FpsMove:** grounded WASD, mouse look, jump, crouch; free-fly `DesktopMove` still available if no `FpsMove`
+- **ECS Phase 1–3 + FpsMove:** grounded WASD, mouse look, jump, crouch; **third-person boom** when extras `"camera": "third_person"` / `boom_offset`; free-fly `DesktopMove` still available if no `FpsMove`
 - Desktop rendering + animation solid (TRS / skin / morph, Hi-Z, opaque/transparent; CarConcept usable)
 - **Chess / physics:** knock-over + `worldScale: 10` + KHR + kill floor + debug draw; pawns use shared multi-prim meshes
 - **Extension matrix:** `docs/architecture/gltf-extensions.md`
@@ -76,7 +76,8 @@ Desktop foundation is solid. The engine loads glTF scenes (multi-material, hiera
   - BRDF integration LUT (128²) → binding 8 `sampler2D`
   - Split-sum specular in `pbr.frag` when IBL is ready
   Spot packing complete (pos + emission dir + cos cones). Dynamic lights via per-frame upload + `Engine::set_light` / `refresh_lights_from_transforms`. Optional HDR equirect IBL (`environmentHdr` in configuration.json). Still deferred: clustered many-lights, shadows.
-- **GPU frustum (always) + optional conservative Hi-Z** (`occlusionCull`, default **false**; **off on Adreno**). RG min/max pyramid. City / meshlets / impostors: `docs/architecture/visibility-lod-plan.md`.
+- **GPU frustum (always) + optional conservative Hi-Z** (`occlusionCull`, default **false**; **off on Adreno**). RG min/max pyramid — `visibility-lod-plan.md`.
+- **Distance LOD (design):** **CascadeBake** / `CascadeOven` — meshlets → octahedral impostors → static skybox bake — `cascadebake-plan.md`. **Not implemented.**
 - **GPU frustum + same-frame Hi-Z + opaque/transparent shade (landed)**:
   - Frame order (compute **outside** render passes): frustum cull opaque → depth prepass → HZB build → frustum+HZB cull opaque **and** transparent → main RP: opaque shade then transparent shade
   - `gfx::GpuCulling`: emit filter (all / opaque-depth / transparent); **combined** instance SSBO (opaque half + transparent half via `instance_base_offset`) so binding 1 is never flipped mid-CB (`UPDATE_AFTER_BIND`); dual indirect buffers; GPU `vkCmdFillBuffer` zeros batch counts
@@ -86,7 +87,7 @@ Desktop foundation is solid. The engine loads glTF scenes (multi-material, hiera
   - `[Cull]` log from host-visible counts after frame fence (`[hzb=on]` when same-frame path ran)
 - **Depth model:** standard Z today (0=near, 1=far, `LESS`). **Planned:** reverse-Z with VR/multiview depth work (`GREATER`/`GREATER_OR_EQUAL`, clear 0, max-depth Hi-Z) — official roadmap item in `tech_context.md`
 - No OpenXR / VR input layer (desktop GLFW only)
-- **Player locomotion:** **FpsMove** when glTF has `player` + body TransformLink (chess). **Free-fly `DesktopMove`** default when no authored player (model inspection). **N** cycles animation clips (needs 2+ clips in the glTF). **Next:** 3rd-person + skinned player with smooth transitions
+- **Player locomotion:** **FpsMove** + **third-person boom** when authored. **`LocomotionAnim`** (extras `locomotion_anim` / `locomation_anim`) crossfades Idle/`T-Pose` / Walk / Run from `horizontal_speed`. **N** crossfades clips (0.2 s). **Free-fly `DesktopMove`** when no authored player.
 - **Scene model:** `GameObject` + `RenderMesh` + `TransformManager` (local + parent + dirty `propagate`); dual-write `SceneInstance`; ECS dual-write. Full GameObject→Entity render migration later
 - **glTF animation Phase 1–3 yes.** Static `KHR_texture_transform` yes. **Not yet:** `KHR_animation_pointer`, full material set — see `gltf-extensions.md`
 - **Physics:** Jolt + KHR MVP, CCD, `worldScale`, debug lines. **Missing:** compound/triangle mesh colliders, raycast/impulse tools, proper character controller — `physics-plan.md`
@@ -127,7 +128,9 @@ Desktop foundation is solid. The engine loads glTF scenes (multi-material, hiera
 - [done] Alpha mode OPAQUE / MASK / BLEND + double-sided cull-none + dual shade pipelines
 - [done] Full sample-assets list in `configuration.json` for manual regression
 - [done] Docs: extension matrix, VR chess plan, ECS plan
-- **Next immediate:** **Third-person controller** + animated player model with **smooth animation transitions**
+- [done] Third-person follow boom (`CameraRig.third_person` / extras `boom_offset`)
+- [done] Animation crossfade + `LocomotionAnim` Idle/Walk/Run (Bot / Barbarian extras)
+- **Next immediate:** locomotion polish (run key / jump clips) or VR path
 - **Then:** ECS Phase 4 events/timers or Jolt sensors; GameObject→Entity render migration
 - **Roadmap (extensions):** `KHR_animation_pointer`; unlit; variants UI; optional desktop-only volume/dispersion — `gltf-extensions.md`
 - **Roadmap (VR / Quest):** reverse-Z + multiview HZB; OpenXR; shrink-to-board VR chess — `vr-chess-physics-plan.md`

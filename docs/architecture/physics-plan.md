@@ -11,6 +11,7 @@ Canonical plan for rigid-body physics in AeroBoarEngine.
 - `docs/project-plan.md` — roadmap goals
 - `docs/architecture/game-object-implementation.md` — hierarchy + transforms
 - **`docs/architecture/vr-chess-physics-plan.md`** — ABeautifulGame + shrink-to-board VR knock-over product plan
+- `docs/architecture/cascadebake-plan.md` — static vs kinematic/dynamic eligibility for skybox bake
 
 ---
 

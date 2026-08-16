@@ -23,7 +23,7 @@ Morph: `MorphSystem` loads target deltas, animation path `weights`, CPU blend in
 | Per-frame world → cull/draw (`sync_scene_transforms`) | Yes |
 | Durable `gltf_node → transform_index` | **Yes** — `SceneManager::gltf_node_to_transform()` |
 | Decomposed TRS on nodes | **Yes** — `TransformManager::LocalTrs` + set_local_translation/rotation/scale |
-| Clip playback | **Exclusive default** (`play_default_clip`: prefers Walk/Run/…); **N** cycles clips |
+| Clip playback | **Crossfade** (`crossfade`, N uses 0.2 s fade); exclusive still used for load / fade=0 |
 | JOINTS/WEIGHTS / skins / VS skinning | **Yes (Phase 2)** — `SkinSystem` + `pbr.vert` / prepass |
 | Mesh-relative skin matrices | **Yes** — `inv(meshWorld) * jointWorld * IBM`, VS multiplies mesh model |
 | Missing NORMAL (e.g. Fox) | **Yes** — face-normal accumulation at load |
@@ -152,12 +152,94 @@ Do **not** bypass dirty propagate with ad-hoc GPU buffer writes.
 
 ---
 
-## 6. Out of scope for first milestone
+## 6. Out of scope for Phases 1–3 (historical)
 
-- Morph targets  
-- Multi-clip blend / crossfade / retargeting / IK  
+- Morph targets *(landed CPU)*  
+- Multi-clip blend / crossfade — **Phase 4 landed** (two-clip fade; N + `LocomotionAnim`)  
+- Retargeting / IK  
 - GPU animation compute  
-- Changing multi-draw batching topology for anim  
+
+---
+
+## 9. Phase 4 — clip crossfade + locomotion graph (**landed**)
+
+**Goal:** player character **Idle / Walk / Run** with **smooth transitions**. Test: **`PlayerCharacters/glTF/Barbarian.gltf`** (clips: `T-Pose`, `Walking_A/B/C`, `Running_A/B`, jumps). There is **no Idle clip** — map stand → **`T-Pose`** (or a dedicated Idle if authored later).
+
+### 9.1 Engine: two-clip crossfade (**landed**)
+
+`play_exclusive` still hard-cuts (load / fade=0). `crossfade` keeps at most two `AnimationPlayer`s:
+
+| Field | Role |
+|--------|------|
+| `clip_index`, `time`, `speed`, `loop`, `playing` | as now |
+| `weight` | 0–1 contribution |
+| `fade_duration`, `fade_t` | outgoing fades to 0, incoming to 1 |
+
+`update()`:
+
+1. Advance all playing players.  
+2. **Per channel / transform:** sample A and B; **lerp** translation/scale, **nlerp** rotation; `out = mix(A, B, wB)` with `wA + wB = 1`.  
+3. When fade done, drop the outgoing player (back to one clip).  
+
+N-key cycle should **crossfade** (e.g. 0.2 s) instead of exclusive cut.
+
+**Root motion:** locomotion clips often key the root/hips. **Gameplay owns root translation** (`FpsMove` / later 3rd-person). Ignore (or optionally apply) channels that target the **player root** `TransformLink` node so Walk/Run stay **in place** on the capsule.
+
+### 9.2 Gameplay: tiny locomotion graph (**landed**)
+
+`ecs::LocomotionAnim` on the player (extras `locomotion_anim` or typo `locomation_anim`):
+
+```text
+stand  → clip name "T-Pose"     (speed ≈ 0)
+walk   → "Walking_A"
+run    → "Running_A"
+walk_threshold, run_threshold   (horizontal speed, sim m/s)
+fade_seconds                    (e.g. 0.15–0.25)
+```
+
+`LocomotionAnimSystem` (after move, before or as part of `update_animations`):
+
+- `speed = length(horizontal velocity)` from `FpsMove` (or wish * walk_speed).  
+- State: `Stand` / `Walk` / `Run` with **hysteresis** so it does not chatter.  
+- On state change → `AnimationSystem::crossfade(clip, fade)`.  
+
+Authoring: glTF extras on the player node, e.g.
+
+```json
+{ "type": "locomotion_anim",
+  "idle": "T-Pose", "walk": "Walking_A", "run": "Running_A",
+  "walk_speed": 1.2, "run_speed": 3.5, "fade": 0.2 }
+```
+
+Defaults: name-match `T-Pose`/`Idle`, `Walk*`, `Run*` if extras omitted.
+
+### 9.3 Third-person camera (parallel, same slice)
+
+**Landed (boom + look-at).** Storage option A (`scene::Camera`). `CameraRig.third_person` + `boom_offset` (right, up, back).
+
+| | First person | Third person |
+|--|----------------|--------------|
+| Position | root + `eye_offset` | `apply_follow_boom`: eye = (root + up·boom.y) − look·boom.z + right·boom.x |
+| Look | yaw/pitch on camera | look-at root + boom.y (head height); pitch orbits |
+| Player yaw | authored rotation kept | **body faces camera yaw** (rest rotation preserved, Y-only) |
+
+Mouse still drives yaw/pitch. Boom is in **asset meters**, then `worldScale` (same as `eye_offset`). Extras:
+
+```json
+{ "type": "player", "camera": "third_person", "boom_offset": [0, 1.6, 3] }
+```
+
+`boom_offset` without `camera` also enables follow. Toggle later (V key). Barbarian should **default third-person**.
+
+**Order:** 3rd-person camera landed **before** crossfade (visible Walk hard-cut is OK). Then fade. Then graph.
+
+### 9.4 Suggested implementation order
+
+1. [x] `CameraRig` third-person boom + look-at; extras `player` + `camera` / `boom_offset`.  
+2. [x] Crossfade in `AnimationSystem`; N uses fade (0.2 s).  
+3. [x] Mask player-object TRS + skeleton `root` translation (Walk/Run in place).  
+4. [x] `LocomotionAnim` + thresholds from `FpsMove.horizontal_speed` (accepts `locomation_anim`). Default: any WASD → walk; `run_speed` extras required to enter run.  
+5. Polish hysteresis / jump clips later (`Jump_*` not required for v1).
 
 ---
 

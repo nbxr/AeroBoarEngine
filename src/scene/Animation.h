@@ -53,6 +53,10 @@ struct AnimationPlayer {
     float speed = 1.0f;
     bool looping = true;
     bool playing = false;
+    float weight = 1.0f;
+    float fade_duration = 0.0f;
+    float fade_age = 0.0f;
+    bool fade_out = false;
 };
 
 // Scene-owned animation clips + players. Sample writes TransformManager locals
@@ -78,18 +82,30 @@ class AnimationSystem {
     // Stop others and play one clip (preferred for Fox Walk/Run/Survey, etc.).
     bool play_exclusive(uint32_t clip_index, bool loop = true, float speed = 1.0f);
 
-    // Prefer Walk → Run → first named non-empty → clip 0.
+    // Fade from the current incoming clip to clip_index. fade_seconds <= 0 is exclusive.
+    bool crossfade(uint32_t clip_index, float fade_seconds, bool loop = true,
+                   float speed = 1.0f);
+
+    // Prefer Walk* → Run* → Idle/T-Pose → clip 0.
     bool play_default_clip(bool loop = true, float speed = 1.0f);
 
-    // Cycle exclusive playback to next clip (wraps). Returns new clip index or ~0.
-    uint32_t cycle_next_clip(bool loop = true);
+    // Cycle to next clip (wraps) via crossfade. Returns new clip index or ~0.
+    uint32_t cycle_next_clip(bool loop = true, float fade_seconds = 0.2f);
+
+    // Skip channels on a gameplay-owned transform (player object TRS, or
+    // skeleton-root translation so Walk/Run stay in place).
+    void ignore_transform_trs(uint32_t transform_index);
+    void ignore_transform_translation(uint32_t transform_index);
+
+    // Case-insensitive exact name, else first clip whose name starts with name.
+    [[nodiscard]] int find_clip(const char* name) const;
 
     [[nodiscard]] uint32_t clip_count() const {
         return static_cast<uint32_t>(clips_.size());
     }
     [[nodiscard]] const AnimationClip& clip(uint32_t i) const { return clips_[i]; }
     [[nodiscard]] const std::vector<AnimationPlayer>& players() const { return players_; }
-    [[nodiscard]] int active_clip_index() const; // -1 if none playing
+    [[nodiscard]] int active_clip_index() const; // incoming clip, or -1
 
     bool play(uint32_t clip_index, bool loop = true, float speed = 1.0f);
     void stop_all();
@@ -99,9 +115,17 @@ class AnimationSystem {
                                float* out_components);
     static void apply_channel(TransformManager& transforms, MorphSystem* morphs,
                               const AnimationChannel& ch, const float* values);
+    [[nodiscard]] bool channel_masked(const AnimationChannel& ch) const;
+    void finish_completed_fades();
+
+    struct ChannelMask {
+        uint32_t transform_index = TransformManager::kInvalid;
+        uint8_t path_bits = 0; // 1=T 2=R 4=S
+    };
 
     std::vector<AnimationClip> clips_{};
     std::vector<AnimationPlayer> players_{};
+    std::vector<ChannelMask> masks_{};
 };
 
 } // namespace scene

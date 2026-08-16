@@ -264,6 +264,7 @@ add_executable(Aero_Boar_Engine
     src/ecs/World.cpp
     src/ecs/DesktopMoveSystem.cpp
     src/ecs/FpsMoveSystem.cpp
+    src/ecs/LocomotionAnimSystem.cpp
     src/ecs/EditorHotkeySystem.cpp
     src/ecs/ScriptRegistry.cpp
     src/ecs/ScriptInstanceStore.cpp

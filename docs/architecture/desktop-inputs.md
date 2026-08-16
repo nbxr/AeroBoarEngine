@@ -138,6 +138,28 @@ When the user presses Escape (or any future mechanism):
 
 This is more robust than the pre-refactor `first_mouse` flag that lived inside `Camera` and had to be manually poked from the main loop. (See implementation in `core/InputManager` for the exact suppress/expiry + size-guard interaction.)
 
+## Remote Desktop / RDP considerations
+
+**Problem.** GLFW `GLFW_CURSOR_DISABLED` is a *relative* / warped-cursor path. RDP and xRDP mostly deliver **absolute** cursor positions. After a warp-to-center, the next callback is often the client’s real screen coordinate, so `new - last` is a 100–800 px “move”. Locally we only swallow deltas **> 1000 px**, so those warps become look jumps. Local USB mice are unaffected.
+
+**Detection** (cached once in `InputManager::initialize()`, `is_remote_session()`):
+
+| Platform | Signal |
+|----------|--------|
+| Windows | `GetSystemMetrics(SM_REMOTESESSION) != 0`, or `SESSIONNAME` starting with `RDP-` |
+| Linux | env `XRDP_SESSION`, `XRDP_SOCKET_PATH`, `XRDP_SOCKET_IN_PORT`, or `RDP_SESSION` |
+
+`SSH_CONNECTION` is **not** treated as remote (X11-forward is a different path).
+
+**Remote captured path** (local path unchanged):
+
+1. Use `GLFW_CURSOR_HIDDEN` instead of `DISABLED`. Confirmed over RDP: DISABLED stops tracking after a few moves (absolute vs warp). HIDDEN keeps delivering window-relative positions.
+2. After Escape capture, ignore the next few callbacks (`remote_settle_remaining_`) so the first reports do not look.
+3. If `|delta| > remote_warp_threshold_` (96 px, not the local 1000 px), treat the event as an **absolute reposition**: update `last_mouse_position_`, do **not** add to `raw_mouse_delta_`.
+4. `suppress_next_mouse_delta_` / Escape toggle behavior is the same as local.
+
+**Diagnostic (temporary).** Compile with `-DAERO_DEBUG_FORCE_NORMAL_CURSOR=1` (or `#define` in `InputManager.h`): captured mode uses `GLFW_CURSOR_HIDDEN` instead of `DISABLED`, the large-delta swallow is effectively off (`1e6`), and each captured callback logs `|delta|`. Escape still toggles `cursor_captured_`. Use this to confirm jumps vanish when DISABLED is not used, then leave the define at `0`.
+
 ## Relationship to Existing Code (Pre-Refactor Baseline)
 
 Before this architecture:
@@ -163,4 +185,4 @@ This architecture document + the implementation plan describe the extraction of 
 
 ---
 
-**Last updated**: During Phase 0 of the desktop input recovery implementation (see session plan for exact date and context). Update this file when the implementation or design evolves.
+**Last updated**: Remote-session mouse-look (RDP / xRDP warp vs absolute). Update this file when the implementation or design evolves.

@@ -1,8 +1,8 @@
 {
-  "defaultScene": "ABeautifulGameScene",
+  "defaultScene": "_Barbarian",
   "activeSystem": "Windows",
   "scenePhysics": true,
-  "worldScale": 10.0,
+  "worldScale": 1.0,
   "physicsDebugDraw": false,
   "killFloor": {
     "enabled": true,
@@ -20,6 +20,10 @@
     }
   ],
   "scenes": [
+    {
+      "name": "_Bot",
+      "filename": "glTF-Sample-Assets/Models/PlayerCharacters/glTF/Bot.gltf"
+    },
     {
       "name": "_Barbarian",
       "filename": "glTF-Sample-Assets/Models/PlayerCharacters/glTF/Barbarian.gltf"

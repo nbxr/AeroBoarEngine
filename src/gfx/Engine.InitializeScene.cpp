@@ -11,6 +11,7 @@
 #include "scene/SceneManager.h"
 #include "ecs/GltfEcsLoader.h"
 #include "ecs/DesktopMoveSystem.h"
+#include "ecs/LocomotionAnimSystem.h"
 #include "tiny_gltf.h"
 #include <functional>
 #include <iostream>
@@ -513,10 +514,12 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     // if none authored. Player owns view (first PlayerTag wins).
     {
         ecs::populate_world_from_gltf(ecs_world, model, renderer.scene_manager);
-        // Authored eye_offset is in asset meters; match worldScale.
+        // Authored eye_offset / boom_offset are in asset meters; match worldScale.
         if (std::abs(world_scale - 1.0f) > 1e-5f) {
-            for (ecs::CameraRig& rig : ecs_world.camera_rigs.data())
+            for (ecs::CameraRig& rig : ecs_world.camera_rigs.data()) {
                 rig.eye_offset *= world_scale;
+                rig.boom_offset *= world_scale;
+            }
         }
         if (ecs_world.player_tags.size() == 0) {
             const ecs::Entity player = ecs_world.spawn_default_desktop_player();
@@ -544,7 +547,7 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
                 }
             }
             ecs::sync_camera_from_rig(ecs_world, player, camera);
-            // Place eye at player_root + eye_offset (not at mesh origin / board).
+            // FPS: eye at root + eye_offset. Third-person: orbit boom + look-at.
             ecs::place_camera_on_player(ecs_world, player, camera,
                                         renderer.scene_manager.transforms());
             {
@@ -552,12 +555,29 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
                 const ecs::CameraRig* rig = ecs_world.camera_rigs.try_get(player);
                 const glm::vec3 eye =
                     rig ? rig->eye_offset : glm::vec3(0.f, 0.08f, 0.f);
-                LOG_INFO("[ECS] Player camera at eye pos=("
+                const glm::vec3 boom =
+                    rig ? rig->boom_offset : glm::vec3(0.f);
+                const bool tp = rig && rig->third_person;
+                LOG_INFO("[ECS] Player camera at "
+                         << (tp ? "third_person" : "first_person") << " pos=("
                          << pos.x << ", " << pos.y << ", " << pos.z
                          << ") eye_offset=(" << eye.x << ", " << eye.y << ", "
-                         << eye.z << ")");
+                         << eye.z << ") boom=(" << boom.x << ", " << boom.y
+                         << ", " << boom.z << ")");
             }
         }
+        if (std::abs(world_scale - 1.0f) > 1e-5f) {
+            for (ecs::LocomotionAnim& loco : ecs_world.locomotion_anims.data()) {
+                if (loco.walk_threshold < 1.0e8f)
+                    loco.walk_threshold *= world_scale;
+                if (loco.run_threshold < 1.0e8f)
+                    loco.run_threshold *= world_scale;
+            }
+        }
+        ecs::bind_player_animation_masks(ecs_world, renderer.scene_manager,
+                                         model);
+        ecs::locomotion_anim_bind_clips(ecs_world,
+                                        renderer.scene_manager.animations());
     }
 
     // Log scene lights (after world transforms) for import / exposure debugging.

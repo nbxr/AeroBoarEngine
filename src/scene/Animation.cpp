@@ -118,6 +118,7 @@ glm::quat nlerp(glm::quat a, glm::quat b, float t) {
 void AnimationSystem::clear() {
     clips_.clear();
     players_.clear();
+    masks_.clear();
 }
 
 uint32_t AnimationSystem::load_from_gltf(
@@ -319,13 +320,52 @@ void AnimationSystem::apply_channel(TransformManager& transforms,
     }
 }
 
+bool AnimationSystem::channel_masked(const AnimationChannel& ch) const {
+    if (ch.path == AnimationPath::Weights)
+        return false;
+    const uint8_t bit = (ch.path == AnimationPath::Translation) ? 1u
+                       : (ch.path == AnimationPath::Rotation)    ? 2u
+                                                                 : 4u;
+    for (const ChannelMask& m : masks_) {
+        if (m.transform_index == ch.transform_index && (m.path_bits & bit))
+            return true;
+    }
+    return false;
+}
+
+void AnimationSystem::finish_completed_fades() {
+    bool incoming_done = false;
+    for (const auto& p : players_) {
+        if (p.playing && !p.fade_out && p.fade_duration > 0.0f &&
+            p.fade_age >= p.fade_duration)
+            incoming_done = true;
+    }
+    if (!incoming_done)
+        return;
+
+    std::vector<AnimationPlayer> kept;
+    kept.reserve(players_.size());
+    for (auto& p : players_) {
+        if (!p.playing || p.fade_out)
+            continue;
+        p.weight = 1.0f;
+        p.fade_duration = 0.0f;
+        p.fade_age = 0.0f;
+        kept.push_back(p);
+    }
+    players_.swap(kept);
+}
+
 void AnimationSystem::update(float delta_time, TransformManager& transforms,
                              MorphSystem* morphs) {
+    const float dt = std::max(delta_time, 0.0f);
+    int playing_n = 0;
     for (auto& p : players_) {
         if (!p.playing || p.clip_index >= clips_.size())
             continue;
+        ++playing_n;
         const AnimationClip& clip = clips_[p.clip_index];
-        p.time += delta_time * p.speed;
+        p.time += dt * p.speed;
         if (clip.duration > 1e-6f) {
             if (p.looping) {
                 p.time = std::fmod(p.time, clip.duration);
@@ -335,23 +375,98 @@ void AnimationSystem::update(float delta_time, TransformManager& transforms,
                 p.time = std::min(p.time, clip.duration);
             }
         }
+        if (p.fade_duration > 1e-6f) {
+            p.fade_age += dt;
+            const float u = std::min(1.0f, p.fade_age / p.fade_duration);
+            p.weight = p.fade_out ? (1.0f - u) : u;
+        } else if (!p.fade_out) {
+            p.weight = 1.0f;
+        }
+    }
 
-        // Weights can be many morph targets; 64 is a safe stack ceiling.
-        float tmp[64]{};
+    struct BlendSlot {
+        uint32_t transform_index = TransformManager::kInvalid;
+        uint32_t morph_index = ~0u;
+        AnimationPath path = AnimationPath::Translation;
+        float values[64]{};
+        uint32_t comps = 0;
+        float weight = 0.0f;
+    };
+    std::vector<BlendSlot> slots;
+    slots.reserve(static_cast<size_t>(playing_n) * 64u);
+
+    float tmp[64]{};
+    for (const auto& p : players_) {
+        if (!p.playing || p.clip_index >= clips_.size() || p.weight <= 1e-6f)
+            continue;
+        const AnimationClip& clip = clips_[p.clip_index];
         for (const AnimationChannel& ch : clip.channels) {
-            if (ch.sampler_index >= clip.samplers.size())
+            if (channel_masked(ch) || ch.sampler_index >= clip.samplers.size())
                 continue;
             const auto& samp = clip.samplers[ch.sampler_index];
             const uint32_t comps =
                 std::min(64u, std::max(1u, samp.component_count));
             sample_channel(samp, p.time, tmp);
-            if (ch.path == AnimationPath::Weights && morphs) {
-                morphs->set_weights(ch.morph_index, tmp, comps);
-            } else {
-                apply_channel(transforms, morphs, ch, tmp);
+
+            BlendSlot* slot = nullptr;
+            for (BlendSlot& s : slots) {
+                if (s.path == ch.path && s.transform_index == ch.transform_index &&
+                    s.morph_index == ch.morph_index) {
+                    slot = &s;
+                    break;
+                }
             }
+            if (!slot) {
+                slots.push_back({});
+                slot = &slots.back();
+                slot->transform_index = ch.transform_index;
+                slot->morph_index = ch.morph_index;
+                slot->path = ch.path;
+                slot->comps = comps;
+                for (uint32_t c = 0; c < comps; ++c)
+                    slot->values[c] = tmp[c];
+                slot->weight = p.weight;
+                continue;
+            }
+            const float w_sum = slot->weight + p.weight;
+            const float t = (w_sum > 1e-8f) ? (p.weight / w_sum) : 1.0f;
+            if (ch.path == AnimationPath::Rotation && comps >= 4) {
+                glm::quat q0(slot->values[3], slot->values[0], slot->values[1],
+                             slot->values[2]);
+                glm::quat q1(tmp[3], tmp[0], tmp[1], tmp[2]);
+                const glm::quat q = nlerp(q0, q1, t);
+                slot->values[0] = q.x;
+                slot->values[1] = q.y;
+                slot->values[2] = q.z;
+                slot->values[3] = q.w;
+            } else {
+                const uint32_t n = std::min(comps, slot->comps);
+                for (uint32_t c = 0; c < n; ++c)
+                    slot->values[c] = slot->values[c] + (tmp[c] - slot->values[c]) * t;
+                if (comps > slot->comps) {
+                    for (uint32_t c = slot->comps; c < comps; ++c)
+                        slot->values[c] = tmp[c];
+                    slot->comps = comps;
+                }
+            }
+            slot->weight = w_sum;
         }
     }
+
+    for (const BlendSlot& s : slots) {
+        if (s.path == AnimationPath::Weights) {
+            if (morphs && s.morph_index != kInvalidMorph)
+                morphs->set_weights(s.morph_index, s.values, s.comps);
+        } else {
+            AnimationChannel ch{};
+            ch.transform_index = s.transform_index;
+            ch.morph_index = s.morph_index;
+            ch.path = s.path;
+            apply_channel(transforms, morphs, ch, s.values);
+        }
+    }
+
+    finish_completed_fades();
 }
 
 void AnimationSystem::play_all_looping() {
@@ -364,6 +479,7 @@ void AnimationSystem::play_all_looping() {
         p.speed = 1.0f;
         p.looping = true;
         p.playing = true;
+        p.weight = 1.0f;
         players_.push_back(p);
         LOG_INFO("[Anim] Playing clip '" << clips_[i].name << "' duration="
                  << clips_[i].duration << "s channels=" << clips_[i].channels.size());
@@ -380,6 +496,7 @@ bool AnimationSystem::play_exclusive(uint32_t clip_index, bool loop, float speed
     p.speed = speed;
     p.looping = loop;
     p.playing = true;
+    p.weight = 1.0f;
     players_.push_back(p);
     LOG_INFO("[Anim] Exclusive play '" << clips_[clip_index].name << "' duration="
              << clips_[clip_index].duration << "s channels="
@@ -388,34 +505,105 @@ bool AnimationSystem::play_exclusive(uint32_t clip_index, bool loop, float speed
     return true;
 }
 
+bool AnimationSystem::crossfade(uint32_t clip_index, float fade_seconds, bool loop,
+                                float speed) {
+    if (clip_index >= clips_.size())
+        return false;
+    if (fade_seconds <= 1e-5f)
+        return play_exclusive(clip_index, loop, speed);
+
+    int incoming = -1;
+    for (int i = static_cast<int>(players_.size()) - 1; i >= 0; --i) {
+        if (players_[static_cast<size_t>(i)].playing &&
+            !players_[static_cast<size_t>(i)].fade_out) {
+            incoming = i;
+            break;
+        }
+    }
+    if (incoming >= 0 &&
+        players_[static_cast<size_t>(incoming)].clip_index == clip_index)
+        return true;
+
+    std::vector<AnimationPlayer> kept;
+    kept.reserve(2);
+    if (incoming >= 0) {
+        AnimationPlayer out = players_[static_cast<size_t>(incoming)];
+        out.fade_out = true;
+        out.fade_duration = fade_seconds;
+        out.fade_age = 0.0f;
+        out.weight = 1.0f;
+        kept.push_back(out);
+    }
+
+    AnimationPlayer in{};
+    in.clip_index = clip_index;
+    in.time = 0.0f;
+    in.speed = speed;
+    in.looping = loop;
+    in.playing = true;
+    in.weight = 0.0f;
+    in.fade_duration = fade_seconds;
+    in.fade_age = 0.0f;
+    in.fade_out = false;
+    kept.push_back(in);
+    players_.swap(kept);
+
+    LOG_INFO("[Anim] Crossfade -> '" << clips_[clip_index].name << "' fade="
+             << fade_seconds << "s (" << (clip_index + 1) << "/"
+             << clips_.size() << ")");
+    return true;
+}
+
+namespace {
+
+bool name_ieq(const std::string& a, const char* b) {
+    if (!b)
+        return false;
+    const size_t n = std::strlen(b);
+    if (a.size() != n)
+        return false;
+    for (size_t i = 0; i < n; ++i) {
+        const char ca = static_cast<char>(std::tolower(static_cast<unsigned char>(a[i])));
+        const char cb = static_cast<char>(std::tolower(static_cast<unsigned char>(b[i])));
+        if (ca != cb)
+            return false;
+    }
+    return true;
+}
+
+bool name_istarts(const std::string& a, const char* prefix) {
+    if (!prefix)
+        return false;
+    const size_t n = std::strlen(prefix);
+    if (a.size() < n)
+        return false;
+    for (size_t i = 0; i < n; ++i) {
+        const char ca = static_cast<char>(std::tolower(static_cast<unsigned char>(a[i])));
+        const char cb = static_cast<char>(std::tolower(static_cast<unsigned char>(prefix[i])));
+        if (ca != cb)
+            return false;
+    }
+    return true;
+}
+
+} // namespace
+
 bool AnimationSystem::play_default_clip(bool loop, float speed) {
     if (clips_.empty())
         return false;
 
-    auto name_eq = [](const std::string& a, const char* b) {
-        if (a.size() != std::strlen(b))
-            return false;
-        for (size_t i = 0; i < a.size(); ++i) {
-            const char ca = static_cast<char>(std::tolower(static_cast<unsigned char>(a[i])));
-            const char cb = static_cast<char>(std::tolower(static_cast<unsigned char>(b[i])));
-            if (ca != cb)
-                return false;
-        }
-        return true;
-    };
-
-    // Prefer locomotion-style clips common in sample assets (Fox).
-    static const char* kPreferred[] = {"Walk", "Run", "Survey", "Idle", "Animation"};
+    // Prefix match so Walking_A / Run_Loop count (exact "Walk" was Fox-only).
+    static const char* kPreferred[] = {"Walk", "Run", "Survey", "Idle", "T-Pose",
+                                       "TPose", "Animation"};
     for (const char* pref : kPreferred) {
-        for (uint32_t i = 0; i < clips_.size(); ++i) {
-            if (name_eq(clips_[i].name, pref))
-                return play_exclusive(i, loop, speed);
-        }
+        const int idx = find_clip(pref);
+        if (idx >= 0)
+            return play_exclusive(static_cast<uint32_t>(idx), loop, speed);
     }
     return play_exclusive(0, loop, speed);
 }
 
-uint32_t AnimationSystem::cycle_next_clip(bool loop) {
+uint32_t AnimationSystem::cycle_next_clip(bool loop, float fade_seconds) {
     if (clips_.empty())
         return ~0u;
     int cur = active_clip_index();
@@ -423,16 +611,59 @@ uint32_t AnimationSystem::cycle_next_clip(bool loop) {
         (cur < 0) ? 0u
                   : static_cast<uint32_t>((static_cast<uint32_t>(cur) + 1u) %
                                           clips_.size());
-    play_exclusive(next, loop, 1.0f);
+    crossfade(next, fade_seconds, loop, 1.0f);
     return next;
 }
 
 int AnimationSystem::active_clip_index() const {
+    for (int i = static_cast<int>(players_.size()) - 1; i >= 0; --i) {
+        const auto& p = players_[static_cast<size_t>(i)];
+        if (p.playing && !p.fade_out && p.clip_index < clips_.size())
+            return static_cast<int>(p.clip_index);
+    }
     for (const auto& p : players_) {
         if (p.playing && p.clip_index < clips_.size())
             return static_cast<int>(p.clip_index);
     }
     return -1;
+}
+
+int AnimationSystem::find_clip(const char* name) const {
+    if (!name || !name[0])
+        return -1;
+    for (uint32_t i = 0; i < clips_.size(); ++i) {
+        if (name_ieq(clips_[i].name, name))
+            return static_cast<int>(i);
+    }
+    for (uint32_t i = 0; i < clips_.size(); ++i) {
+        if (name_istarts(clips_[i].name, name))
+            return static_cast<int>(i);
+    }
+    return -1;
+}
+
+void AnimationSystem::ignore_transform_trs(uint32_t transform_index) {
+    if (transform_index == TransformManager::kInvalid)
+        return;
+    for (ChannelMask& m : masks_) {
+        if (m.transform_index == transform_index) {
+            m.path_bits = 1u | 2u | 4u;
+            return;
+        }
+    }
+    masks_.push_back({transform_index, static_cast<uint8_t>(1u | 2u | 4u)});
+}
+
+void AnimationSystem::ignore_transform_translation(uint32_t transform_index) {
+    if (transform_index == TransformManager::kInvalid)
+        return;
+    for (ChannelMask& m : masks_) {
+        if (m.transform_index == transform_index) {
+            m.path_bits |= 1u;
+            return;
+        }
+    }
+    masks_.push_back({transform_index, 1u});
 }
 
 bool AnimationSystem::play(uint32_t clip_index, bool loop, float speed) {
@@ -444,6 +675,7 @@ bool AnimationSystem::play(uint32_t clip_index, bool loop, float speed) {
     p.speed = speed;
     p.looping = loop;
     p.playing = true;
+    p.weight = 1.0f;
     players_.push_back(p);
     return true;
 }

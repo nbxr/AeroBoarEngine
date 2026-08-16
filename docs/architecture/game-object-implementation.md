@@ -158,7 +158,7 @@ See ecs-plan **§4.6** for M0–M4 migration steps. Cull/draw keep dense tables;
 
 | type | Runtime |
 |------|---------|
-| `player` | `PlayerTag` + `CameraRig` + `DesktopMove` |
+| `player` | `PlayerTag` + `CameraRig` + `FpsMove` (optional `camera` / `boom_offset` / `eye_offset`) |
 | `health` | `Health` |
 | `script` | Register C++ class as `"player_controller"`; factory instantiates at entity create |
 

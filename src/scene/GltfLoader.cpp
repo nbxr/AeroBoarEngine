@@ -4,6 +4,7 @@
 
 #include "scene/GltfLoader.h"
 #include "core/Handle.h"
+#include "core/Log.h"
 #include "gfx/MeshData.h"
 #include <algorithm>
 #include <cmath>
@@ -455,6 +456,8 @@ scene::GltfLoader::extract_material_data(const std::string &filename,
                 (mat.alphaCutoff > 0.0) ? static_cast<float>(mat.alphaCutoff) : 0.5f;
         } else if (mat.alphaMode == "BLEND") {
             material.flags |= gfx::Material::kFlagAlphaBlend;
+            LOG_INFO("[Mat] '" << mat.name
+                     << "' alphaMode=BLEND — transparent path (no depth write, unsorted)");
         }
 
         if (mat.doubleSided)

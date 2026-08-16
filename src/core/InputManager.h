@@ -3,6 +3,12 @@
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 
+// Temporary diagnostic. Remote sessions already use HIDDEN. Set to 1 only
+// to force HIDDEN + raw |delta| logs on a *local* box. Leave at 0.
+#ifndef AERO_DEBUG_FORCE_NORMAL_CURSOR
+#define AERO_DEBUG_FORCE_NORMAL_CURSOR 0
+#endif
+
 namespace core {
 
 /**
@@ -44,6 +50,9 @@ public:
     bool is_cursor_captured() const { return cursor_captured_; }
     void reset_mouse_state();
 
+    // Cached at initialize(). Windows SM_REMOTESESSION; Linux XRDP_* / RDP_SESSION.
+    [[nodiscard]] bool is_remote_session() const { return remote_session_; }
+
     // Low-level processing tunables (smoothing/accel only; higher-level view
     // tunables like sensitivity live in Camera)
     void set_smoothing_alpha(float alpha) { smoothing_alpha = alpha; }
@@ -72,6 +81,8 @@ private:
 
     // Capture state (owned here so reset logic is centralized)
     bool cursor_captured_ = false;
+    bool remote_session_ = false;
+    int remote_settle_remaining_ = 0;
 
     // Configuration (processing only)
     // These defaults were chosen empirically for comfortable desktop model/scene
@@ -94,6 +105,10 @@ private:
     // Thus mouse look responds without a "dead first move" after capture.
     bool suppress_next_mouse_delta_ = false;
     float mouse_delta_threshold_ = 1000.0f;
+    // Remote sessions: DISABLED + absolute RDP coords produce 100–800px "moves"
+    // that the local 1000px warp guard lets through as look. Treat those as
+    // reposition (update last_pos, do not accumulate). Local path unused.
+    float remote_warp_threshold_ = 96.0f;
 };
 
 } // namespace core

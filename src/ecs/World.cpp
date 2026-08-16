@@ -30,6 +30,7 @@ void World::destroy_entity(Entity e) {
     healths.remove(e);
     names.remove(e);
     scripts.remove(e);
+    locomotion_anims.remove(e);
     alive_[e] = false;
     free_list_.push_back(e);
     if (active_player_ == e)
@@ -77,6 +78,7 @@ void World::clear() {
     healths.clear();
     names.clear();
     scripts.clear();
+    locomotion_anims.clear();
     gltf_node_to_entity.clear();
     game_object_to_entity.clear();
     alive_.clear();

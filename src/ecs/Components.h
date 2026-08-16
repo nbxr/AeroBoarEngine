@@ -3,6 +3,7 @@
 #include "ecs/Entity.h"
 #include <cstdint>
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <string>
 
 namespace ecs {
@@ -35,6 +36,13 @@ struct FpsMove {
     float crouch_speed_scale = 0.5f;
     float pitch_min = -89.0f;
     float pitch_max = 89.0f;
+
+    // Authored local rotation captured on first third-person tick (Y-yaw only).
+    glm::quat body_rest_rotation{1.0f, 0.0f, 0.0f, 0.0f};
+    bool body_rest_captured = false;
+
+    // Horizontal speed applied this tick (m/s). LocomotionAnim reads this.
+    float horizontal_speed = 0.0f;
 };
 
 // Camera tunables owned by the player rig (mirrored onto scene::Camera while active).
@@ -52,6 +60,29 @@ struct CameraRig {
     // Default is a short tabletop eye height so a capsule on a chess board is not
     // glued into the wood; override per-asset via extras (see ecs-plan authoring).
     glm::vec3 eye_offset{0.0f, 0.08f, 0.0f};
+
+    // Third-person follow (extras: "camera": "third_person", "boom_offset": [r, up, back]).
+    bool third_person = false;
+    glm::vec3 boom_offset{0.0f, 1.6f, 3.0f}; // right, up, back (meters)
+};
+
+// Idle / walk / run driven by FpsMove.horizontal_speed. extras type
+// "locomotion_anim" (also accepts typo "locomation_anim").
+struct LocomotionAnim {
+    enum class State : uint8_t { Stand = 0, Walk = 1, Run = 2 };
+
+    uint32_t idle_clip = ~0u;
+    uint32_t walk_clip = ~0u;
+    uint32_t run_clip = ~0u;
+    float walk_threshold = 0.05f; // m/s — any WASD
+    float run_threshold = 1.0e9f; // omitted extras → no run unless authored
+    float fade = 0.2f;
+    State state = State::Stand;
+    bool clips_bound = false;
+
+    std::string idle_name = "T-Pose";
+    std::string walk_name = "Walk";
+    std::string run_name = "Run";
 };
 
 struct Health {

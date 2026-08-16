@@ -1,8 +1,11 @@
-# Visibility, LOD, and Distant City Plan
+# Visibility and Occlusion Plan
 
-Canonical plan for **what is drawn** at scale: frustum / occlusion, meshlets, cluster (Nanite-like) raster, impostors, and far-field city bake.
+Canonical plan for **GPU frustum / Hi-Z / Quest GMEM visibility** — *what is tested for on-screen this frame*.
+
+Progressive **distance LOD** (meshlets → impostors → skybox) is **`docs/architecture/cascadebake-plan.md`** (`CascadeBake` / `CascadeOven`). Do not duplicate that pipeline here.
 
 **See also**
+- `docs/architecture/cascadebake-plan.md` — CascadeBake LOD, classification, jobs
 - `docs/agents/tech_context.md` — Hi-Z / reverse-Z / TBDR
 - `docs/architecture/pipeline-implementation.md` — Quest pass structure
 - `docs/agents/current_state.md` — what ships today
@@ -16,8 +19,7 @@ Canonical plan for **what is drawn** at scale: frustum / occlusion, meshlets, cl
 | GPU **frustum** cull + multi-draw indirect | **On** (always) |
 | Same-frame **Hi-Z occlusion** | **Optional.** Config **`occlusionCull`** (default **`false`**). Extra depth prepass + RG min/max pyramid. Conservative query when on. |
 | **Adreno / Quest** | CMake **`AERO_TARGET_ADRENO`** (also auto on `ANDROID`) **forces occlusion off** — extra geometry prepass is GMEM-hostile. |
-| Meshlets / cluster raster | **Not implemented** |
-| Impostors / sprite LOD / city skybox bake | **Not implemented** |
+| Meshlets / CascadeBake / impostors / skybox bake | **Not implemented** — `cascadebake-plan.md` |
 
 Desktop: set `"occlusionCull": true` in `configuration.json` to try conservative Hi-Z. Frustum-only is the reliable default.
 
@@ -45,59 +47,17 @@ No 4×4 / spread heuristics (those were the old min-only false-cull source).
 
 ---
 
-## 3. Meshlets (next geometry step)
+## 3. Distance LOD (owned by CascadeBake)
 
-**Library:** **[meshoptimizer](https://github.com/zeux/meshoptimizer)** (`meshopt_buildMeshlets`, `meshopt_computeClusterBounds`, simplify, overdraw).
+Near / mid / far representations, automatic static-vs-dynamic classification, `CascadeOven`, and the job system live in **`cascadebake-plan.md`**.
 
-- FetchContent later (do not invent a custom meshlet builder).  
-- Run at **load** (and optionally offline cook) on every mesh: any glTF → meshlets.  
-- Store: vertex cone, bounding sphere / AABB per meshlet, index micro-index buffer.  
-- GPU: frustum + cone cull per meshlet, then instance/cluster indirect.
+Meshlets use **[meshoptimizer](https://github.com/zeux/meshoptimizer)** (`meshopt_buildMeshlets`). Do not invent a custom builder.
 
-This is the prerequisite for cluster LOD / “Nanite-like” cuts.
+**Cluster / Nanite-like** raster (tiny-cluster software raster, DAG cuts) is a later *near* enhancement **after** meshlets exist. It does **not** replace octahedral impostors or skybox bake for mid/far city.
 
 ---
 
-## 4. Cluster / “Nanite-like” raster (later)
-
-Target feel: **dense cities on Quest 3** (Population One–class: lots of geo, aggressive LOD, no full unique Nanite on mobile day one).
-
-Phased:
-
-| Phase | What |
-|-------|------|
-| A | Meshlets + cone/frustum cull (still hardware raster) |
-| B | LOD tree / DAG of clusters (simplify with meshoptimizer); pick a cut per view |
-| C | Software raster **only for tiny clusters** (pixel-sized); HW raster for the rest |
-| D | Streaming cluster pages; not a full UE5 Nanite clone on Adreno |
-
-Quest constraint: stay **TBDR/GMEM-aware**. Prefer one vis + shade path, not many full-res prepasses.
-
----
-
-## 5. Distant city: impostors, sprites, skybox bake
-
-**Endless city** is a **LOD stack**, not one rasterizer:
-
-| Distance | Representation |
-|----------|----------------|
-| Near | Meshlets / clusters (unique geo) |
-| Mid | **Impostors** (octahedral / billboard atlas per building or block) |
-| Far | **Sprites** / simplified cards |
-| Horizon | **Composite skybox** — bake distant city into a cubemap / lat-long; update when the player moves enough (parallax budget) |
-
-Bake policy (later):
-
-- GPU or offline: render far shells to a cubemap (or 2D panorama + depth).  
-- Composite as sky / far pass; **do not** simulate or Hi-Z those instances.  
-- Invalidate bake on large translation or time-of-day.  
-- Near/mid still real (or impostor) so the horizon is a backdrop, not a pop wall.
-
-Population One–style density on Quest = **aggressive LOD + impostors + baked far field**, not “full Nanite + full city simulation.”
-
----
-
-## 6. Config / build knobs
+## 4. Config / build knobs
 
 | Knob | Meaning |
 |------|---------|
@@ -108,11 +68,10 @@ Frustum pad is **relative** (1% of AABB, min 0.1 mm) — no +5 cm world slop.
 
 ---
 
-## 7. Suggested order of work
+## 5. Suggested order of work
 
 1. **Now:** frustum default; optional conservative Hi-Z on desktop.  
-2. **Next visibility:** meshoptimizer meshlets + GPU meshlet cull.  
-3. **City mid:** impostor baker + distance switch.  
-4. **City far:** skybox / cubemap bake + refresh.  
-5. **Later:** cluster DAG + optional software raster for tiny clusters (Nanite-like).  
-6. **Quest:** never re-enable extra-pass Hi-Z as the primary path; fold vis into GMEM.
+2. **Next (CascadeBake):** meshoptimizer meshlets + GPU meshlet/cone cull — `cascadebake-plan.md`.  
+3. **Then:** impostors → skybox bake via `CascadeOven` + job system.  
+4. **Later:** cluster DAG / tiny-cluster software raster (near field only).  
+5. **Quest:** never ship extra-pass Hi-Z as the primary vis path; fold vis into GMEM.

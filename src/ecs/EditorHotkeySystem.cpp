@@ -40,7 +40,7 @@ void editor_hotkey_system_update(const core::InputFrame& frame,
                  << ")");
     }
 
-    // N: cycle exclusive glTF animation clip (works without a player body).
+    // N: cycle glTF clips with a short crossfade (works without a player body).
     if (frame.n_pressed && ctx.scene) {
         auto& anims = ctx.scene->animations();
         const uint32_t n = anims.clip_count();
