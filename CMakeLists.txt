@@ -60,6 +60,8 @@ set(SHADER_FILES
     depth_prepass.frag
     debug_line.vert
     debug_line.frag
+    fullscreen.vert
+    wboit_composite.frag
     cull_frustum.comp
     build_indirect.comp
     hzb_copy.comp
@@ -96,6 +98,17 @@ if(GLSLC_AVAILABLE)
         list(APPEND SHADER_OUTPUT_FILES ${SHADER_OUTPUT_DIR}/${SHADER_NAME}.spv)
     endforeach()
     
+    # WBOIT fragment is pbr.frag compiled with -DWBOIT=1
+    set(PBR_WBOIT_SPV ${SHADER_OUTPUT_DIR}/pbr_wboit.frag.spv)
+    add_custom_command(
+        OUTPUT ${PBR_WBOIT_SPV}
+        COMMAND ${GLSLC} -g --target-env=vulkan1.1 -DWBOIT=1
+                ${SHADER_SOURCE_DIR}/pbr.frag -o ${PBR_WBOIT_SPV}
+        DEPENDS ${SHADER_SOURCE_DIR}/pbr.frag
+        COMMENT "Compiling shader: pbr_wboit.frag"
+    )
+    list(APPEND SHADER_OUTPUT_FILES ${PBR_WBOIT_SPV})
+
     add_custom_target(compile_shaders
         DEPENDS ${SHADER_OUTPUT_FILES}
         COMMENT "All shaders compiled"
@@ -282,6 +295,7 @@ add_executable(Aero_Boar_Engine
     src/gfx/Engine.Physics.cpp
     src/gfx/Engine.Render.cpp
     src/gfx/DebugLinePass.cpp
+    src/gfx/TransparentPass.cpp
     src/physics/PhysicsWorld.cpp
     src/scene/Animation.cpp
     src/scene/Morph.cpp

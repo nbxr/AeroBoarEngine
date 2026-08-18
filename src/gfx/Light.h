@@ -91,27 +91,32 @@ inline float estimate_light_contribution(const Light& L, const glm::vec3& scene_
 // before BRDF / NdotL. Photometric KHR point lights (e.g. ~54k cd at ~7 m)
 // need strong scale-down; engine directional lights with intensity ~1–10 stay
 // near exposure 1 so they are not over-boosted into washout.
-inline float compute_auto_exposure(const std::vector<Light>& lights,
+inline float compute_auto_exposure(const Light* lights, uint32_t count,
                                    const glm::vec3& scene_center,
                                    float target = 2.0f) {
     float max_c = 0.0f;
     bool any_punctual = false;
-    for (const auto& L : lights) {
+    for (uint32_t i = 0; i < count; ++i) {
+        const Light& L = lights[i];
         if (!L.enabled)
             continue;
         max_c = std::max(max_c, estimate_light_contribution(L, scene_center));
-        if (L.type != LightType::Directional) {
+        if (L.type != LightType::Directional)
             any_punctual = true;
-        }
     }
-    if (max_c < 1e-4f) {
+    if (max_c < 1e-4f)
         return 1.0f;
-    }
     // Engine-scale directional only: keep authored intensity as-is.
-    if (!any_punctual && max_c <= 20.0f) {
+    if (!any_punctual && max_c <= 20.0f)
         return 1.0f;
-    }
     return target / max_c;
+}
+
+inline float compute_auto_exposure(const std::vector<Light>& lights,
+                                   const glm::vec3& scene_center,
+                                   float target = 2.0f) {
+    return compute_auto_exposure(lights.data(), static_cast<uint32_t>(lights.size()),
+                                 scene_center, target);
 }
 
 inline GpuLight to_gpu_light(const Light& L) {

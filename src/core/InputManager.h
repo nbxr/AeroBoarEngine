@@ -50,8 +50,18 @@ public:
     bool is_cursor_captured() const { return cursor_captured_; }
     void reset_mouse_state();
 
+    // Remote HIDDEN path: attempt warp to window center when the OS pointer
+    // is on the virtual-desktop / 0–65535 rail (or force). No-ops if the OS
+    // ignores SetCursorPos (typical RDP). See desktop-inputs.md look-rail.
+    void recenter_hidden_cursor(bool force = false);
+
+    [[nodiscard]] bool uses_hidden_capture() const;
+
     // Cached at initialize(). Windows SM_REMOTESESSION; Linux XRDP_* / RDP_SESSION.
     [[nodiscard]] bool is_remote_session() const { return remote_session_; }
+
+    // Windows WM_INPUT (remote look). Safe to call from the WndProc hook.
+    void add_captured_look_delta(const glm::vec2& delta);
 
     // Low-level processing tunables (smoothing/accel only; higher-level view
     // tunables like sensitivity live in Camera)
@@ -83,6 +93,10 @@ private:
     bool cursor_captured_ = false;
     bool remote_session_ = false;
     int remote_settle_remaining_ = 0;
+    bool pending_recenter_ = false;
+    glm::vec2 recenter_target_{0.0f};
+    // Windows remote: WM_INPUT relative (or scaled absolute) deltas.
+    bool raw_look_active_ = false;
 
     // Configuration (processing only)
     // These defaults were chosen empirically for comfortable desktop model/scene
@@ -105,10 +119,6 @@ private:
     // Thus mouse look responds without a "dead first move" after capture.
     bool suppress_next_mouse_delta_ = false;
     float mouse_delta_threshold_ = 1000.0f;
-    // Remote sessions: DISABLED + absolute RDP coords produce 100–800px "moves"
-    // that the local 1000px warp guard lets through as look. Treat those as
-    // reposition (update last_pos, do not accumulate). Local path unused.
-    float remote_warp_threshold_ = 96.0f;
 };
 
 } // namespace core

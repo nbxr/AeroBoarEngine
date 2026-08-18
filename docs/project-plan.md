@@ -92,6 +92,7 @@ This project aims to develop a cross-platform game engine targeting VR via OpenX
   - Custom SoA ECS; `InputFrame` + controllers (no hard-coded keys in main/camera)
   - Camera associated with **Player** entity
   - glTF `extras.ECS_Components_v1` authoring (Blender)
+  - Remote/trackpad look can still peg at the desktop rail — **accepted**; reopen at camera cleanup (`desktop-inputs.md`)
 - **Physics foundation (landed runtime; asset path open):**
   - Jolt + KHR rigid-body MVP, `worldScale`, debug draw (`physics-plan.md`)
   - Desktop chess knock-over working; **next:** FPS player controller, then VR shrink-to-board — `vr-chess-physics-plan.md`
@@ -100,7 +101,7 @@ This project aims to develop a cross-platform game engine targeting VR via OpenX
 ### Phase 3: VR Features (Weeks 9-12)
 - Full OpenXR integration
 - VR-specific features
-- **Reverse-Z depth** (near→1 / far→0, `GREATER` compare, clear 0) coordinated with stereo/multiview
+- **Reverse-Z depth** (**landed on desktop**: near→1 / far→0, `GREATER`, clear 0); stereo/multiview HZB still later
 - Visibility: GPU frustum always; optional conservative Hi-Z (`occlusionCull`, default off; off on Adreno) — `visibility-lod-plan.md`. **CascadeBake** (meshlets → impostors → skybox) — `cascadebake-plan.md`. Quest: GMEM vis, not extra prepass.
 - **VR chess / tabletop scale demo** (see `vr-chess-physics-plan.md`)
 - Performance optimization

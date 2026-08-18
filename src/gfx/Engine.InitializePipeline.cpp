@@ -1,6 +1,7 @@
 #include "gfx/Engine.h"
 #include "gfx/AllocatedBuffer.h"
 #include "gfx/AllocatedImage.h"
+#include "gfx/Depth.h"
 #include "gfx/Renderer.h"
 #include "gfx/ShaderLoader.h"
 #include "gfx/Vertex.h"
@@ -198,7 +199,7 @@ bool gfx::Engine::init_graphics_pipeline() {
     depth_opaque.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     depth_opaque.depthTestEnable = VK_TRUE;
     depth_opaque.depthWriteEnable = VK_TRUE;
-    depth_opaque.depthCompareOp = VK_COMPARE_OP_LESS;
+    depth_opaque.depthCompareOp = gfx::kDepthCompare;
 
     // Transparent: test against opaque depth, do NOT write (so cabin stays visible
     // through glass regardless of draw order among transparent batches).
@@ -344,7 +345,7 @@ bool gfx::Engine::init_depth_prepass_pipeline() {
     depth_stencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     depth_stencil.depthTestEnable = VK_TRUE;
     depth_stencil.depthWriteEnable = VK_TRUE;
-    depth_stencil.depthCompareOp = VK_COMPARE_OP_LESS;
+    depth_stencil.depthCompareOp = gfx::kDepthCompare;
 
     std::array<VkDynamicState, 2> dynamic_states = {VK_DYNAMIC_STATE_VIEWPORT,
                                                     VK_DYNAMIC_STATE_SCISSOR};

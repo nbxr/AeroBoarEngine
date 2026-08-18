@@ -61,6 +61,7 @@ public:
     // (currently only available via InputManager setters) or a small debug UI.
 
     [[nodiscard]] glm::mat4 get_view_matrix() const;
+    // Reverse-Z: near → 1, far → 0 (Vulkan [0, 1] range).
     [[nodiscard]] glm::mat4 get_projection_matrix(float aspect_ratio) const;
 
     // === VR support (stub for now) ===

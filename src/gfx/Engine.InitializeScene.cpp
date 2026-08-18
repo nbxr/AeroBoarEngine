@@ -42,6 +42,7 @@ bool gfx::Engine::load_default_scene() {
 }
 
 bool gfx::Engine::load_scene(const std::string &scene_name) {
+    mark_lights_dirty();
     const auto &config = core::Configuration::get_instance();
     if (!config.is_loaded()) {
         std::cerr << "Configuration has not been loaded" << std::endl;
@@ -643,65 +644,45 @@ void gfx::Engine::write_frame_lighting(uint32_t frame_index) {
     if (!constants || !gpu_lights)
         return;
 
-    memset(constants, 0, sizeof(gfx::FrameConstants));
-    memset(gpu_lights, 0, sizeof(gfx::GpuLight) * gfx::MAX_LIGHTS);
-
-    // Diffuse IBL: SH from procedural / HDR environment (or modest fallback).
-    if (renderer.ibl.ready) {
-        for (int i = 0; i < 9; ++i)
-            constants->shCoefficients[i] = renderer.ibl.sh_coefficients[i];
-        // Indices reserved for bindless path; cube/LUT use dedicated bindings 7/8.
-        constants->iblIndices = glm::uvec4(1u, 1u, 0u, 0u); // non-zero = specular IBL enabled
-    } else {
-        constants->shCoefficients[0] = glm::vec4(0.03f, 0.032f, 0.038f, 0.0f);
-        constants->iblIndices = glm::uvec4(0u, 0u, 0u, 0u);
-    }
-
-    // Active lights: scene list (enabled only), else global directional.
-    // Rebuilt every frame so CPU-side mutation (dynamic lights) is free.
-    std::vector<gfx::Light> active;
-    active.reserve(gfx::MAX_LIGHTS);
-    if (!renderer.lights.empty()) {
-        for (size_t i = 0; i < renderer.lights.size() && active.size() < gfx::MAX_LIGHTS;
-             ++i) {
-            if (renderer.lights[i].enabled)
-                active.push_back(renderer.lights[i]);
+    const uint32_t bit = 1u << frame_index;
+    if ((lights_upload_mask_ & bit) != 0) {
+        if (renderer.ibl.ready) {
+            for (int i = 0; i < 9; ++i)
+                constants->shCoefficients[i] = renderer.ibl.sh_coefficients[i];
+            constants->iblIndices = glm::uvec4(1u, 1u, 0u, 0u);
+        } else {
+            constants->shCoefficients[0] = glm::vec4(0.03f, 0.032f, 0.038f, 0.0f);
+            constants->iblIndices = glm::uvec4(0u, 0u, 0u, 0u);
         }
+
+        gfx::Light packed[gfx::MAX_LIGHTS];
+        uint32_t n = 0;
+        if (!renderer.lights.empty()) {
+            for (size_t i = 0; i < renderer.lights.size() && n < gfx::MAX_LIGHTS; ++i) {
+                if (renderer.lights[i].enabled)
+                    packed[n++] = renderer.lights[i];
+            }
+        }
+        if (n == 0 && renderer.globalLight.enabled)
+            packed[n++] = renderer.globalLight;
+
+        constants->lightMeta = glm::uvec4(n, 0u, 0u, 0u);
+        memset(gpu_lights, 0, sizeof(gfx::GpuLight) * gfx::MAX_LIGHTS);
+        for (uint32_t i = 0; i < n; ++i)
+            gpu_lights[i] = gfx::to_gpu_light(packed[i]);
+
+        constants->cameraPosition.w =
+            gfx::compute_auto_exposure(packed, n, renderer.scene_center);
+        lights_upload_mask_ &= ~bit;
     }
-    if (active.empty() && renderer.globalLight.enabled) {
-        active.push_back(renderer.globalLight);
-    }
 
-    const uint32_t n = static_cast<uint32_t>(active.size());
-    constants->lightMeta = glm::uvec4(n, 0u, 0u, 0u);
-
-    for (uint32_t i = 0; i < n; ++i) {
-        gpu_lights[i] = gfx::to_gpu_light(active[i]);
-    }
-
-    const float exposure =
-        gfx::compute_auto_exposure(active, renderer.scene_center);
-    constants->cameraPosition = glm::vec4(camera.get_position(), exposure);
-
-    // Descriptors may already point at these buffers; update ranges for safety.
-    gfx::BufferUtils::update_descriptor(
-        renderer.vk.device.device,
-        renderer.frame_constants_buffer[frame_index],
-        renderer.vk.bindless_descriptor_sets[frame_index],
-        sizeof(gfx::FrameConstants),
-        Renderer::BINDING_FRAME_CONSTANTS,
-        VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-    gfx::BufferUtils::update_descriptor(
-        renderer.vk.device.device,
-        renderer.frame_lights_buffer[frame_index],
-        renderer.vk.bindless_descriptor_sets[frame_index],
-        static_cast<VkDeviceSize>(gfx::MAX_LIGHTS) * sizeof(gfx::GpuLight),
-        Renderer::BINDING_LIGHTS,
-        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+    constants->cameraPosition =
+        glm::vec4(camera.get_position(), constants->cameraPosition.w);
 }
 
 void gfx::Engine::refresh_lights_from_transforms() {
     auto& xforms = renderer.scene_manager.transforms();
+    bool any = false;
     for (auto& L : renderer.lights) {
         if (L.transform_index == gfx::kInvalidLightTransform)
             continue;
@@ -709,11 +690,15 @@ void gfx::Engine::refresh_lights_from_transforms() {
             continue;
         scene::GltfLoader::apply_world_transform_to_light(
             L, xforms.get_world_matrix(L.transform_index));
+        any = true;
     }
+    if (any)
+        mark_lights_dirty();
 }
 
 bool gfx::Engine::sync_scene_transforms() {
-    // CPU hierarchy: propagate dirty locals → worlds + dual-write SceneInstance.
+    // CPU hierarchy: propagate dirty locals → worlds. SceneInstance is load-time
+    // only (shade reads the cull instance SSBO).
     const bool worlds_changed = renderer.scene_manager.sync_transforms();
     if (worlds_changed) {
         refresh_lights_from_transforms();
@@ -731,13 +716,7 @@ bool gfx::Engine::sync_scene_transforms() {
     if (need_upload && renderer.scene_manager.skins().has_skins()) {
         renderer.scene_manager.skins().update_joint_matrices(
             renderer.current_frame, renderer.scene_manager.transforms());
-        // Bind this frame's joint buffer (host-visible, updated above).
-        auto& jb = renderer.scene_manager.skins().joint_buffer(renderer.current_frame);
-        gfx::BufferUtils::update_descriptor(
-            renderer.vk.device.device, jb,
-            renderer.vk.bindless_descriptor_sets[renderer.current_frame],
-            renderer.scene_manager.skins().joint_buffer_size(),
-            Renderer::BINDING_JOINT_MATRICES);
+        // Joint buffer descriptor is bound at load (bind_frame_lighting_to_all_sets).
     }
 
     if ((renderer.transform_upload_mask & bit) == 0 && !worlds_changed)
@@ -768,6 +747,7 @@ bool gfx::Engine::set_light(uint32_t index, const gfx::Light& light) {
     renderer.lights[index] = light;
     if (light.transform_index == gfx::kInvalidLightTransform)
         renderer.lights[index].transform_index = prev_xform;
+    mark_lights_dirty();
     return true;
 }
 
@@ -778,6 +758,7 @@ uint32_t gfx::Engine::add_light(const gfx::Light& light) {
         return gfx::MAX_LIGHTS; // invalid
     }
     renderer.lights.push_back(light);
+    mark_lights_dirty();
     return static_cast<uint32_t>(renderer.lights.size() - 1);
 }
 
@@ -785,6 +766,7 @@ bool gfx::Engine::set_light_enabled(uint32_t index, bool enabled) {
     if (index >= renderer.lights.size())
         return false;
     renderer.lights[index].enabled = enabled;
+    mark_lights_dirty();
     return true;
 }
 

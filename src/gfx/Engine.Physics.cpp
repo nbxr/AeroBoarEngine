@@ -154,7 +154,8 @@ bool gfx::Engine::rebuild_draw_batches() {
                                           renderer.allocator,
                                           renderer.mesh_draw_infos,
                                           renderer.scene_manager,
-                                          &renderer.material_manager)) {
+                                          &renderer.material_manager,
+                                          renderer.transparent.wboit_ready())) {
         LOG_ERROR("[Draw] GPU cull build_scene failed");
         return false;
     }

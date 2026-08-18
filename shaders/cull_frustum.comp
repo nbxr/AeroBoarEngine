@@ -7,11 +7,10 @@
 layout(local_size_x = 64) in;
 
 struct CullItem {
-    mat4  model;
     vec4  aabb_min; // xyz = local AABB min
     vec4  aabb_max; // xyz = local AABB max
     uvec4 meta;     // x = material_index, y = batch_index, z = base, w = capacity
-    // x=joint_base, y=joint_count, z=material flags, w=1 if writes opaque depth (Hi-Z)
+    // x=joint_base, y=joint_count, z=material flags, w=transform_index
     uvec4 skin;
 };
 
@@ -49,6 +48,14 @@ layout(set = 0, binding = 3, std430) buffer BatchCounts {
 
 layout(set = 0, binding = 6) uniform sampler2D hzb;
 
+layout(set = 0, binding = 7, std430) readonly buffer Worlds {
+    mat4 worlds[];
+};
+
+// Must match gfx::Material flags.
+const uint kFlagAlphaBlend   = 32u;   // 1 << 5
+const uint kFlagTransmission = 1024u; // 1 << 10
+
 // Plane: dot(n, p) + d >= 0 is inside (matches core::Frustum).
 bool frustum_intersects_aabb(vec3 wmin, vec3 wmax) {
     vec3 ext = wmax - wmin;
@@ -84,15 +91,15 @@ void transform_aabb(mat4 m, vec3 bmin, vec3 bmax, out vec3 wmin, out vec3 wmax) 
     }
 }
 
-// Conservative same-frame Hi-Z (0=near, 1=far). Pyramid is RG: R=min, G=max.
-// Cull only if the AABB is fully in front of the near plane and fully on-screen,
-// and its nearest Z is still farther than the tile's MAX depth (+ bias).
-// A hole / sky in the tile raises max ≈ 1 → no cull. No 4x4 / spread heuristics.
+// Conservative same-frame Hi-Z (reverse-Z: 1=near, 0=far). Pyramid RG: R=min, G=max.
+// Closest AABB point is max(ndc.z). Farthest tile surface / hole is min (R).
+// Sky / holes drop min ≈ 0 → no cull. Cull iff closest AABB is still behind
+// the tile's farthest occluder (z_close < hzb.r - bias).
 bool hzb_occluded(vec3 wmin, vec3 wmax) {
     if (globals.hzb_enabled == 0u)
         return false;
 
-    float z_near = 1.0;
+    float z_close = 0.0;
     vec2 uv_min = vec2( 1e30);
     vec2 uv_max = vec2(-1e30);
 
@@ -112,12 +119,12 @@ bool hzb_occluded(vec3 wmin, vec3 wmax) {
             return false;
 
         vec2 uv = ndc.xy * 0.5 + 0.5;
-        z_near = min(z_near, ndc.z);
+        z_close = max(z_close, ndc.z);
         uv_min = min(uv_min, uv);
         uv_max = max(uv_max, uv);
     }
 
-    if (z_near >= 0.999 || z_near < 1e-4)
+    if (z_close <= 0.001 || z_close >= 0.999)
         return false;
     if (uv_min.x >= uv_max.x || uv_min.y >= uv_max.y)
         return false;
@@ -126,17 +133,21 @@ bool hzb_occluded(vec3 wmin, vec3 wmax) {
     vec2 size_px = (uv_max - uv_min) * hzb_size;
     float max_extent = max(max(size_px.x, size_px.y), 1.0);
     float max_mip = float(max(globals.hzb_mips, 1u) - 1u);
-    // One (or two) texels cover the rect — conservative for a max pyramid.
-    float mip_f = clamp(floor(log2(max_extent)), 0.0, max_mip);
+    // ceil: one texel must cover the whole rect (floor + center tap is not conservative).
+    float mip_f = clamp(ceil(log2(max_extent)), 0.0, max_mip);
 
-    // Sample tile center at that mip: G = farthest surface in the tile.
-    vec2 uv = 0.5 * (uv_min + uv_max);
-    float z_max = textureLod(hzb, uv, mip_f).g;
-    if (z_max >= 0.999)
+    // R = min = farthest surface / hole. 4-corner min so an unaligned hole
+    // at the edge of the rect is not missed by a center sample.
+    float z_far_tile = min(
+        min(textureLod(hzb, uv_min, mip_f).r,
+            textureLod(hzb, vec2(uv_max.x, uv_min.y), mip_f).r),
+        min(textureLod(hzb, vec2(uv_min.x, uv_max.y), mip_f).r,
+            textureLod(hzb, uv_max, mip_f).r));
+    if (z_far_tile <= 0.001)
         return false;
 
     float bias = max(globals.hzb_info.z, 1e-4);
-    return z_near > z_max + bias;
+    return z_close < z_far_tile - bias;
 }
 
 void main() {
@@ -150,14 +161,18 @@ void main() {
         return;
 
     // emit_filter: 1 = solid depth (opaque/MASK), 2 = transparent (blend/transmission)
-    // skin.w == 1 when the material writes opaque depth for Hi-Z.
-    if (globals.emit_filter == 1u && item.skin.w == 0u)
+    bool writes_opaque =
+        (item.skin.z & (kFlagAlphaBlend | kFlagTransmission)) == 0u;
+    if (globals.emit_filter == 1u && !writes_opaque)
         return;
-    if (globals.emit_filter == 2u && item.skin.w != 0u)
+    if (globals.emit_filter == 2u && writes_opaque)
         return;
 
+    uint tid = item.skin.w;
+    mat4 model = worlds[tid];
+
     vec3 wmin, wmax;
-    transform_aabb(item.model, item.aabb_min.xyz, item.aabb_max.xyz, wmin, wmax);
+    transform_aabb(model, item.aabb_min.xyz, item.aabb_max.xyz, wmin, wmax);
     if (!frustum_intersects_aabb(wmin, wmax))
         return;
     // Hi-Z was built from opaque-only depth; still test all shade candidates.
@@ -171,7 +186,7 @@ void main() {
         return;
 
     DrawInstance di;
-    di.model = item.model;
+    di.model = model;
     di.meta = uvec4(item.meta.x, item.skin.x, item.skin.y, 0u);
     out_instances[globals.instance_base_offset + base + slot] = di;
 }

@@ -9,6 +9,8 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
 #endif
 
 #include <algorithm>
@@ -42,9 +44,173 @@ bool detect_remote_session() {
     return false;
 }
 
-constexpr int kRemoteSettleCallbacks = 4;
+#ifdef _WIN32
+HWND g_hwnd = nullptr;
+WNDPROC g_prev_wndproc = nullptr;
+bool g_raw_have_abs = false;
+LONG g_raw_last_ax = 0;
+LONG g_raw_last_ay = 0;
+// Set when we warp the OS cursor. The next *near-center* absolute sample is
+// that warp (new baseline, not look). A sample that is not near center is
+// treated as the user — do not drop it.
+bool g_raw_expect_warp = false;
+double g_raw_warp_time = 0.0;
+double g_raw_warp_attempt_time = -1.0;
+bool g_raw_on_rail = false;
+bool g_logged_warp_fail = false;
+
+constexpr float kAbsJumpPx = 1000.0f;
+constexpr float kWarpNearCenterPx = 48.0f;
+constexpr LONG kAbsRailUnits = 512; // ~0.8% of 0..65535
+constexpr double kWarpSnapbackSec = 0.08;
+
+bool client_center_screen(POINT* out) {
+    if (!g_hwnd || !out)
+        return false;
+    RECT rc{};
+    if (!GetClientRect(g_hwnd, &rc))
+        return false;
+    POINT c{(rc.left + rc.right) / 2, (rc.top + rc.bottom) / 2};
+    if (!ClientToScreen(g_hwnd, &c))
+        return false;
+    *out = c;
+    return true;
+}
+
+bool near_virtual_desktop_edge(int margin_px) {
+    POINT p{};
+    if (!GetCursorPos(&p))
+        return false;
+    const int vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
+    const int vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    const int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+    const int vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    return p.x <= vx + margin_px || p.x >= vx + vw - 1 - margin_px ||
+           p.y <= vy + margin_px || p.y >= vy + vh - 1 - margin_px;
+}
+
+bool sync_cursor_client_pos(glm::vec2* out) {
+    if (!g_hwnd || !out)
+        return false;
+    POINT p{};
+    if (!GetCursorPos(&p))
+        return false;
+    if (!ScreenToClient(g_hwnd, &p))
+        return false;
+    *out = glm::vec2(static_cast<float>(p.x), static_cast<float>(p.y));
+    return true;
+}
+
+void abs_sample_screen_px(const RAWMOUSE& m, float* sx, float* sy) {
+    if (m.usFlags & MOUSE_VIRTUAL_DESKTOP) {
+        const float vw = static_cast<float>(GetSystemMetrics(SM_CXVIRTUALSCREEN));
+        const float vh = static_cast<float>(GetSystemMetrics(SM_CYVIRTUALSCREEN));
+        *sx = static_cast<float>(m.lLastX) * (vw / 65535.0f) +
+              static_cast<float>(GetSystemMetrics(SM_XVIRTUALSCREEN));
+        *sy = static_cast<float>(m.lLastY) * (vh / 65535.0f) +
+              static_cast<float>(GetSystemMetrics(SM_YVIRTUALSCREEN));
+    } else {
+        const float sw = static_cast<float>(GetSystemMetrics(SM_CXSCREEN));
+        const float sh = static_cast<float>(GetSystemMetrics(SM_CYSCREEN));
+        *sx = static_cast<float>(m.lLastX) * (sw / 65535.0f);
+        *sy = static_cast<float>(m.lLastY) * (sh / 65535.0f);
+    }
+}
+
+LRESULT CALLBACK remote_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
+    if (msg == WM_INPUT) {
+        InputManager& self = InputManager::get_instance();
+        if (self.is_cursor_captured() && self.uses_hidden_capture()) {
+            UINT size = sizeof(RAWINPUT);
+            RAWINPUT raw{};
+            if (GetRawInputData(reinterpret_cast<HRAWINPUT>(lparam), RID_INPUT, &raw,
+                                &size, sizeof(RAWINPUTHEADER)) >= sizeof(RAWINPUTHEADER) &&
+                raw.header.dwType == RIM_TYPEMOUSE) {
+                const RAWMOUSE& m = raw.data.mouse;
+                if (m.usFlags & MOUSE_MOVE_ABSOLUTE) {
+                    int sw = GetSystemMetrics(SM_CXSCREEN);
+                    int sh = GetSystemMetrics(SM_CYSCREEN);
+                    if (m.usFlags & MOUSE_VIRTUAL_DESKTOP) {
+                        sw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+                        sh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+                    }
+
+                    bool consumed_warp = false;
+                    if (g_raw_expect_warp) {
+                        g_raw_expect_warp = false;
+                        POINT center{};
+                        float sx = 0.0f;
+                        float sy = 0.0f;
+                        abs_sample_screen_px(m, &sx, &sy);
+                        if (client_center_screen(&center) &&
+                            std::fabs(sx - static_cast<float>(center.x)) < kWarpNearCenterPx &&
+                            std::fabs(sy - static_cast<float>(center.y)) < kWarpNearCenterPx) {
+                            consumed_warp = true;
+                        }
+                    }
+
+                    if (!consumed_warp && g_raw_have_abs) {
+                        const float dx = static_cast<float>(m.lLastX - g_raw_last_ax) *
+                                         (static_cast<float>(sw) / 65535.0f);
+                        const float dy = static_cast<float>(m.lLastY - g_raw_last_ay) *
+                                         (static_cast<float>(sh) / 65535.0f);
+                        const float adx = std::fabs(dx);
+                        const float ady = std::fabs(dy);
+                        // RDP often snaps the cursor back to the client position
+                        // right after a server-side SetCursorPos. That is not look.
+                        const bool snapback =
+                            (glfwGetTime() - g_raw_warp_time) < kWarpSnapbackSec &&
+                            (adx > 48.0f || ady > 48.0f);
+                        if (!snapback && adx < kAbsJumpPx && ady < kAbsJumpPx)
+                            self.add_captured_look_delta(glm::vec2(dx, dy));
+                    }
+                    g_raw_last_ax = m.lLastX;
+                    g_raw_last_ay = m.lLastY;
+                    g_raw_have_abs = true;
+                    g_raw_on_rail = (m.lLastX < kAbsRailUnits ||
+                                     m.lLastX > 65535 - kAbsRailUnits ||
+                                     m.lLastY < kAbsRailUnits ||
+                                     m.lLastY > 65535 - kAbsRailUnits);
+                } else if (m.lLastX != 0 || m.lLastY != 0) {
+                    self.add_captured_look_delta(glm::vec2(
+                        static_cast<float>(m.lLastX), static_cast<float>(m.lLastY)));
+                    g_raw_on_rail = false;
+                }
+            }
+        }
+    }
+    return CallWindowProc(g_prev_wndproc, hwnd, msg, wparam, lparam);
+}
+
+void install_windows_raw_look(GLFWwindow* window, bool* out_ok) {
+    *out_ok = false;
+    g_hwnd = glfwGetWin32Window(window);
+    if (!g_hwnd)
+        return;
+    RAWINPUTDEVICE rid{};
+    rid.usUsagePage = 0x01;
+    rid.usUsage = 0x02;
+    rid.dwFlags = 0;
+    rid.hwndTarget = g_hwnd;
+    if (!RegisterRawInputDevices(&rid, 1, sizeof(rid))) {
+        LOG_ERROR("[Input] RegisterRawInputDevices failed");
+        return;
+    }
+    g_prev_wndproc = reinterpret_cast<WNDPROC>(
+        SetWindowLongPtr(g_hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(remote_wnd_proc)));
+    *out_ok = g_prev_wndproc != nullptr;
+}
+#endif
 
 } // namespace
+
+bool InputManager::uses_hidden_capture() const {
+#if AERO_DEBUG_FORCE_NORMAL_CURSOR
+    return true;
+#else
+    return remote_session_;
+#endif
+}
 
 InputManager &InputManager::get_instance() {
     static InputManager instance;
@@ -60,12 +226,16 @@ void InputManager::initialize(GLFWwindow *window) {
     glfwSetMouseButtonCallback(window_, mouse_button_callback);
 
     remote_session_ = detect_remote_session();
-#if AERO_DEBUG_FORCE_NORMAL_CURSOR
-    LOG_INFO("[Input] remote_session=" << (remote_session_ ? "yes" : "no")
-             << " AERO_DEBUG_FORCE_NORMAL_CURSOR=1 (HIDDEN instead of DISABLED)");
-#else
-    LOG_INFO("[Input] remote_session=" << (remote_session_ ? "yes" : "no"));
+#ifdef _WIN32
+    if (uses_hidden_capture()) {
+        install_windows_raw_look(window_, &raw_look_active_);
+        LOG_INFO("[Input] remote_session=" << (remote_session_ ? "yes" : "no")
+                 << " windows_raw_look=" << (raw_look_active_ ? "yes" : "no"));
+    } else
 #endif
+    {
+        LOG_INFO("[Input] remote_session=" << (remote_session_ ? "yes" : "no"));
+    }
 
     // Initialize mouse position and tracking baseline
     double x, y;
@@ -108,6 +278,21 @@ void InputManager::update(float delta_time) {
     // 3. Reset raw accumulator for the next frame
     raw_mouse_delta_ = glm::vec2(0.0f);
 
+    if (cursor_captured_ && uses_hidden_capture()) {
+#ifdef _WIN32
+        // Keep mouse_position_ honest (RDP SetCursorPos is often ignored).
+        glm::vec2 os_pos{};
+        if (sync_cursor_client_pos(&os_pos)) {
+            mouse_position_ = os_pos;
+            last_mouse_position_ = os_pos;
+        }
+#endif
+        // Do not ClipCursor to the window — that is the "stops at a point"
+        // cage. WM_INPUT still arrives while we have focus. Only try to warp
+        // when the OS pointer is on the desktop rail (or absolute 0/65535).
+        recenter_hidden_cursor(/*force=*/false);
+    }
+
     // TODO(desktop-input): Consider time-constant smoothing using delta_time
     // (e.g. effective_alpha = 1 - pow(1 - alpha, dt * 60)) when frame rate
     // varies significantly (e.g. 30Hz vs 144Hz+). Current per-frame alpha is
@@ -143,18 +328,100 @@ void InputManager::set_cursor_captured(bool captured) {
     //   remote    → HIDDEN   (RDP absolute coords + DISABLED stalls)
     //   diagnostic → HIDDEN even locally
     int mode = GLFW_CURSOR_NORMAL;
-    if (captured) {
-#if AERO_DEBUG_FORCE_NORMAL_CURSOR
-        mode = GLFW_CURSOR_HIDDEN;
-#else
-        mode = remote_session_ ? GLFW_CURSOR_HIDDEN : GLFW_CURSOR_DISABLED;
-#endif
-    }
+    if (captured)
+        mode = uses_hidden_capture() ? GLFW_CURSOR_HIDDEN : GLFW_CURSOR_DISABLED;
     glfwSetInputMode(window_, GLFW_CURSOR, mode);
     cursor_captured_ = captured;
-    remote_settle_remaining_ =
-        (captured && remote_session_) ? kRemoteSettleCallbacks : 0;
-    reset_mouse_state();  // centralizes baseline snapshot + suppress for jump-free toggle
+    remote_settle_remaining_ = (captured && uses_hidden_capture()) ? 1 : 0;
+    reset_mouse_state();
+#ifdef _WIN32
+    g_raw_have_abs = false;
+    g_raw_expect_warp = false;
+    g_raw_on_rail = false;
+    g_raw_warp_attempt_time = -1.0;
+    ClipCursor(nullptr);
+#endif
+    if (captured && uses_hidden_capture())
+        recenter_hidden_cursor(/*force=*/true);
+}
+
+void InputManager::add_captured_look_delta(const glm::vec2& delta) {
+    if (!cursor_captured_)
+        return;
+    raw_mouse_delta_ += delta;
+}
+
+void InputManager::recenter_hidden_cursor(bool force) {
+    if (!window_)
+        return;
+    int w = 0, h = 0;
+    glfwGetWindowSize(window_, &w, &h);
+    if (w < 2 || h < 2)
+        return;
+    const float fw = static_cast<float>(w);
+    const float fh = static_cast<float>(h);
+
+#ifdef _WIN32
+    // Window edges are not a stop. Only the virtual-desktop rail (and the
+    // 0/65535 absolute rail) needs a warp attempt. ClipCursor-to-window
+    // plus "recenter at 15% of a 640x480 client" is what made look die
+    // after one short trackpad stroke.
+    if (!force && !g_raw_on_rail && !near_virtual_desktop_edge(32))
+        return;
+    // RDP often ignores SetCursorPos. Do not spam warps every frame on the rail.
+    if (!force && g_raw_warp_attempt_time >= 0.0 &&
+        (glfwGetTime() - g_raw_warp_attempt_time) < 0.25)
+        return;
+    g_raw_warp_attempt_time = glfwGetTime();
+#else
+    const float margin = std::max(48.0f, std::min(fw, fh) * 0.15f);
+    const bool near_edge =
+        mouse_position_.x < margin || mouse_position_.x > fw - margin ||
+        mouse_position_.y < margin || mouse_position_.y > fh - margin;
+    if (!force && !near_edge)
+        return;
+#endif
+
+    const float cx = fw * 0.5f;
+    const float cy = fh * 0.5f;
+    pending_recenter_ = true;
+    recenter_target_ = glm::vec2(cx, cy);
+#ifdef _WIN32
+    POINT target{};
+    if (client_center_screen(&target)) {
+        SetCursorPos(target.x, target.y);
+        SetPhysicalCursorPos(target.x, target.y);
+    }
+#endif
+    glfwSetCursorPos(window_, static_cast<double>(cx), static_cast<double>(cy));
+#ifdef _WIN32
+    POINT now{};
+    const bool honored = GetCursorPos(&now) && client_center_screen(&target) &&
+                         std::abs(now.x - target.x) < 8 &&
+                         std::abs(now.y - target.y) < 8;
+    if (honored) {
+        mouse_position_ = last_mouse_position_ = recenter_target_;
+        g_raw_expect_warp = true;
+        g_raw_warp_time = glfwGetTime();
+        g_raw_on_rail = false;
+    } else {
+        // Typical RDP: the client pointer does not move. Do not pretend we
+        // are centered — that stopped further warp attempts and look died
+        // at the window/screen edge. Leave the OS position as-is.
+        glm::vec2 os_pos{};
+        if (sync_cursor_client_pos(&os_pos)) {
+            mouse_position_ = last_mouse_position_ = os_pos;
+        }
+        pending_recenter_ = false;
+        if (!g_logged_warp_fail) {
+            g_logged_warp_fail = true;
+            LOG_INFO("[Input] cursor warp not honored (typical RDP). "
+                     "Look uses the full desktop until the screen edge.");
+        }
+    }
+#else
+    mouse_position_ = last_mouse_position_ = recenter_target_;
+#endif
 }
 
 void InputManager::reset_mouse_state() {
@@ -185,6 +452,17 @@ void InputManager::cursor_position_callback(GLFWwindow *window, double xpos,
         return;
 
     glm::vec2 new_pos(static_cast<float>(xpos), static_cast<float>(ypos));
+    if (self->pending_recenter_) {
+        const float d = glm::length(new_pos - self->recenter_target_);
+        if (d < 12.0f) {
+            self->pending_recenter_ = false;
+            self->mouse_position_ = new_pos;
+            self->last_mouse_position_ = new_pos;
+            return;
+        }
+        // Not the warp (real user event) — consume the pending flag and apply.
+        self->pending_recenter_ = false;
+    }
     self->mouse_position_ = new_pos;
 
     glm::vec2 delta = new_pos - self->last_mouse_position_;
@@ -215,16 +493,19 @@ void InputManager::cursor_position_callback(GLFWwindow *window, double xpos,
 #if AERO_DEBUG_FORCE_NORMAL_CURSOR
         const float thresh = 1.0e6f; // see raw numbers; do not swallow
 #else
-        const float thresh = self->remote_session_
-                                 ? self->remote_warp_threshold_
-                                 : self->mouse_delta_threshold_;
+        // HIDDEN path: coalesced RDP moves are real and often >96px. Only
+        // swallow true warps (same 1000px guard as local).
+        const float thresh = self->mouse_delta_threshold_;
 #endif
         if (mag > thresh) {
             // Absolute reposition: last_pos already updated; do not look.
             return;
         }
 
-        self->raw_mouse_delta_ += delta;
+        // Remote Windows look comes from WM_INPUT. Cursor pos is only used
+        // to keep the OS pointer off the screen edge.
+        if (!self->raw_look_active_)
+            self->raw_mouse_delta_ += delta;
     }
     // When not captured we still keep last_pos / mouse_position_ fresh so that
     // the next time we capture the baseline is good.

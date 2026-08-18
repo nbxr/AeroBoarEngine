@@ -1,14 +1,14 @@
 {
-  "defaultScene": "_Barbarian",
+  "defaultScene": "ABeautifulGameScene",
   "activeSystem": "Windows",
   "scenePhysics": true,
-  "worldScale": 1.0,
+  "worldScale": 10.0,
   "physicsDebugDraw": false,
   "killFloor": {
     "enabled": true,
     "margin": 2.0
   },
-  "occlusionCull": false,
+  "occlusionCull": true,
   "home": [
     {
       "system": "Windows",
@@ -31,6 +31,10 @@
     {
       "name": "ABeautifulGame",
       "filename": "glTF-Sample-Assets/Models/ABeautifulGame/glTF/ABeautifulGame.gltf"
+    },
+    {
+      "name": "ABeautifulGameGame",
+      "filename": "glTF-Sample-Assets/Models/ABeautifulGameGame/glTF/ABeautifulGameGame.gltf"
     },
     {
       "name": "ABeautifulGameScene",

@@ -1,5 +1,6 @@
 #pragma once
 #include "gfx/AllocatedBuffer.h"
+#include <cstdint>
 #include <vector>
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan.h>
@@ -7,10 +8,20 @@
 namespace gfx {
 namespace BufferUtils {
 
+// Adreno / UMA: do **not** add a staging copy for small CPU writes — that
+// doubles DRAM traffic. HostWrite is persistently mapped sequential-write
+// (VMA AUTO). GpuOnly is unmapped: compute/draw only (instance lists,
+// indirect). Never map GpuOnly; never HostWrite a buffer the GPU streams.
+enum class BufferResidency : uint8_t {
+    HostWrite, // CPU writes every frame (UBO, worlds, cull items, joints)
+    GpuOnly,   // GPU write + GPU read; no host map
+};
+
 bool initialize_buffer(VkDevice device, VmaAllocator allocator,
                        VkDeviceSize size,
                        AllocatedBuffer &allocated_buffer,
-                       VkBufferUsageFlags extraUsage = 0);
+                       VkBufferUsageFlags extraUsage = 0,
+                       BufferResidency residency = BufferResidency::HostWrite);
 
 bool resize_buffer(VkDevice device, VmaAllocator allocator,
                    VkDeviceSize new_size,

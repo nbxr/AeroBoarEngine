@@ -75,6 +75,12 @@ class Engine {
     bool occlusion_cull_enabled_ = false;
     void configure_occlusion_cull();
 
+    // Both FIF slots must see light/SH changes. Camera is written every frame.
+    uint32_t lights_upload_mask_ = (1u << Renderer::MAX_FRAMES_IN_FLIGHT) - 1u;
+    void mark_lights_dirty() {
+        lights_upload_mask_ = (1u << Renderer::MAX_FRAMES_IN_FLIGHT) - 1u;
+    }
+
     // devices
     void add_features(vkb::PhysicalDeviceSelector &selector);
     std::pair<bool, vkb::PhysicalDevice>

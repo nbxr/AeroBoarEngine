@@ -16,15 +16,29 @@ void main() {
     if (p.x >= pc.dst_extent.x || p.y >= pc.dst_extent.y)
         return;
 
-    vec2 inv = 1.0 / vec2(pc.src_extent);
-    vec2 base = (vec2(p) * 2.0 + vec2(0.5)) * inv;
+    // Integer coverage like hzb_copy so odd source extents (15→7→3→1)
+    // still fold the last row/column into min. A fixed 2×2 from even
+    // origins drops that edge and makes parent R too large (false culls).
+    uvec2 block = uvec2(
+        (p.x * pc.src_extent.x) / pc.dst_extent.x,
+        (p.y * pc.src_extent.y) / pc.dst_extent.y);
+    uvec2 block_end = uvec2(
+        ((p.x + 1u) * pc.src_extent.x + pc.dst_extent.x - 1u) / pc.dst_extent.x,
+        ((p.y + 1u) * pc.src_extent.y + pc.dst_extent.y - 1u) / pc.dst_extent.y);
+    block_end = min(block_end, pc.src_extent);
+    if (block_end.x <= block.x)
+        block_end.x = min(block.x + 1u, pc.src_extent.x);
+    if (block_end.y <= block.y)
+        block_end.y = min(block.y + 1u, pc.src_extent.y);
 
-    vec2 d00 = texture(src_mip, base).rg;
-    vec2 d10 = texture(src_mip, base + vec2(inv.x, 0.0)).rg;
-    vec2 d01 = texture(src_mip, base + vec2(0.0, inv.y)).rg;
-    vec2 d11 = texture(src_mip, base + vec2(inv.x, inv.y)).rg;
-
-    float mn = min(min(d00.r, d10.r), min(d01.r, d11.r));
-    float mx = max(max(d00.g, d10.g), max(d01.g, d11.g));
+    float mn = 1.0;
+    float mx = 0.0;
+    for (uint y = block.y; y < block_end.y; ++y) {
+        for (uint x = block.x; x < block_end.x; ++x) {
+            vec2 d = texelFetch(src_mip, ivec2(int(x), int(y)), 0).rg;
+            mn = min(mn, d.r);
+            mx = max(mx, d.g);
+        }
+    }
     imageStore(dst_mip, ivec2(p), vec4(mn, mx, 0.0, 0.0));
 }

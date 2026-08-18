@@ -100,6 +100,11 @@ bool gfx::Engine::init_vulkan() {
     if (!init_depth_prepass_pipeline())
         return false;
 
+    if (!renderer.transparent.create(renderer.vk.device.device, renderer.allocator,
+                                     renderer)) {
+        LOG_ERROR("[Init] TransparentPass (sort + WBOIT) failed — blend fallback only");
+    }
+
     // Physics / editor wireframe overlay (after main_pass render pass exists).
     if (!renderer.debug_lines.create(renderer.vk.device, renderer.allocator,
                                      renderer.main_pass.render_pass,

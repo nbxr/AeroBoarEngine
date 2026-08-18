@@ -48,7 +48,7 @@ Canonical plan for a **custom, permanent, data-oriented ECS** and the first slic
 
 | # | Decision |
 |---|----------|
-| **1. Camera storage** | **(A)** Gameplay writes **`scene::Camera`** (pose/projection). Render keeps reading it for now. |
+| **1. Camera storage** | **(A)** Gameplay writes **`scene::Camera`** (pose/projection). Render keeps reading it for now. **When this is cleaned up**, reopen the parked remote/trackpad look-rail (`desktop-inputs.md` § Accepted look-rail limit). |
 | **2. glTF camera vs Player** | If a **`player`** entity exists → **it owns the view**; glTF camera is **not** the active controller (pose may seed once). If **no** player → spawn default free-fly Player; seed from glTF camera or AABB frame. |
 | **3. Editor keys** | Not on Player. **`EditorHotkeySystem`**. **Debug and Release for now**; gate to debug-only later when practical. Player only gets locomotion/look. |
 | **4. ECS library** | **Custom ECS permanently.** |
@@ -511,8 +511,9 @@ Scripts implement `on_event`; dispatch delivers `TriggerEnter`, `TimerElapsed`, 
 | 3 | Triggers implementation | **Jolt sensors** (not AABB-primary) |
 | 4 | Editor hotkeys build config | **Keep in Debug and Release for now**; make debug-only later when practical |
 | 5 | System name | **`EditorHotkeySystem`** |
+| 6 | Remote/trackpad look rail | **Accepted** for now (`desktop-inputs.md`). Reopen when camera storage / `scene::Camera` is cleaned up — not as a standalone input pass. |
 
-**Phase 0 decisions are closed.** Remaining work is implementation.
+**Phase 0 decisions 1–5 are closed.** Item 6 (look-rail) is parked until camera cleanup.
 
 ---
 
@@ -534,4 +535,4 @@ Scripts implement `on_event`; dispatch delivers `TriggerEnter`, `TimerElapsed`, 
 
 ---
 
-*Open items 1–5 resolved. Scripts: Option B + macro. Events: fixed-union payloads.*
+*Open items 1–5 resolved. Item 6 parked (look-rail → camera cleanup). Scripts: Option B + macro. Events: fixed-union payloads.*

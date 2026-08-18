@@ -31,7 +31,9 @@ bool gfx::Engine::init_render_pass() {
     swapchain_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     swapchain_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     swapchain_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    swapchain_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    // COLOR so WBOIT composite can LOAD opaque. Transition to PRESENT after
+    // composite (or immediately if there are no transparents this frame).
+    swapchain_attachment.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
     VkAttachmentDescription2 depth_attachment{};
     depth_attachment.sType = VK_STRUCTURE_TYPE_ATTACHMENT_DESCRIPTION_2;
@@ -82,8 +84,8 @@ bool gfx::Engine::init_render_pass() {
     depth_resolve_ref.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     depth_resolve_ref.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
 
-    // Prefer MIN depth resolve for Hi-Z (closest surface, 0=near). Fall back to
-    // SAMPLE_ZERO if the device does not advertise MIN.
+    // Reverse-Z: closest surface is MAX depth (near=1). Main-pass resolve is
+    // not the HZB source (prepass is 1x) but stay consistent if sampled later.
     VkResolveModeFlagBits depth_resolve_mode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;
     {
         VkPhysicalDeviceDepthStencilResolveProperties ds_props{};
@@ -93,11 +95,11 @@ bool gfx::Engine::init_render_pass() {
         props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
         props2.pNext = &ds_props;
         vkGetPhysicalDeviceProperties2(renderer.vk.device.physical_device, &props2);
-        if (ds_props.supportedDepthResolveModes & VK_RESOLVE_MODE_MIN_BIT) {
-            depth_resolve_mode = VK_RESOLVE_MODE_MIN_BIT;
-            LOG_INFO("[HiZ] Depth MSAA resolve mode: MIN (best for occlusion)");
+        if (ds_props.supportedDepthResolveModes & VK_RESOLVE_MODE_MAX_BIT) {
+            depth_resolve_mode = VK_RESOLVE_MODE_MAX_BIT;
+            LOG_INFO("[HiZ] Depth MSAA resolve mode: MAX (reverse-Z closest)");
         } else {
-            LOG_INFO("[HiZ] Depth MSAA resolve mode: SAMPLE_ZERO (MIN unsupported)");
+            LOG_INFO("[HiZ] Depth MSAA resolve mode: SAMPLE_ZERO (MAX unsupported)");
         }
     }
 

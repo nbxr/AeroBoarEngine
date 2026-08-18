@@ -11,6 +11,7 @@
 namespace gfx {
 
 // Hierarchical-Z (RG: min + max depth) pyramid for **same-frame** occlusion.
+// Reverse-Z: conservative cull uses R (min = far/hole).
 // Built after a depth prepass at the current pose; cull immediately after
 // in the same command buffer. Double-buffered for frames-in-flight so
 // concurrent submissions do not stomp each other's pyramid.

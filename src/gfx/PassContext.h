@@ -32,7 +32,8 @@ struct PassContext {
     // color and depth (both use the same views in their framebuffers).
     std::vector<AllocatedImage> msaa_color_images{};
     std::vector<AllocatedImage> depth_images{};
-    // Single-sample depth resolve target (MSAA path) — source for Hi-Z.
+    // Single-sample depth resolve (MSAA path) — WBOIT gather tests this.
+    // Hi-Z copies from the 1× depth prepass, not from here.
     std::vector<AllocatedImage> resolved_depth_images{};
     bool uses_depth_resolve{false};
 

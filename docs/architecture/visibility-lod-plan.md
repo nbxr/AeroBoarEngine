@@ -33,11 +33,9 @@ When `occlusionCull` is true and **not** an Adreno build:
 
 1. Frustum-cull opaque writers  
 2. Depth prepass (solid only)  
-3. Half-res **RG32F** pyramid: **R = min Z, G = max Z**  
-4. Conservative test: AABB **fully in front of near** and **fully on-screen**; mip so ~1 texel covers the rect; cull iff `z_near > hzb.g + bias`  
-5. Sky / holes raise **max ≈ 1** → no cull  
-
-No 4×4 / spread heuristics (those were the old min-only false-cull source).
+3. Half-res **RG32F** pyramid: **R = min Z, G = max Z** (reverse-Z: min = far/hole)  
+4. Conservative test: AABB **fully in front of near** and **fully on-screen**; mip = `ceil(log2(rect))` so one texel covers the rect; **4-corner min(R)**; cull iff `z_close < hzb.r - bias`  
+5. Sky / holes drop **min ≈ 0** → no cull. Reduce uses integer tile coverage so odd mip sizes do not drop the last row/col.
 
 ### Quest / Adreno (default)
 

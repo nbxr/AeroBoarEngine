@@ -35,9 +35,11 @@ struct Frustum {
         f.planes[1] = r3 - r0; // right
         f.planes[2] = r3 + r1; // bottom
         f.planes[3] = r3 - r1; // top
-        // Depth 0..1 (GLM_FORCE_DEPTH_ZERO_TO_ONE): near = z_clip >= 0 → row2
-        f.planes[4] = r2;      // near
-        f.planes[5] = r3 - r2; // far
+        // Visible slab is still 0 <= ndc.z <= 1 (Vulkan [0,1]). Reverse-Z only
+        // swaps which geometric plane is near (ndc=1) vs far (ndc=0); both
+        // tests stay clip.z >= 0 and clip.z <= w.
+        f.planes[4] = r2;      // ndc.z >= 0  (far under reverse-Z)
+        f.planes[5] = r3 - r2; // ndc.z <= 1  (near under reverse-Z)
 
         for (auto& p : f.planes) {
             const float len = glm::length(glm::vec3(p));

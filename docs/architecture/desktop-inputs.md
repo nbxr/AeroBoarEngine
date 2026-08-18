@@ -1,8 +1,8 @@
 # Desktop Input Architecture
 
-**Status**: **Completed**. Full implementation (including recovery from partial/broken prior attempt) is documented in `desktop-input-implementation.md`. The design was executed across 6 phases with verification after each.
+**Status**: **Landed** for desktop dev. Device layer + `InputFrame` + capture toggle are in use. **Accepted limit** (not chasing now): captured look on remote/HIDDEN + trackpad can still peg at the **desktop/screen rail** — see [Accepted look-rail limit](#accepted-look-rail-limit). Re-open that section when cameras are cleaned up.
 
-**Scope**: Linux desktop development mode only. VR/OpenXR input is a separate future concern (driven by `scene::CameraMode::VR` and external tracking).
+**Scope**: Desktop development (Windows + Linux). VR/OpenXR input is a separate future concern (`scene::CameraMode::VR`).
 
 ## Goals
 
@@ -71,39 +71,22 @@ A single `core::InputManager` owns all GLFW input for the desktop window:
 
 ```
 GLFW window events
+  (+ Windows remote: WM_INPUT hooked on the HWND)
        │
        ▼
-cursor_position_callback / key_callback / mouse_button_callback
-  (static, via glfwSet*Callback + user pointer)
-       │
-       ▼
-InputManager (raw state)
+InputManager (device)
   - keys_[], mouse_buttons_[]
-  - mouse_position_, last_mouse_position_
-  - raw_mouse_delta_ += (new - last)   // accumulation, sub-frame safe
+  - local / non-raw: cursor_position_callback accumulates (new - last)
+  - remote Windows: WM_INPUT relative or scaled-absolute deltas
+  - update(): accel + EWMA → smoothed_mouse_delta_
        │
-       │  (once per frame, after glfwPollEvents)
+       │  InputFrame snapshot (after update)
        ▼
-InputManager::update(float delta_time)
-  - acceleration = 1.0 + (mag(raw) * scale)
-  - accelerated = raw * acceleration
-  - smoothed = alpha * accelerated + (1-alpha) * previous_smoothed
-  - raw = {0,0}   // ready for next frame's callbacks
-       │
-       │  (queries from consumers)
-       ▼
-Camera::update(delta_time, InputManager& input)  [or via singleton]
-  if (input.is_cursor_captured())
-      delta = input.get_mouse_delta()
-      apply yaw (around current Up) and pitch (around current Right, with invert_pitch)
-  apply WASD/Space/Shift using input.is_key_down(...)  (always, or gated as desired)
-  apply Q/E roll using input.is_key_down(...)
+DesktopMoveSystem / FpsMoveSystem   (player look + move)
+EditorHotkeySystem                  (Escape capture, R, N, …)
        │
        ▼
-Camera orientation + position updated (quaternion 6DOF)
-       │
-       ▼
-get_view_matrix() / get_projection_matrix()  (used by renderer)
+scene::Camera pose / projection  (storage option A — ecs-plan.md)
 ```
 
 ## Configuration & Ownership Split
@@ -153,12 +136,39 @@ This is more robust than the pre-refactor `first_mouse` flag that lived inside `
 
 **Remote captured path** (local path unchanged):
 
-1. Use `GLFW_CURSOR_HIDDEN` instead of `DISABLED`. Confirmed over RDP: DISABLED stops tracking after a few moves (absolute vs warp). HIDDEN keeps delivering window-relative positions.
-2. After Escape capture, ignore the next few callbacks (`remote_settle_remaining_`) so the first reports do not look.
-3. If `|delta| > remote_warp_threshold_` (96 px, not the local 1000 px), treat the event as an **absolute reposition**: update `last_mouse_position_`, do **not** add to `raw_mouse_delta_`.
-4. `suppress_next_mouse_delta_` / Escape toggle behavior is the same as local.
+1. Use `GLFW_CURSOR_HIDDEN` instead of `DISABLED`.
+2. **Windows:** `WM_INPUT` raw mouse for look (relative, or scaled absolute). Cursor-position deltas are not used for look.
+3. **Do not `ClipCursor` to the window.** The default window is small (640×480). Confining the OS pointer there is what made look “stop at a certain point” after one trackpad stroke. `WM_INPUT` still arrives while the window has focus, even if the (hidden) cursor travels the rest of the desktop. That full desktop is the runway.
+4. **Do not pretend `SetCursorPos` worked.** RDP usually ignores it. Lying that the cursor is centered stopped further motion at the window/screen edge. Warp is attempted only on the virtual-desktop rail (or 0/65535 absolute rail), and only applied as a new baseline if `GetCursorPos` actually moved.
+5. A large absolute jump (~1000 px), or a jump in the 80 ms after a warp, is snap-back / remapping, not look. The absolute last-sample is **not** cleared on warp (that dropped single-packet restrokes).
+6. Local `DISABLED` path is unchanged.
 
 **Diagnostic (temporary).** Compile with `-DAERO_DEBUG_FORCE_NORMAL_CURSOR=1` (or `#define` in `InputManager.h`): captured mode uses `GLFW_CURSOR_HIDDEN` instead of `DISABLED`, the large-delta swallow is effectively off (`1e6`), and each captured callback logs `|delta|`. Escape still toggles `cursor_captured_`. Use this to confirm jumps vanish when DISABLED is not used, then leave the define at `0`.
+
+## Accepted look-rail limit
+
+**Decision (2026-08-17):** stop here. Look that still “hits a point and dies” is **accepted** for current desktop/RDP+trackpad use. **Reinvestigate when we clean up cameras** (ecs-plan camera storage / `scene::Camera` ownership — not a follow-up input-only tweak).
+
+**What still happens.** After the window-cage was removed, a long stroke or a restroke in the same direction can still stop when the **OS pointer is pegged** (virtual-desktop edge, or `MOUSE_MOVE_ABSOLUTE` 0 / 65535). RDP almost always sends **absolute** mouse and **does not honor** `SetCursorPos` / `SetPhysicalCursorPos`. The server then sees `dx = 0`. A lift-and-restroke in the same direction is invisible if the client cursor never left that rail. `FpsMove` pitch ±89° is a separate, intentional clamp.
+
+**What we already tried (do not re-litigate without a new approach):**
+
+| Approach | Outcome |
+|----------|---------|
+| `GLFW_CURSOR_DISABLED` on remote | Jumps / stalls (absolute coords vs warp) |
+| `GLFW_CURSOR_HIDDEN` | Usable; local `DISABLED` left unchanged |
+| Every-frame recenter + reset abs baseline | First (often only) restroke packet dropped |
+| `ClipCursor` to the client rect | **Worse** — default window is 640×480; look died at the *window* edge |
+| Warp only at desktop/0–65535 rail, and only if `GetCursorPos` moved | Correct; RDP usually still ignores the warp |
+
+**When cameras are cleaned up, reopen with a new approach**, not another warp/`ClipCursor` tweak. Candidates worth evaluating then (none implemented):
+
+- RDP client **relative mouse** (session/client setting; not something the engine can force)
+- Local **precision-touchpad / HID** finger deltas (unclamped). Useless over RDP — the server never sees the client HID
+- Hold-to-turn / deflection from screen center (different feel; needs a contact or button so a parked cursor does not spin)
+- USB mouse or a non-RDP remote path (Sunshine / similar) that actually delivers relative motion
+
+Local USB-mouse + `DISABLED` is the supported infinite-look path and must stay identical when the remote path changes.
 
 ## Relationship to Existing Code (Pre-Refactor Baseline)
 
@@ -172,6 +182,7 @@ This architecture document + the implementation plan describe the extraction of 
 
 ## Future Evolution Notes
 
+- **Camera cleanup** is the scheduled time to reopen the [look-rail limit](#accepted-look-rail-limit). Do not spend another input-only pass on `SetCursorPos` / `ClipCursor` until that work lands.
 - When OpenXR arrives, `CameraMode::VR` will bypass the desktop `InputManager` path entirely (head tracking + controller input come from the runtime).
 - If we add a debug UI (ImGui), mouse button state + position will be consumed by the UI layer when the cursor is not captured; the manager already tracks them.
 - The explicit source list in `CMakeLists.txt` means new `.cpp` files in `core/` must be added manually (documented as a minor hygiene item).
@@ -185,4 +196,4 @@ This architecture document + the implementation plan describe the extraction of 
 
 ---
 
-**Last updated**: Remote-session mouse-look (RDP / xRDP warp vs absolute). Update this file when the implementation or design evolves.
+**Last updated**: Accepted RDP/trackpad look-rail limit; reopen at camera cleanup (`desktop-inputs.md` § Accepted look-rail limit).

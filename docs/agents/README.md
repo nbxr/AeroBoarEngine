@@ -16,11 +16,12 @@ These files are intended to be read by any AI coding agent (Grok Build, Continue
 Architecture plans live under `docs/architecture/` (not only this folder), including:
 
 - `ecs-plan.md` — **near-term** custom ECS, InputFrame, Player + camera
+- `desktop-inputs.md` — device input; **accepted** RDP/trackpad look-rail (reopen at camera cleanup)
 - `gltf-extensions.md` — Khronos extension support matrix (e.g. AnimationPointerUVs gaps)
 - `animation-plan.md` / `physics-plan.md` / `vr-chess-physics-plan.md`
 - `visibility-lod-plan.md` — frustum / Hi-Z / Quest GMEM
 - `cascadebake-plan.md` — CascadeBake LOD (`CascadeOven`)
-- `pipeline-implementation.md`, `lighting-implementation.md`, `game-object-implementation.md`, `desktop-inputs.md`
+- `pipeline-implementation.md`, `lighting-implementation.md`, `game-object-implementation.md`
 
 ## Usage
 

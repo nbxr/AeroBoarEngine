@@ -43,6 +43,7 @@ struct VulkanContext {
     VkExtent2D swap_chain_extent{0, 0};
     VkSampleCountFlagBits msaa_color{VK_SAMPLE_COUNT_4_BIT};
     VkSampleCountFlagBits msaa_depth{VK_SAMPLE_COUNT_4_BIT};
+    std::vector<VkImage> swap_chain_images{};
     std::vector<VkImageView> swap_chain_image_views{};
     uint32_t swap_chain_image_count = 0;   // Actual images returned by driver (can be > requested min)
 

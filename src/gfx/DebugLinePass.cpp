@@ -1,5 +1,6 @@
 #include "gfx/DebugLinePass.h"
 #include "gfx/BufferUtils.h"
+#include "gfx/Depth.h"
 #include "gfx/ShaderLoader.h"
 #include "core/Log.h"
 #include <cstring>
@@ -111,7 +112,7 @@ bool DebugLinePass::create(VkDevice device, VmaAllocator allocator,
         VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
     ds.depthTestEnable = VK_TRUE;
     ds.depthWriteEnable = VK_FALSE;
-    ds.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    ds.depthCompareOp = gfx::kDepthCompareLequal;
 
     VkPipelineColorBlendAttachmentState blend{};
     blend.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
@@ -174,20 +175,25 @@ void DebugLinePass::destroy(VkDevice device, VmaAllocator allocator) {
         vkDestroyPipelineLayout(device, layout_, nullptr);
         layout_ = VK_NULL_HANDLE;
     }
-    BufferUtils::destroy_buffer(device, allocator, vertex_buffer_);
-    vertex_capacity_ = 0;
+    for (uint32_t i = 0; i < kMaxFrames; ++i) {
+        BufferUtils::destroy_buffer(device, allocator, vertex_buffers_[i]);
+        vertex_capacity_[i] = 0;
+    }
     device_ = VK_NULL_HANDLE;
     allocator_ = nullptr;
 }
 
 bool DebugLinePass::ensure_vertex_capacity(VkDevice device, VmaAllocator allocator,
+                                           uint32_t frame_index,
                                            size_t vertex_count) {
-    if (vertex_count == 0)
+    if (vertex_count == 0 || frame_index >= kMaxFrames)
         return true;
-    if (vertex_count <= vertex_capacity_ && vertex_buffer_.buffer != VK_NULL_HANDLE)
+    if (vertex_count <= vertex_capacity_[frame_index] &&
+        vertex_buffers_[frame_index].buffer != VK_NULL_HANDLE)
         return true;
 
-    size_t cap = vertex_capacity_ > 0 ? vertex_capacity_ : 1024;
+    size_t cap = vertex_capacity_[frame_index] > 0 ? vertex_capacity_[frame_index]
+                                                   : 1024;
     while (cap < vertex_count)
         cap *= 2;
 
@@ -199,22 +205,26 @@ bool DebugLinePass::ensure_vertex_capacity(VkDevice device, VmaAllocator allocat
         LOG_ERROR("[DebugLine] vertex buffer alloc failed");
         return false;
     }
-    BufferUtils::destroy_buffer(device, allocator, vertex_buffer_);
-    vertex_buffer_ = next;
-    vertex_capacity_ = cap;
+    // Only this FIF slot's fence has been waited; do not touch the other slot.
+    BufferUtils::destroy_buffer(device, allocator, vertex_buffers_[frame_index]);
+    vertex_buffers_[frame_index] = next;
+    vertex_capacity_[frame_index] = cap;
     return true;
 }
 
-void DebugLinePass::draw(VkCommandBuffer cmd, VkExtent2D extent,
-                         const glm::mat4& view_proj,
+void DebugLinePass::draw(VkCommandBuffer cmd, uint32_t frame_index,
+                         VkExtent2D extent, const glm::mat4& view_proj,
                          const std::vector<physics::DebugVertex>& vertices) {
     if (!is_ready() || vertices.empty() || !device_ || !allocator_)
         return;
-    if (!ensure_vertex_capacity(device_, allocator_, vertices.size()))
+    if (frame_index >= kMaxFrames)
+        return;
+    if (!ensure_vertex_capacity(device_, allocator_, frame_index, vertices.size()))
         return;
 
+    auto& vb = vertex_buffers_[frame_index];
     const size_t bytes = vertices.size() * sizeof(physics::DebugVertex);
-    std::memcpy(vertex_buffer_.mapped_data, vertices.data(), bytes);
+    std::memcpy(vb.mapped_data, vertices.data(), bytes);
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
 
@@ -236,7 +246,7 @@ void DebugLinePass::draw(VkCommandBuffer cmd, VkExtent2D extent,
                        sizeof(glm::mat4), &view_proj);
 
     VkDeviceSize offset = 0;
-    vkCmdBindVertexBuffers(cmd, 0, 1, &vertex_buffer_.buffer, &offset);
+    vkCmdBindVertexBuffers(cmd, 0, 1, &vb.buffer, &offset);
     vkCmdDraw(cmd, static_cast<uint32_t>(vertices.size()), 1, 0, 0);
 }
 

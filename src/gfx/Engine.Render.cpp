@@ -1,10 +1,11 @@
 #include "gfx/Engine.h"
+#include "gfx/Depth.h"
 #include "gfx/Renderer.h"
+#include "core/Frustum.h"
 #include <vulkan/vulkan.h>
 #include "gfx/VulkanContext.h"
 #include "gfx/PassContext.h"
 #include "gfx/Light.h"
-#include "gfx/BufferUtils.h"
 #include "gfx/PbrPush.h"
 #include "core/Log.h"
 
@@ -17,17 +18,6 @@
 #include <vector>
 
 namespace {
-
-// Bind the combined opaque|transparent instance SSBO once. Do not re-point
-// BINDING_DRAW_INSTANCES mid-command-buffer: UPDATE_AFTER_BIND means both draws
-// would execute against the *last* host write (transparent-only → body missing).
-void bind_draw_instances(gfx::Renderer& renderer, uint32_t frame_index) {
-    auto& inst = renderer.gpu_culling.out_instances(frame_index);
-    gfx::BufferUtils::update_descriptor(
-        renderer.vk.device.device, inst,
-        renderer.vk.bindless_descriptor_sets[frame_index],
-        inst.info.size, gfx::Renderer::BINDING_DRAW_INSTANCES);
-}
 
 void record_indirect_draws(VkCommandBuffer cmd, gfx::Renderer& renderer,
                            VkPipeline pipeline, const glm::mat4& viewProj,
@@ -70,7 +60,8 @@ void record_indirect_draws(VkCommandBuffer cmd, gfx::Renderer& renderer,
     const uint32_t batches = renderer.gpu_culling.batch_count();
     auto& indirect = renderer.gpu_culling.indirect_cmds(renderer.current_frame, pass);
     if (batches > 0) {
-        vkCmdDrawIndexedIndirect(cmd, indirect.buffer, 0, batches, 20);
+        vkCmdDrawIndexedIndirect(cmd, indirect.buffer, 0, batches,
+                                 sizeof(VkDrawIndexedIndirectCommand));
     }
 }
 
@@ -167,6 +158,22 @@ void gfx::Engine::render() {
 
     const uint32_t fi = renderer.current_frame;
     const bool can_cull = renderer.gpu_culling.is_ready();
+
+    const bool have_transparents =
+        can_cull && renderer.gpu_culling.transparent_item_count() > 0 &&
+        renderer.gpu_culling.has_transparent_half();
+    const bool gpu_transparent =
+        have_transparents && renderer.transparent.wboit_ready();
+    const bool cpu_transparent = have_transparents && !gpu_transparent;
+    if (cpu_transparent) {
+        const core::Frustum fr = core::Frustum::from_view_proj(viewProj);
+        renderer.transparent.collect_and_sort(
+            renderer.scene_manager, renderer.material_manager,
+            renderer.mesh_manager, fr, camera.get_position());
+        renderer.transparent.upload_instances(renderer.gpu_culling, fi);
+    } else {
+        renderer.transparent.clear_items();
+    }
     const bool can_hzb = occlusion_cull_enabled_ && can_cull &&
                          renderer.hzb.is_ready() &&
                          fi < renderer.depth_prepass.framebuffers.size() &&
@@ -174,25 +181,33 @@ void gfx::Engine::render() {
                          renderer.vk.depth_prepass_pipeline != VK_NULL_HANDLE;
 
     // ------------------------------------------------------------------
-    // Same-frame occlusion (all *compute* culls run outside render passes):
-    //   1) frustum cull opaque → 2) depth prepass → 3) HZB build
-    //   → 4) frustum+HZB cull opaque + transparent (dual lists)
-    //   → 5) main RP: draw opaque then transparent (no compute inside RP)
+    // Compute culls stay outside render passes (Adreno: no mid-RP barriers).
+    //   [hzb] frustum opaque → prepass → HZB → frustum+HZB opaque [+ transparent]
+    //   [default] one frustum opaque cull; WBOIT transparents are a second emit
+    // Instance SSBO is bound at build_scene — not UPDATE_AFTER_BIND here.
     // ------------------------------------------------------------------
-    if (can_cull) {
-        // 1) Frustum + opaque-only list for depth prepass / Hi-Z source.
-        renderer.gpu_culling.record(frame.command_buffer, fi, viewProj, false, 0, 0,
-                                    0, 0.003f, gfx::CullEmitFilter::OpaqueDepth);
-        // Combined instance SSBO — bind once for the whole frame.
-        bind_draw_instances(renderer, fi);
-    }
-
     write_frame_lighting(renderer.current_frame);
 
+    auto record_transparent_cull = [&](bool hzb) {
+        if (!gpu_transparent)
+            return;
+        if (hzb) {
+            renderer.gpu_culling.record(frame.command_buffer, fi, viewProj, true,
+                                        renderer.hzb.width(), renderer.hzb.height(),
+                                        renderer.hzb.mip_count(), 0.003f,
+                                        gfx::CullEmitFilter::Transparent);
+        } else {
+            renderer.gpu_culling.record(frame.command_buffer, fi, viewProj, false, 0,
+                                        0, 0, 0.003f, gfx::CullEmitFilter::Transparent);
+        }
+    };
+
     if (can_hzb) {
-        // 2) Depth prepass (opaque writers only).
+        renderer.gpu_culling.record(frame.command_buffer, fi, viewProj, false, 0, 0,
+                                    0, 0.003f, gfx::CullEmitFilter::OpaqueDepth);
+
         VkClearValue clear_depth{};
-        clear_depth.depthStencil = {1.0f, 0};
+        clear_depth.depthStencil = {gfx::kDepthClear, 0};
 
         VkRenderPassBeginInfo prepass_info{};
         prepass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -210,31 +225,20 @@ void gfx::Engine::render() {
                               gfx::CullPass::Opaque);
         vkCmdEndRenderPass(frame.command_buffer);
 
-        // 3) Hi-Z from opaque-only depth.
         renderer.hzb.record_build(frame.command_buffer, fi, vk.swap_chain_extent);
+        renderer.gpu_culling.record(frame.command_buffer, fi, viewProj, true,
+                                    renderer.hzb.width(), renderer.hzb.height(),
+                                    renderer.hzb.mip_count(), 0.003f,
+                                    gfx::CullEmitFilter::OpaqueDepth);
+        record_transparent_cull(true);
         renderer.last_cull_used_hzb[fi] = true;
     } else {
-        renderer.last_cull_used_hzb[fi] = false;
-    }
-
-    // 4) Shade culls *before* main RP — dual output lists so both survive.
-    if (can_cull) {
-        if (can_hzb) {
-            renderer.gpu_culling.record(frame.command_buffer, fi, viewProj, true,
-                                        renderer.hzb.width(), renderer.hzb.height(),
-                                        renderer.hzb.mip_count(), 0.003f,
-                                        gfx::CullEmitFilter::OpaqueDepth);
-            // Glass can still use Hi-Z (pyramid is opaque-only depth).
-            renderer.gpu_culling.record(frame.command_buffer, fi, viewProj, true,
-                                        renderer.hzb.width(), renderer.hzb.height(),
-                                        renderer.hzb.mip_count(), 0.003f,
-                                        gfx::CullEmitFilter::Transparent);
-        } else {
-            renderer.gpu_culling.record(frame.command_buffer, fi, viewProj, false, 0, 0, 0,
-                                        0.003f, gfx::CullEmitFilter::OpaqueDepth);
-            renderer.gpu_culling.record(frame.command_buffer, fi, viewProj, false, 0, 0, 0,
-                                        0.003f, gfx::CullEmitFilter::Transparent);
+        if (can_cull) {
+            renderer.gpu_culling.record(frame.command_buffer, fi, viewProj, false, 0,
+                                        0, 0, 0.003f, gfx::CullEmitFilter::OpaqueDepth);
+            record_transparent_cull(false);
         }
+        renderer.last_cull_used_hzb[fi] = false;
     }
 
     // 5) Main shade: **opaque first** (depth write on), then **transparent**
@@ -250,12 +254,12 @@ void gfx::Engine::render() {
     if (renderer.main_pass.uses_depth_resolve) {
         clear_values[0].color = {{0.02f, 0.02f, 0.03f, 1.0f}}; // MSAA color
         clear_values[1].color = {{0.02f, 0.02f, 0.03f, 1.0f}}; // swapchain (unused)
-        clear_values[2].depthStencil = {1.0f, 0};              // MSAA depth
-        clear_values[3].depthStencil = {1.0f, 0};              // resolve depth (unused)
+        clear_values[2].depthStencil = {gfx::kDepthClear, 0};  // MSAA depth
+        clear_values[3].depthStencil = {gfx::kDepthClear, 0};  // resolve depth (unused)
         render_pass_info.clearValueCount = 4;
     } else {
         clear_values[0].color = {{0.02f, 0.02f, 0.03f, 1.0f}};
-        clear_values[1].depthStencil = {1.0f, 0};
+        clear_values[1].depthStencil = {gfx::kDepthClear, 0};
         render_pass_info.clearValueCount = 2;
     }
     render_pass_info.pClearValues = clear_values.data();
@@ -269,10 +273,12 @@ void gfx::Engine::render() {
         record_indirect_draws(frame.command_buffer, renderer, vk.pipeline, viewProj,
                               gfx::CullPass::Opaque);
 
-        if (vk.transparent_pipeline != VK_NULL_HANDLE) {
-            record_indirect_draws(frame.command_buffer, renderer,
-                                  vk.transparent_pipeline, viewProj,
-                                  gfx::CullPass::Transparent);
+        // WBOIT path draws after this RP. Fallback: sorted traditional blend here.
+        if (cpu_transparent && vk.transparent_pipeline != VK_NULL_HANDLE) {
+            const uint32_t base = renderer.gpu_culling.instance_slot_count();
+            renderer.transparent.record_sorted_draws(
+                frame.command_buffer, renderer, vk.transparent_pipeline, viewProj,
+                base);
         }
     }
 
@@ -281,12 +287,36 @@ void gfx::Engine::render() {
         std::vector<physics::DebugVertex> lines;
         physics.collect_debug_lines(lines, camera.get_position());
         if (!lines.empty()) {
-            renderer.debug_lines.draw(frame.command_buffer, vk.swap_chain_extent,
-                                      viewProj, lines);
+            renderer.debug_lines.draw(frame.command_buffer, fi,
+                                      vk.swap_chain_extent, viewProj, lines);
         }
     }
 
     vkCmdEndRenderPass(frame.command_buffer);
+
+    bool presented_by_wboit = false;
+    if (gpu_transparent ||
+        (renderer.transparent.wboit_ready() && renderer.transparent.count() > 0)) {
+        renderer.transparent.record_wboit(frame.command_buffer, renderer, fi,
+                                          image_index, viewProj, gpu_transparent);
+        presented_by_wboit = true;
+    }
+    if (!presented_by_wboit && image_index < vk.swap_chain_images.size()) {
+        VkImageMemoryBarrier to_present{};
+        to_present.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        to_present.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        to_present.dstAccessMask = 0;
+        to_present.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        to_present.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        to_present.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        to_present.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        to_present.image = vk.swap_chain_images[image_index];
+        to_present.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vkCmdPipelineBarrier(frame.command_buffer,
+                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0,
+                             nullptr, 1, &to_present);
+    }
 
     if (vkEndCommandBuffer(frame.command_buffer) != VK_SUCCESS) {
         LOG_ERROR("Failed to end command buffer");

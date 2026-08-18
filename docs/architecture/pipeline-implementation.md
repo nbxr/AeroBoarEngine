@@ -13,7 +13,7 @@ Goal: 72–120 FPS at 2064×2208 per eye with minimal CPU overhead and maximum d
 **Status snapshot (maintain details in `docs/agents/current_state.md`):**
 - Active path: bindless PBR, **GPU frustum** (always) + **optional** same-frame Hi-Z (`occlusionCull`; off by default / off on Adreno). Multi-draw indirect, scene lights + procedural IBL. Distance LOD: `cascadebake-plan.md`. Culling policy: `visibility-lod-plan.md`.
 - Desktop: depth-only prepass (1x) feeds Hi-Z; main shade is MSAA single-subpass (depth resolve still present but not the HZB source).
-- Still target/aspirational for Quest: multiview, reverse-Z, TBDR subpass layout, full production IBL assets, clustered lights.
+- Still target/aspirational for Quest: multiview, TBDR subpass layout, full production IBL assets, clustered lights. **Reverse-Z is on desktop.**
 
 See `docs/agents/current_state.md` for the latest implementation status.
 
@@ -29,7 +29,13 @@ GPU-driven everywhere. Perform compute culling and occlusion, write indirect dra
 
 Compute-based culling: Before the main shading pass, GPU compute + a depth prepass perform frustum + **same-frame** HZB occlusion. Flow: frustum candidates → depth prepass at current pose → build Hi-Z → occlusion cull → indirect shade. No previous-frame depth / hysteresis (VR-ready).
 
-**Depth (roadmap):** desktop currently uses standard Z (0=near, 1=far, `LESS`). The Quest/VR target path should use **reverse-Z** for better far-field precision under large far/near ratios, with Hi-Z and occlusion compares updated accordingly. See `docs/agents/tech_context.md` § Depth buffer model (current vs planned reverse-Z).
+**Depth:** **reverse-Z** on desktop (1=near, 0=far, `GREATER`, clear 0). Hi-Z conservative query uses min (far/hole). See `docs/agents/tech_context.md` § Depth buffer model.
+
+**Transparents:** **GPU emit** into the combined instance SSBO (`CullEmitFilter::Transparent`) when WBOIT is up — no CPU walk/sort (WBOIT is order-independent). CPU back-to-front sort is only the fallback if WBOIT init fails. They still **test** the opaque 1× depth and **do not write** it. Traditional sorted blend is that fallback.
+
+**Adreno / UMA buffers:** `HostWrite` = persistently mapped sequential-write (UBO, `worlds[]`, cull items). `GpuOnly` = unmapped instance + indirect (compute → draw). Do **not** add a staging copy for small CPU writes — that doubles DRAM traffic on UMA.
+
+**Default desktop frame (occlusionCull off):** one GPU frustum cull for opaques, then main RP. Do **not** dispatch that cull twice — the second dispatch is only the post-HZB shade cull when Hi-Z is on.
 
 Bindless heap approach. Use one giant descriptor set bound once per frame today, or a true descriptor heap when the extension becomes available.
 

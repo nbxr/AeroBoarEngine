@@ -4,7 +4,7 @@ Lightweight snapshot of the AeroBoarEngine project status. Intended to be read q
 
 ## Overall Status
 
-Desktop foundation is solid. The engine loads glTF scenes (multi-material, hierarchy, punctual lights), uploads bindless resources, and renders with **GPU frustum cull** (always), **optional conservative Hi-Z** (`occlusionCull`, off by default / off on Adreno), **mesh-grouped instancing**, and **one multi-draw indirect** call path plus procedural IBL. **Animation:** node TRS, skinned meshes, CPU morph weights. **ECS Phase 1–3:** World, Player, `InputFrame`, DesktopMove + **FpsMove** + EditorHotkeys, glTF `extras.ECS_Components_v1`, scripts. **Third-person boom** when authored (`camera` / `boom_offset`). **Physics:** Jolt + KHR MVP, LinearCast CCD, **`worldScale`** (chess `10`), **debug draw** (F3), **kill floor** for fallen dynamics; player capsule knocks pieces. Scene list includes the full glTF-Sample-Assets set. OpenXR / Quest / reverse-Z remain roadmap. **Next product focus:** locomotion polish or VR path — `animation-plan.md` §9 / `ecs-plan.md`.
+Desktop foundation is solid. The engine loads glTF scenes (multi-material, hierarchy, punctual lights), uploads bindless resources, and renders with **GPU frustum cull** (always), **optional conservative Hi-Z** (`occlusionCull`, off by default / off on Adreno), **mesh-grouped instancing**, and **one multi-draw indirect** call path plus procedural IBL. **Animation:** node TRS, skinned meshes, CPU morph weights. **ECS Phase 1–3:** World, Player, `InputFrame`, DesktopMove + **FpsMove** + EditorHotkeys, glTF `extras.ECS_Components_v1`, scripts. **Third-person boom** when authored (`camera` / `boom_offset`). **Physics:** Jolt + KHR MVP, LinearCast CCD, **`worldScale`** (chess `10`), **debug draw** (F3), **kill floor** for fallen dynamics; player capsule knocks pieces. Scene list includes the full glTF-Sample-Assets set. OpenXR / Quest remain roadmap; **reverse-Z is on desktop**. **Next product focus:** locomotion polish or VR path — `animation-plan.md` §9 / `ecs-plan.md`.
 
 ## Major Completed Areas
 
@@ -21,7 +21,7 @@ Desktop foundation is solid. The engine loads glTF scenes (multi-material, hiera
   - Metallic + Roughness (from metalRoughness texture or factors)
   - Emissive
   - Ambient Occlusion (separate texture)
-  - **glTF alphaMode:** OPAQUE / MASK (discard + cutoff) / BLEND + transmission → **dual shade pipelines** (opaque depth-write on; transparent blend + depth-write off). Depth/Hi-Z prepass emits **opaque writers only**. **Not yet:** OIT / sorted transparency
+  - **glTF alphaMode:** OPAQUE / MASK (discard + cutoff) / BLEND + transmission → **dual shade pipelines** (opaque depth-write on; transparent blend + depth-write off). Depth/Hi-Z prepass emits **opaque writers only**. **CPU sort + WBOIT** (McGuire); fallback is traditional sorted blend.
   - Multi-UV + static `KHR_texture_transform`; UV0/UV1 as **half floats** (`R16G16B16A16_SFLOAT`); AO multiplies **indirect only** (not emissive/direct)
 - Proper vertex attribute input (`gfx::Vertex`, pipeline vertex state, `pbr.vert`) — legacy SSBO vertex pulling is no longer the active path
 - Materials SSBO: single buffer + runtime array in `pbr.frag`; `gfx::Material` is `alignas(16)` / **256-byte** stride (maps, multi-UV, clearcoat/transmission/iridescence factors)
@@ -45,6 +45,8 @@ Desktop foundation is solid. The engine loads glTF scenes (multi-material, hiera
   - Per-frame processing: non-linear mouse acceleration + EWMA temporal smoothing.
   - Keyboard + mouse button state.
   - Centralized cursor capture handling (`set_cursor_captured`) with automatic tracking reset to prevent jumps on Escape toggles.
+  - Remote/HIDDEN: `WM_INPUT` look, **no** `ClipCursor`. Warp only at the desktop rail if the OS honors it. Absolute raw baseline is kept across warps.
+  - **Accepted:** RDP + trackpad look can still peg at the desktop/screen rail (`SetCursorPos` ignored). Parked until **camera cleanup**. Details: `docs/architecture/desktop-inputs.md` § Accepted look-rail limit.
   - Decouples raw input from `scene::Camera` (Camera now receives an `InputManager&` and queries processed deltas/keys).
   - See `docs/architecture/desktop-inputs.md` for full design rationale.
 - `AGENTS.md` and shared documentation in `docs/agents/`
@@ -79,19 +81,20 @@ Desktop foundation is solid. The engine loads glTF scenes (multi-material, hiera
 - **GPU frustum (always) + optional conservative Hi-Z** (`occlusionCull`, default **false**; **off on Adreno**). RG min/max pyramid — `visibility-lod-plan.md`.
 - **Distance LOD (design):** **CascadeBake** / `CascadeOven` — meshlets → octahedral impostors → static skybox bake — `cascadebake-plan.md`. **Not implemented.**
 - **GPU frustum + same-frame Hi-Z + opaque/transparent shade (landed)**:
-  - Frame order (compute **outside** render passes): frustum cull opaque → depth prepass → HZB build → frustum+HZB cull opaque **and** transparent → main RP: opaque shade then transparent shade
-  - `gfx::GpuCulling`: emit filter (all / opaque-depth / transparent); **combined** instance SSBO (opaque half + transparent half via `instance_base_offset`) so binding 1 is never flipped mid-CB (`UPDATE_AFTER_BIND`); dual indirect buffers; GPU `vkCmdFillBuffer` zeros batch counts
+  - Frame order (compute **outside** render passes): **one** frustum cull when Hi-Z is off; with Hi-Z: frustum → depth prepass → HZB → frustum+HZB shade cull. **WBOIT transparents are GPU-emitted** (CPU sort only if WBOIT init failed).
+  - `gfx::GpuCulling`: packed `worlds[]` SSBO (one mat4 per transform); GpuCullItem is 64 B (no model). Instance + indirect buffers are **GpuOnly** (unmapped) when WBOIT is on — Adreno/UMA, no staging copy. Transparent instance half allocated only if the scene has blend/transmission.
   - `gfx::HzbPyramid`: half-res min-Z from **opaque-only** prepass (glass must not seal cabin for occlusion)
   - Graphics: binding 1 combined instance SSBO; **one** `vkCmdDrawIndexedIndirect` per shade pass; transparent uses `vk.transparent_pipeline` (blend, depth write off)
   - **Instance index (Vulkan):** VS uses `gl_InstanceIndex` only (includes `firstInstance`)
   - `[Cull]` log from host-visible counts after frame fence (`[hzb=on]` when same-frame path ran)
-- **Depth model:** standard Z today (0=near, 1=far, `LESS`). **Planned:** reverse-Z with VR/multiview depth work (`GREATER`/`GREATER_OR_EQUAL`, clear 0, max-depth Hi-Z) — official roadmap item in `tech_context.md`
+- **Depth model:** **reverse-Z** (1=near, 0=far, `GREATER`, clear 0). Hi-Z conservative test uses min (far/hole). Multiview HZB still later — `tech_context.md`
 - No OpenXR / VR input layer (desktop GLFW only)
+- **Desktop look rail (accepted):** remote/HIDDEN + trackpad can still stop at the desktop/screen edge. Not chasing another warp/`ClipCursor` pass. **Reopen at camera cleanup** — `desktop-inputs.md` § Accepted look-rail limit. Local `DISABLED` + USB mouse unchanged.
 - **Player locomotion:** **FpsMove** + **third-person boom** when authored. **`LocomotionAnim`** (extras `locomotion_anim` / `locomation_anim`) crossfades Idle/`T-Pose` / Walk / Run from `horizontal_speed`. **N** crossfades clips (0.2 s). **Free-fly `DesktopMove`** when no authored player.
 - **Scene model:** `GameObject` + `RenderMesh` + `TransformManager` (local + parent + dirty `propagate`); dual-write `SceneInstance`; ECS dual-write. Full GameObject→Entity render migration later
 - **glTF animation Phase 1–3 yes.** Static `KHR_texture_transform` yes. **Not yet:** `KHR_animation_pointer`, full material set — see `gltf-extensions.md`
 - **Physics:** Jolt + KHR MVP, CCD, `worldScale`, debug lines. **Missing:** compound/triangle mesh colliders, raycast/impulse tools, proper character controller — `physics-plan.md`
-- Alpha/transmission: dual pipelines yes; **no** transparent sort / OIT
+- Alpha/transmission: dual pipelines yes; **CPU back-to-front sort** + **weighted blended OIT** (McGuire). Transparents test opaque depth (no second depth buffer). Sort still used (WBOIT is approximate).
 - **Volume / dispersion / thick glass:** deferred. Thin-wall transmission MVP only. Future option: parse factors + desktop-only refraction path, **off on Quest** — see `gltf-extensions.md` §2.2. Showcase: `DragonDispersion` not reference-correct.
 - No audio beyond desktop `InputManager` completeness
 
@@ -132,6 +135,7 @@ Desktop foundation is solid. The engine loads glTF scenes (multi-material, hiera
 - [done] Animation crossfade + `LocomotionAnim` Idle/Walk/Run (Bot / Barbarian extras)
 - **Next immediate:** locomotion polish (run key / jump clips) or VR path
 - **Then:** ECS Phase 4 events/timers or Jolt sensors; GameObject→Entity render migration
+- **When cameras are cleaned up:** reopen captured look-rail (`desktop-inputs.md`); do not spend an input-only pass before that
 - **Roadmap (extensions):** `KHR_animation_pointer`; unlit; variants UI; optional desktop-only volume/dispersion — `gltf-extensions.md`
 - **Roadmap (VR / Quest):** reverse-Z + multiview HZB; OpenXR; shrink-to-board VR chess — `vr-chess-physics-plan.md`
 - **Roadmap (physics):** mesh colliders, filters, character controller polish — `physics-plan.md`

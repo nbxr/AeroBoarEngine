@@ -6,6 +6,7 @@
 #include "core/Frustum.h"
 #include "core/Log.h"
 
+#include <algorithm>
 #include <cstring>
 #include <vector>
 
@@ -87,6 +88,7 @@ void GpuCulling::destroy(VkDevice device, VmaAllocator allocator) {
     if (dummy_sampler_)
         vkDestroySampler(device, dummy_sampler_, nullptr);
     dummy_sampler_ = VK_NULL_HANDLE;
+    dummy_layout_ready_ = false;
 
     if (cull_pipeline_ != VK_NULL_HANDLE)
         vkDestroyPipeline(device, cull_pipeline_, nullptr);
@@ -113,6 +115,7 @@ void GpuCulling::clear_scene(VkDevice device, VmaAllocator allocator) {
     BufferUtils::destroy_buffer(device, allocator, batch_metas_);
     for (uint32_t i = 0; i < kMaxFrames; ++i) {
         BufferUtils::destroy_buffer(device, allocator, cull_items_[i]);
+        BufferUtils::destroy_buffer(device, allocator, worlds_[i]);
         BufferUtils::destroy_buffer(device, allocator, out_instances_[i]);
         for (uint32_t p = 0; p < kCullPassCount; ++p) {
             BufferUtils::destroy_buffer(device, allocator, cull_globals_[i][p]);
@@ -123,14 +126,17 @@ void GpuCulling::clear_scene(VkDevice device, VmaAllocator allocator) {
     item_transform_indices_.clear();
     cpu_items_.clear();
     item_count_ = 0;
+    transparent_item_count_ = 0;
     batch_count_ = 0;
     instance_slot_count_ = 0;
+    world_count_ = 0;
+    has_transparent_half_ = false;
     ready_ = false;
 }
 
 bool GpuCulling::create_descriptors(VkDevice device) {
-    VkDescriptorSetLayoutBinding b[7]{};
-    for (uint32_t i = 0; i < 7; ++i) {
+    VkDescriptorSetLayoutBinding b[8]{};
+    for (uint32_t i = 0; i < 8; ++i) {
         b[i].binding = i;
         b[i].descriptorCount = 1;
         b[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
@@ -142,10 +148,11 @@ bool GpuCulling::create_descriptors(VkDevice device) {
     b[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;      // batch metas
     b[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;      // indirect cmds
     b[6].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; // HZB
+    b[7].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;      // worlds[]
 
     VkDescriptorSetLayoutCreateInfo lci{};
     lci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    lci.bindingCount = 7;
+    lci.bindingCount = 8;
     lci.pBindings = b;
     if (vkCreateDescriptorSetLayout(device, &lci, nullptr, &set_layout_) != VK_SUCCESS)
         return false;
@@ -153,7 +160,7 @@ bool GpuCulling::create_descriptors(VkDevice device) {
     const uint32_t set_count = kMaxFrames * kCullPassCount;
     VkDescriptorPoolSize sizes[] = {
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, set_count},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, set_count * 5},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, set_count * 6},
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, set_count},
     };
     VkDescriptorPoolCreateInfo pci{};
@@ -218,7 +225,8 @@ bool GpuCulling::create_pipelines(VkDevice device) {
 bool GpuCulling::build_scene(VkDevice device, VmaAllocator allocator,
                              const std::vector<MeshDrawInfo>& mesh_draw_infos,
                              const scene::SceneManager& scene,
-                             const MaterialManager* materials) {
+                             const MaterialManager* materials,
+                             bool gpu_only_instances) {
     clear_scene(device, allocator);
 
     batch_count_ = static_cast<uint32_t>(mesh_draw_infos.size());
@@ -244,7 +252,6 @@ bool GpuCulling::build_scene(VkDevice device, VmaAllocator allocator,
         for (uint32_t rm_id : info.render_mesh_ids) {
             const auto& rm = scene.get_render_mesh(rm_id);
             GpuCullItem item{};
-            item.model = scene.transforms().get_world_matrix(rm.transform_index);
             // Skinned meshes: inflate local AABB for cull (bind-pose + motion).
             core::AABB aabb = rm.local_aabb;
             if (rm.skin_index != ~0u && aabb.is_valid()) {
@@ -271,31 +278,40 @@ bool GpuCulling::build_scene(VkDevice device, VmaAllocator allocator,
                 mat_flags = materials->get_material_flags(rm.material_index);
             const uint32_t kBlend = Material::kFlagAlphaBlend;
             const uint32_t kTrans = Material::kFlagTransmission;
-            const uint32_t writes_opaque_depth =
-                ((mat_flags & (kBlend | kTrans)) == 0u) ? 1u : 0u;
-            item.skin =
-                glm::uvec4(joint_base, joint_count, mat_flags, writes_opaque_depth);
+            item.skin = glm::uvec4(joint_base, joint_count, mat_flags,
+                                   rm.transform_index);
             cpu_items_.push_back(item);
             item_transform_indices_.push_back(rm.transform_index);
         }
         running_base += cap;
     }
     item_count_ = static_cast<uint32_t>(cpu_items_.size());
+    transparent_item_count_ = 0;
+    const uint32_t kBlend = Material::kFlagAlphaBlend;
+    const uint32_t kTrans = Material::kFlagTransmission;
+    for (const auto& item : cpu_items_) {
+        if ((item.skin.z & (kBlend | kTrans)) != 0u)
+            ++transparent_item_count_;
+    }
 
     instance_slot_count_ = running_base;
+    has_transparent_half_ = transparent_item_count_ > 0;
+    world_count_ = std::max(1u, scene.transforms().count());
+    const uint32_t instance_halves = has_transparent_half_ ? kCullPassCount : 1u;
     const VkDeviceSize items_bytes =
         std::max<VkDeviceSize>(sizeof(GpuCullItem),
                                cpu_items_.size() * sizeof(GpuCullItem));
+    const VkDeviceSize worlds_bytes =
+        static_cast<VkDeviceSize>(world_count_) * sizeof(glm::mat4);
     const VkDeviceSize metas_bytes =
         std::max<VkDeviceSize>(sizeof(GpuBatchMeta), metas.size() * sizeof(GpuBatchMeta));
     const VkDeviceSize counts_bytes =
         std::max<VkDeviceSize>(sizeof(uint32_t), batch_count_ * sizeof(uint32_t));
-    // Combined SSBO: opaque half [0, N) + transparent half [N, 2N).
+    // Combined SSBO: opaque [0, N); transparent [N, 2N) only if the scene needs it.
     const VkDeviceSize out_bytes = std::max<VkDeviceSize>(
         sizeof(DrawInstanceGPU),
-        static_cast<VkDeviceSize>(kCullPassCount) * running_base *
+        static_cast<VkDeviceSize>(instance_halves) * running_base *
             sizeof(DrawInstanceGPU));
-    // 5 uints per indirect command
     const VkDeviceSize cmds_bytes =
         std::max<VkDeviceSize>(sizeof(uint32_t) * 5,
                                batch_count_ * 5 * sizeof(uint32_t));
@@ -307,9 +323,15 @@ bool GpuCulling::build_scene(VkDevice device, VmaAllocator allocator,
     memcpy(batch_metas_.mapped_data, metas.data(), metas.size() * sizeof(GpuBatchMeta));
 
     for (uint32_t f = 0; f < kMaxFrames; ++f) {
-        if (!BufferUtils::initialize_buffer(device, allocator, items_bytes, cull_items_[f]) ||
-            !BufferUtils::initialize_buffer(device, allocator, out_bytes,
-                                            out_instances_[f])) {
+        if (!BufferUtils::initialize_buffer(device, allocator, items_bytes,
+                                            cull_items_[f]) ||
+            !BufferUtils::initialize_buffer(device, allocator, worlds_bytes,
+                                            worlds_[f]) ||
+            !BufferUtils::initialize_buffer(
+                device, allocator, out_bytes, out_instances_[f],
+                VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                gpu_only_instances ? BufferUtils::BufferResidency::GpuOnly
+                                   : BufferUtils::BufferResidency::HostWrite)) {
             LOG_ERROR("[GpuCulling] Failed to create per-frame cull item/instance buffers");
             return false;
         }
@@ -317,25 +339,31 @@ bool GpuCulling::build_scene(VkDevice device, VmaAllocator allocator,
             memcpy(cull_items_[f].mapped_data, cpu_items_.data(),
                    cpu_items_.size() * sizeof(GpuCullItem));
         }
+        {
+            auto* dst = static_cast<glm::mat4*>(worlds_[f].mapped_data);
+            const auto& xforms = scene.transforms();
+            const uint32_t n = std::min(world_count_, xforms.count());
+            for (uint32_t i = 0; i < n; ++i)
+                dst[i] = xforms.get_world_matrix(i);
+            for (uint32_t i = n; i < world_count_; ++i)
+                dst[i] = glm::mat4(1.0f);
+        }
 
         for (uint32_t p = 0; p < kCullPassCount; ++p) {
             if (!BufferUtils::initialize_buffer(device, allocator, sizeof(GpuCullGlobals),
                                                 cull_globals_[f][p],
                                                 VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT) ||
-                // TRANSFER_DST required for vkCmdFillBuffer zeroing each record()
                 !BufferUtils::initialize_buffer(device, allocator, counts_bytes,
                                                 batch_counts_[f][p],
                                                 VK_BUFFER_USAGE_TRANSFER_DST_BIT) ||
-                !BufferUtils::initialize_buffer(device, allocator, cmds_bytes,
-                                                indirect_cmds_[f][p],
-                                                VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT)) {
+                !BufferUtils::initialize_buffer(
+                    device, allocator, cmds_bytes, indirect_cmds_[f][p],
+                    VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+                    BufferUtils::BufferResidency::GpuOnly)) {
                 LOG_ERROR("[GpuCulling] Failed to create per-frame cull pass buffers");
                 return false;
             }
 
-            // Buffer bindings are static for the scene. HZB image is set via bind_hzb
-            // (dummy until the pyramid is wired after resize / scene load).
-            // Both passes share the combined out_instances buffer.
             VkDescriptorBufferInfo infos[6]{};
             infos[0] = {cull_globals_[f][p].buffer, 0, sizeof(GpuCullGlobals)};
             infos[1] = {cull_items_[f].buffer, 0, items_bytes};
@@ -349,7 +377,9 @@ bool GpuCulling::build_scene(VkDevice device, VmaAllocator allocator,
             hzb_info.imageView = dummy_hzb_.view;
             hzb_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
-            VkWriteDescriptorSet writes[7]{};
+            VkDescriptorBufferInfo worlds_info{worlds_[f].buffer, 0, worlds_bytes};
+
+            VkWriteDescriptorSet writes[8]{};
             for (uint32_t i = 0; i < 6; ++i) {
                 writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
                 writes[i].dstSet = sets_[f][p];
@@ -366,30 +396,32 @@ bool GpuCulling::build_scene(VkDevice device, VmaAllocator allocator,
             writes[6].descriptorCount = 1;
             writes[6].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             writes[6].pImageInfo = &hzb_info;
-            vkUpdateDescriptorSets(device, 7, writes, 0, nullptr);
+            writes[7].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[7].dstSet = sets_[f][p];
+            writes[7].dstBinding = 7;
+            writes[7].descriptorCount = 1;
+            writes[7].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            writes[7].pBufferInfo = &worlds_info;
+            vkUpdateDescriptorSets(device, 8, writes, 0, nullptr);
         }
     }
 
     ready_ = true;
     LOG_INFO("[GpuCulling] Ready: " << item_count_ << " items, " << batch_count_
-             << " batches, " << instance_slot_count_
-             << " instance slots/pass (combined SSBO x" << kCullPassCount << ")");
+             << " batches, " << instance_slot_count_ << " instance slots"
+             << (has_transparent_half_ ? " + transparent half" : "")
+             << ", worlds=" << world_count_);
     return true;
 }
 
 void GpuCulling::update_models(uint32_t frame_index, const scene::SceneManager& scene) {
-    if (!ready_ || frame_index >= kMaxFrames || !cull_items_[frame_index].mapped_data)
+    if (!ready_ || frame_index >= kMaxFrames || !worlds_[frame_index].mapped_data)
         return;
-    if (item_transform_indices_.size() != cpu_items_.size())
-        return;
-
-    auto* dst = static_cast<GpuCullItem*>(cull_items_[frame_index].mapped_data);
+    auto* dst = static_cast<glm::mat4*>(worlds_[frame_index].mapped_data);
     const auto& xforms = scene.transforms();
-    for (size_t i = 0; i < item_transform_indices_.size(); ++i) {
-        const glm::mat4& world = xforms.get_world_matrix(item_transform_indices_[i]);
-        dst[i].model = world;
-        cpu_items_[i].model = world;
-    }
+    const uint32_t n = std::min(world_count_, xforms.count());
+    for (uint32_t i = 0; i < n; ++i)
+        dst[i] = xforms.get_world_matrix(i);
 }
 
 void GpuCulling::bind_hzb(uint32_t frame_index, VkImageView hzb_view,
@@ -432,6 +464,8 @@ void GpuCulling::record(VkCommandBuffer cmd, uint32_t frame_index,
         return;
 
     const uint32_t pass = static_cast<uint32_t>(pass_for_filter(emit_filter));
+    if (pass == static_cast<uint32_t>(CullPass::Transparent) && !has_transparent_half_)
+        return;
     const bool use_hzb =
         enable_hzb && hzb_width > 0 && hzb_height > 0 && hzb_mips > 0;
     const uint32_t inst_offset =
@@ -480,7 +514,9 @@ void GpuCulling::record(VkCommandBuffer cmd, uint32_t frame_index,
     VkMemoryBarrier host_barrier{};
     host_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
     host_barrier.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
-    host_barrier.dstAccessMask = VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+    host_barrier.dstAccessMask = VK_ACCESS_UNIFORM_READ_BIT |
+                                 VK_ACCESS_TRANSFER_WRITE_BIT |
+                                 VK_ACCESS_SHADER_READ_BIT;
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_HOST_BIT,
                          VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |
                              VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -549,7 +585,8 @@ uint32_t GpuCulling::read_visible_count(uint32_t frame_index) const {
     if (!ready_ || frame_index >= kMaxFrames)
         return 0;
     uint32_t sum = 0;
-    for (uint32_t p = 0; p < kCullPassCount; ++p) {
+    const uint32_t pass_n = has_transparent_half_ ? kCullPassCount : 1u;
+    for (uint32_t p = 0; p < pass_n; ++p) {
         if (!batch_counts_[frame_index][p].mapped_data)
             continue;
         const auto* counts =

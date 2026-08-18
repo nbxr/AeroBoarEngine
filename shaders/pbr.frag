@@ -61,7 +61,12 @@ layout(push_constant) uniform PushConstants {
     uvec4  extra; // reserved
 } pc;
 
+#ifdef WBOIT
+layout(location = 0) out vec4 outAccum;
+layout(location = 1) out float outReveal;
+#else
 layout(location = 0) out vec4 outColor;
+#endif
 
 // -----------------------------------------------------------------------------
 // Lighting: FrameConstants UBO (binding 0) + Lights SSBO (binding 6).
@@ -367,7 +372,18 @@ void main() {
     }
     color += emissiveRgb;
 
+#ifdef WBOIT
+    // Weighted blended OIT (McGuire). Reverse-Z: window z is 1=near; convert
+    // to a standard-Z-like value for the published weight curve.
+    float a = clamp(albedo.a, 0.0, 1.0);
+    float z = clamp(1.0 - gl_FragCoord.z, 0.0, 1.0);
+    float w = clamp(pow(min(1.0, a * 10.0) + 0.01, 3.0) * 1e8 *
+                        pow(max(1e-3, 1.0 - z * 0.9), 3.0),
+                    1e-2, 3e3);
+    outAccum = vec4(color * a, a) * w;
+    outReveal = a;
+#else
     color = color / (color + 1.0);
-
     outColor = vec4(color, albedo.a);
+#endif
 }

@@ -1,7 +1,7 @@
 #version 450
 
 // Build HZB mip0: R = min depth, G = max depth over the full-res block.
-// 0=near, 1=far. Max is what conservative occlusion needs (farthest surface).
+// Reverse-Z: 1=near, 0=far. Min (R) is the farthest / hole (conservative).
 layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(set = 0, binding = 0) uniform sampler2D depth_src;

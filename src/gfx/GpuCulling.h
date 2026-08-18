@@ -18,15 +18,16 @@ class SceneManager;
 namespace gfx {
 
 // GPU layouts (std430) matching cull_frustum.comp / build_indirect.comp
+// No model matrix — worlds live in a packed SSBO (one mat4 per transform).
+// skin.w = transform_index; opaque vs blend is derived from flags (skin.z).
 struct GpuCullItem {
-    glm::mat4 model{1.0f};
     glm::vec4 aabb_min{0.0f};
     glm::vec4 aabb_max{0.0f};
     glm::uvec4 meta{0}; // x=material, y=batch, z=instance_base, w=capacity
-    // x=joint_base, y=joint_count (0=rigid), z=material flags, w=1 if writes opaque depth for Hi-Z
+    // x=joint_base, y=joint_count, z=material flags, w=transform_index
     glm::uvec4 skin{0};
 };
-static_assert(sizeof(GpuCullItem) == 128, "GpuCullItem size");
+static_assert(sizeof(GpuCullItem) == 64, "GpuCullItem size");
 
 struct GpuBatchMeta {
     uint32_t base = 0;
@@ -83,15 +84,17 @@ class GpuCulling {
 
     // Build cull items / batch metas from mesh_draw_infos + scene.
     // Call after scene load. Allocates per-frame item + output buffers.
+    // gpu_only_instances: true when WBOIT will GPU-emit (Adreno: unmapped).
+    // false keeps instances host-mapped for the CPU-sort fallback.
     bool build_scene(VkDevice device, VmaAllocator allocator,
                      const std::vector<MeshDrawInfo>& mesh_draw_infos,
                      const scene::SceneManager& scene,
-                     const MaterialManager* materials = nullptr);
+                     const MaterialManager* materials = nullptr,
+                     bool gpu_only_instances = true);
 
     void clear_scene(VkDevice device, VmaAllocator allocator);
 
-    // Rewrite model matrices for one frame slot from current TransformManager worlds.
-    // Call only after that frame's fence has been waited (buffer not in use on GPU).
+    // Upload the packed world-matrix table for this FIF slot (after fence wait).
     void update_models(uint32_t frame_index, const scene::SceneManager& scene);
 
     // Bind Hi-Z image for this frame slot (both pass descriptor sets). Call only
@@ -111,11 +114,16 @@ class GpuCulling {
     [[nodiscard]] bool is_ready() const { return ready_; }
     [[nodiscard]] uint32_t batch_count() const { return batch_count_; }
     [[nodiscard]] uint32_t item_count() const { return item_count_; }
+    // Blend / transmission items (CPU transparent path). 0 → skip collect.
+    [[nodiscard]] uint32_t transparent_item_count() const {
+        return transparent_item_count_;
+    }
+    [[nodiscard]] bool has_transparent_half() const { return has_transparent_half_; }
     // Capacity of one pass half (firstInstance bases are relative to this).
     [[nodiscard]] uint32_t instance_slot_count() const { return instance_slot_count_; }
 
     // Combined instance SSBO for graphics binding 1 (opaque half + transparent half).
-    // Bind once per frame — do not re-point binding 1 between opaque/transparent draws.
+    // Bound at build_scene — do not re-point binding 1 mid-command-buffer.
     [[nodiscard]] AllocatedBuffer& out_instances(uint32_t frame) {
         return out_instances_[frame];
     }
@@ -153,9 +161,10 @@ class GpuCulling {
     VkSampler dummy_sampler_ = VK_NULL_HANDLE;
     bool dummy_layout_ready_ = false;
 
-    // Per-frame item buffers so model updates after fence wait are FIF-safe.
-    // One combined out_instances buffer (2 halves); dual counts + indirect per pass.
+    // Per-frame item buffers so world uploads after fence wait are FIF-safe.
+    // out_instances: GpuOnly (compute write → VS). Optional transparent half.
     std::array<AllocatedBuffer, kMaxFrames> cull_items_{};
+    std::array<AllocatedBuffer, kMaxFrames> worlds_{};
     AllocatedBuffer batch_metas_{};
     std::array<std::array<AllocatedBuffer, kCullPassCount>, kMaxFrames> cull_globals_{};
     std::array<std::array<AllocatedBuffer, kCullPassCount>, kMaxFrames> batch_counts_{};
@@ -168,8 +177,11 @@ class GpuCulling {
     std::vector<GpuCullItem> cpu_items_{};
 
     uint32_t item_count_ = 0;
+    uint32_t transparent_item_count_ = 0;
     uint32_t batch_count_ = 0;
     uint32_t instance_slot_count_ = 0; // one pass half size; transparent offset = this
+    uint32_t world_count_ = 0;
+    bool has_transparent_half_ = false;
     bool ready_ = false;
 };
 

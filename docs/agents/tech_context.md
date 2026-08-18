@@ -54,32 +54,20 @@ Today shaders are compiled with **`glslc`** via the CMake `compile_shaders` targ
 
 Until then, prefer keeping `glslc` and avoiding a mid-feature toolchain swap.
 
-### Depth buffer model (current vs planned reverse-Z)
+### Depth buffer model (reverse-Z — landed on desktop)
 
-**Today (desktop):** standard Vulkan Z.
+**Today:** reverse-Z, Vulkan [0, 1] range.
 
-- Clip depth **0 = near, 1 = far** (`GLM_FORCE_DEPTH_ZERO_TO_ONE` + normal `glm::perspective(near, far)`)
-- Depth clear **1.0**, compare **`VK_COMPARE_OP_LESS`**
-- Hi-Z is a **min-depth** pyramid; occlusion uses `z_near > hzb_sample + bias`
+- Clip depth **1 = near, 0 = far** (`GLM_FORCE_DEPTH_ZERO_TO_ONE` + `perspective` then `clip.z' = clip.w - clip.z`)
+- Depth clear **0.0**, compare **`VK_COMPARE_OP_GREATER`** (debug lines `GREATER_OR_EQUAL`)
+- Constants: `gfx/Depth.h`
+- Hi-Z stays **RG min/max**. Conservative occlusion uses **R (min)** as farthest/hole; cull iff `z_close < hzb.r - bias`. Sky/holes stay at 0 → no cull.
+- Frustum extraction is unchanged: visible slab is still `0 <= ndc.z <= 1`.
+- MSAA depth resolve prefers **MAX** (closest under reverse-Z). HZB source remains the 1× prepass.
 
-**Planned (official roadmap):** adopt **reverse-Z** when VR / multiview / Quest depth work begins (same window as HZB quality upgrades and stereo).
+**Why:** far-field precision at large far/near ratios (worldScale, outdoor, later HMD). Same convention for upcoming multiview.
 
-| Change | Reverse-Z target |
-|--------|------------------|
-| Projection | Infinite or large far plane; depth mapping so **near → 1, far → 0** (or equivalent swap of near/far in the Z row) |
-| Clear | **0.0** |
-| Compare | **`VK_COMPARE_OP_GREATER`** (or `GREATER_OR_EQUAL`) |
-| Hi-Z | **Max-depth** pyramid (farthest occluder in the min-Z sense of reverse range); invert occlusion compare |
-| Frustum / cull | Re-validate plane extraction and any NDC z assumptions in `core::Frustum` + compute cull |
-| Resolve / MSAA depth | Keep working with the new clear/compare; re-check depth stencil resolve |
-
-**Why schedule it with VR, not mid-desktop feature churn**
-
-- Largest win is **depth precision at large far/near ratios** (world scale, HMD, outdoor scenes).
-- Touches camera, pipeline, clear values, Hi-Z, and cull shaders in one coherent change.
-- Stereo multiview benefits from one consistent depth convention from day one of OpenXR integration.
-
-**Not planned as a drive-by desktop change** while the current standard-Z path is stable for inspection scenes. Desktop can migrate first as a prep PR for Quest if desired, but the **committed slot on the roadmap is Phase 3 VR / depth depth** (see `project-plan.md` and `current_state.md`).
+**Still later (VR/Quest):** per-eye / multiview HZB, GMEM-friendly vis — `visibility-lod-plan.md`.
 
 ## Coding Conventions
 - Prefer **C-style structs** and static functions over class hierarchies (data-oriented design).
@@ -110,13 +98,13 @@ Until then, prefer keeping `glslc` and avoiding a mid-feature toolchain swap.
 
 Depth prepass and HZB cull use the **same** `view_proj`. No camera-stability gate. Pyramid is double-buffered per frame-in-flight only to avoid concurrent submit stomps.
 
-Pyramid quality: **RG32F** min+max downsample (`hzb_copy.comp` / `hzb_reduce.comp`). Occlusion uses **max** (G). Main-pass MSAA depth resolve is **not** the HZB source.
+Pyramid quality: **RG32F** min+max downsample (`hzb_copy.comp` / `hzb_reduce.comp`). Occlusion uses **min (R)** — farthest surface / hole under reverse-Z. Query is `ceil(log2)` + 4-corner min. Main-pass MSAA depth resolve is **not** the HZB source.
 
 **Removed (dead end for VR):** previous-frame HZB + `should_use_occlusion` hysteresis.
 
 **Secondary option still on the shelf: reprojected previous-frame HZB** (if prepass cost is too high on device).
 
-**With reverse-Z / multiview:** redesign HZB compare (max vs min pyramid), per-eye or multiview-aware pyramid, GMEM-friendly subpass layout on Adreno — same phase as reverse-Z (see § Depth buffer model).
+**Reverse-Z HZB compare is landed** (min = far/hole). Still later: per-eye / multiview pyramid, GMEM-friendly subpass on Adreno.
 
 Code anchors: `Engine.Render.cpp`, `HzbPyramid`, `depth_prepass` / `init_depth_prepass*`, `cull_frustum.comp`, `hzb_copy.comp`.
 
@@ -129,9 +117,13 @@ A `core::InputManager` provides the desktop input layer:
 - Per-frame processing: non-linear acceleration + EWMA smoothing.
 - Keyboard/mouse-button state queries.
 - Centralized cursor capture (`set_cursor_captured`) with automatic delta reset to prevent jumps on Escape.
-- `Camera` now receives an `InputManager&` (decoupling raw GLFW details from the scene layer).
+- Local captured path: `GLFW_CURSOR_DISABLED` (infinite relative look). Must stay unchanged when the remote path is edited.
+- Remote/HIDDEN path (RDP / xRDP): `GLFW_CURSOR_HIDDEN`; Windows look from `WM_INPUT` (relative or scaled absolute). No `ClipCursor`. Warp only at the desktop / 0–65535 rail, and only if `GetCursorPos` actually moved.
+- **Accepted limit:** remote + trackpad look can still peg at that rail (`SetCursorPos` typically ignored). Parked until **camera cleanup**. See `docs/architecture/desktop-inputs.md` § Accepted look-rail limit.
+- **GPU cull buffers (Adreno/UMA):** packed `worlds[]` (one mat4 per transform); 64-byte `GpuCullItem`; instance + indirect **GpuOnly** (unmapped) when WBOIT GPU-emits. Frame UBO: camera every frame, lights/SH only when dirty. No staging copies for HostWrite.
+- Consumers: `InputFrame` → `DesktopMoveSystem` / `FpsMoveSystem` (look+move) and `EditorHotkeySystem` (Escape, R, N, …). `Camera` is pose storage (ecs-plan option A), not the device layer.
 
-See `docs/architecture/desktop-inputs.md` for the full design (including rationale for singleton + user-pointer dispatch and config ownership split). The implementation is complete (see the companion implementation plan).
+See `docs/architecture/desktop-inputs.md` for the full design (singleton + user-pointer dispatch, capture reset, remote path, parked look-rail).
 
 ## Resource Lifetime Rules
 

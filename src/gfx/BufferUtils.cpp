@@ -4,9 +4,9 @@
 bool gfx::BufferUtils::initialize_buffer(
     VkDevice device, VmaAllocator allocator, VkDeviceSize size,
     gfx::AllocatedBuffer &allocated_buffer,
-    VkBufferUsageFlags extraUsage) {
+    VkBufferUsageFlags extraUsage,
+    BufferResidency residency) {
 
-    // Create the initial GPU buffer
     VkBufferCreateInfo buffer_info = {};
     buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     buffer_info.size = size;
@@ -15,11 +15,16 @@ bool gfx::BufferUtils::initialize_buffer(
                         extraUsage;
     buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-    // VMA: mapped + sequential host access
     VmaAllocationCreateInfo alloc_info = {};
     alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
-    alloc_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
-                       VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    if (residency == BufferResidency::HostWrite) {
+        // Persistently mapped. On Adreno UMA this is the same heap as GPU;
+        // a staging copy would be a second DRAM write.
+        alloc_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                           VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    } else {
+        alloc_info.preferredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    }
 
     VkResult result = vmaCreateBuffer(
         allocator, &buffer_info, &alloc_info, &allocated_buffer.buffer,
@@ -29,18 +34,15 @@ bool gfx::BufferUtils::initialize_buffer(
         return false;
     }
 
-    // Get device address for bindless
     VkBufferDeviceAddressInfo buffer_addr = {};
     buffer_addr.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
     buffer_addr.buffer = allocated_buffer.buffer;
     allocated_buffer.device_address =
         vkGetBufferDeviceAddress(device, &buffer_addr);
 
-    // vmaCreateBuffer with MAPPED flag already maps the memory
     allocated_buffer.mapped_data = allocated_buffer.info.pMappedData;
-
-    // Clear the buffer
-    memset(allocated_buffer.mapped_data, 0, buffer_info.size);
+    if (allocated_buffer.mapped_data)
+        memset(allocated_buffer.mapped_data, 0, buffer_info.size);
 
     return true;
 }

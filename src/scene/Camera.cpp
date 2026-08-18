@@ -99,7 +99,13 @@ glm::mat4 Camera::get_view_matrix() const {
 }
 
 glm::mat4 Camera::get_projection_matrix(float aspect_ratio) const {
-    return glm::perspective(glm::radians(fov_degrees), aspect_ratio, near_plane, far_plane);
+    // Standard RH [0,1] perspective, then reverse the Z row so near→1, far→0.
+    // clip.z' = clip.w - clip.z. Finite far plane kept for frustum culling.
+    glm::mat4 p = glm::perspective(glm::radians(fov_degrees), aspect_ratio,
+                                   near_plane, far_plane);
+    for (int c = 0; c < 4; ++c)
+        p[c][2] = p[c][3] - p[c][2];
+    return p;
 }
 
 void Camera::set_vr_view_matrix(const glm::mat4& view_matrix) {

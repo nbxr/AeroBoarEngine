@@ -190,6 +190,8 @@ void gfx::Engine::add_features(vkb::PhysicalDeviceSelector &selector) {
     VkPhysicalDeviceFeatures features10{};
     features10.drawIndirectFirstInstance = VK_TRUE;
     features10.multiDrawIndirect = VK_TRUE;
+    // WBOIT gather: accum (ONE,ONE) vs reveal (ZERO, 1-src) on two attachments.
+    features10.independentBlend = VK_TRUE;
     selector.set_required_features(features10);
 
     VkPhysicalDeviceVulkan11Features features11{};
@@ -243,15 +245,18 @@ gfx::Engine::init_logical_device(vkb::PhysicalDevice &phys) {
 }
 
 void gfx::Engine::select_depth_format(vkb::PhysicalDevice &phys) {
-    VkFormat formats[] = {VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D32_SFLOAT,
+    // Prefer D32 without stencil (we never use stencil). Must also be
+    // sampleable — Hi-Z copy and WBOIT both read 1× depth.
+    VkFormat formats[] = {VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT,
                           VK_FORMAT_D24_UNORM_S8_UINT};
+    const VkFormatFeatureFlags need =
+        VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT |
+        VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
 
     for (auto format : formats) {
         VkFormatProperties props;
         vkGetPhysicalDeviceFormatProperties(phys, format, &props);
-
-        if (props.optimalTilingFeatures &
-            VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
+        if ((props.optimalTilingFeatures & need) == need) {
             renderer.vk.depth_format = format;
             return;
         }
@@ -346,6 +351,9 @@ bool gfx::Engine::init_swapchain(vkb::Device &dev) {
     }
 
     renderer.vk.swap_chain_image_views = views_res.value();
+    auto images_res = swap_ret.value().get_images();
+    if (images_res)
+        renderer.vk.swap_chain_images = images_res.value();
     renderer.vk.swap_chain_image_count = static_cast<uint32_t>(renderer.vk.swap_chain_image_views.size());
 
     LOG_INFO("[Swapchain] Created with " << renderer.vk.swap_chain_image_count
@@ -368,6 +376,7 @@ void gfx::Engine::recreate_swapchain() {
     // --- Local variables for new resources ---
     VkSwapchainKHR                 new_swapchain = VK_NULL_HANDLE;
     std::vector<VkImageView>       new_swapchain_views;
+    std::vector<VkImage>           new_swapchain_images;
     std::vector<AllocatedImage>    new_msaa_images;
     std::vector<AllocatedImage>    new_depth_images;
     std::vector<AllocatedImage>    new_resolved_depth_images;
@@ -400,6 +409,9 @@ void gfx::Engine::recreate_swapchain() {
             success = false;
         } else {
             new_swapchain_views = std::move(views_res.value());
+            auto imgs = swap_ret.value().get_images();
+            if (imgs)
+                new_swapchain_images = std::move(imgs.value());
         }
     }
 
@@ -528,6 +540,11 @@ void gfx::Engine::recreate_swapchain() {
             if (sem != VK_NULL_HANDLE) vkDestroySemaphore(renderer.vk.device, sem, nullptr);
         }
 
+        // Gather FBs hold main-pass depth views. Drop them before destroying
+        // those images (device is idle; validation still requires this order).
+        if (renderer.transparent.is_ready())
+            renderer.transparent.release_swapchain_views(renderer.vk.device.device);
+
         // Destroy old per-swap-image transient MSAA and depth images
         for (auto &img : renderer.main_pass.msaa_color_images) {
             if (img.view != VK_NULL_HANDLE) {
@@ -560,6 +577,7 @@ void gfx::Engine::recreate_swapchain() {
         // Adopt new resources
         renderer.vk.swapchain = new_swapchain;
         renderer.vk.swap_chain_image_views = std::move(new_swapchain_views);
+        renderer.vk.swap_chain_images = std::move(new_swapchain_images);
         renderer.vk.swap_chain_image_count = static_cast<uint32_t>(renderer.vk.swap_chain_image_views.size());
         renderer.main_pass.msaa_color_images = std::move(new_msaa_images);
         renderer.main_pass.depth_images = std::move(new_depth_images);
@@ -617,6 +635,9 @@ void gfx::Engine::recreate_swapchain() {
         // (prepass depth views + cull HZB bindings) while the device is idle.
         renderer.hzb.resize(renderer.vk.device.device, renderer.allocator,
                             renderer.vk.swap_chain_extent);
+        if (renderer.transparent.is_ready())
+            renderer.transparent.resize(renderer.vk.device.device,
+                                        renderer.allocator, renderer);
         wire_hzb_descriptors();
 
         // Restart frame index after swapchain recreation. The per-frame fences

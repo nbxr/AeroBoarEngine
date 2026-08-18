@@ -113,18 +113,7 @@ bool SceneManager::sync_transforms() {
     // render loop today, but keep it correct).
     if (!transforms_.propagate())
         return false;
-
-    const size_t n = render_meshes_.size() < cpu_instances_.size()
-                         ? render_meshes_.size()
-                         : cpu_instances_.size();
-    for (size_t i = 0; i < n; ++i) {
-        const RenderMesh& rm = render_meshes_[i];
-        SceneInstance& inst = cpu_instances_[i];
-        const glm::mat4& world = transforms_.get_world_matrix(rm.transform_index);
-        inst.transform = world;
-        if (rm.local_aabb.is_valid())
-            inst.local_aabb = rm.local_aabb.transformed(world);
-    }
+    // Shade/cull read TransformManager + GpuCulling worlds[], not SceneInstance.
     return true;
 }
 
