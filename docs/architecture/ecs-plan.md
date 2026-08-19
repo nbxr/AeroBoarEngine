@@ -171,7 +171,7 @@ InputManager (device)
 ```text
 if any Entity with PlayerTag:
     active_player = FIRST such entity (load / spawn order — "first wins")
-    DesktopMove drives scene::Camera from that entity’s CameraRig
+    FpsMove drives the body + scene::Camera (third-person boom when authored)
     glTF camera node: NOT active controller
     optional one-shot: seed pose from glTF camera if player has no authored pose
 else:
@@ -335,7 +335,7 @@ Authoring long-term: KHR physics + filter layers, or ECS component that creates 
 2. InputManager::update
 3. build InputFrame
 4. EditorHotkeySystem(frame)            // app/editor — not on Player; Debug+Release for now
-5. FpsMove / DesktopMoveSystem          // Player; writes Camera + body
+5. FpsMove if player has a body; else DesktopMove  // never 6DOF-fly a follow-cam body
 6. LocomotionAnimSystem                 // speed → Idle/Walk/Run crossfade
 7. update_animations                    // player-root channels masked
 8. ScriptSystem::on_update(world, dt)
@@ -361,7 +361,7 @@ Authoring long-term: KHR physics + filter layers, or ECS component that creates 
 
 | type | Runtime |
 |------|---------|
-| `player` | `PlayerTag` + `CameraRig` + `DesktopMove` (not debug handler) |
+| `player` | `PlayerTag` + `CameraRig` + `FpsMove` (not free-fly). `"camera": "third_person"` / `boom_offset` → follow boom |
 | `health` | `Health` |
 | `script` | See **§11** — name → factory → instance |
 
@@ -374,12 +374,12 @@ Authoring long-term: KHR physics + filter layers, or ECS component that creates 
   - `"eye_height": 0.08` → `(0, 0.08, 0)` local Y (preferred for tabletop)
   - `"eye_offset": [0, 0.08, 0]` → full local offset (X/Z are side/forward in body space)
   - `"camera": "third_person"` → follow boom (default is first-person)
-  - `"boom_offset": [right, up, back]` → meters; implies third-person if present
+  - `"boom_offset": [right, up, back]` → **sim meters** (not multiplied by `worldScale`). Implies third-person. Default `[0, 1.6, 3]`. Blender `ecs_components_settings` is applied first; **`ECS_Components_v1` wins** if both are present (re-export so the UI and the array stay in sync).
 - `{ "type": "locomotion_anim", "idle": "T-Pose", "walk": "Walking_A", "run": "Running_A", "fade": 0.2 }`
   - Typo `locomation_anim` is accepted.
   - Optional `walk_speed` / `run_speed` are **thresholds** (m/s). Omit `run_speed` to stay on walk for any WASD.
 - Default offset `(0, 0.08, 0)`. Human-scale: `"eye_height": 1.6`. Default boom `(0, 1.6, 3)`.
-- `eye_offset` and `boom_offset` are asset meters; load scales them by `worldScale`.
+- `eye_offset` is asset meters; load scales it by `worldScale`. **`boom_offset` is sim meters** (distance in the scaled world) and is **not** scaled.
 - Blender: origin at feet, **+Y up**, apply rotation; avoid 180° X export quirks if the mesh looks inverted in a glTF viewer.
 - Do **not** key the player extras node in clips (gameplay owns that TRS). Bone `root` translation is masked so Walk/Run stay in place.
 

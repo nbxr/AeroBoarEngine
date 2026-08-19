@@ -13,7 +13,7 @@ Goal: 72–120 FPS at 2064×2208 per eye with minimal CPU overhead and maximum d
 **Status snapshot (maintain details in `docs/agents/current_state.md`):**
 - Active path: bindless PBR, **GPU frustum** (always) + **optional** same-frame Hi-Z (`occlusionCull`; off by default / off on Adreno). Multi-draw indirect, scene lights + procedural IBL. Distance LOD: `cascadebake-plan.md`. Culling policy: `visibility-lod-plan.md`.
 - Desktop: depth-only prepass (1x) feeds Hi-Z; main shade is MSAA single-subpass (depth resolve still present but not the HZB source).
-- Still target/aspirational for Quest: multiview, TBDR subpass layout, full production IBL assets, clustered lights. **Reverse-Z is on desktop.**
+- Still target/aspirational for Quest: multiview, TBDR subpass layout, full production IBL assets, **TCF / clustered lights** (`lighting-implementation.md` §4). **Reverse-Z is on desktop.**
 
 See `docs/agents/current_state.md` for the latest implementation status.
 

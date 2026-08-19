@@ -1,4 +1,5 @@
 #include "ecs/DesktopMoveSystem.h"
+#include "ecs/FpsMoveSystem.h"
 #include "ecs/World.h"
 #include "scene/Camera.h"
 #include "scene/TransformManager.h"
@@ -175,7 +176,23 @@ void desktop_move_system_update(World& world, const core::InputFrame& frame,
     Entity player = world.active_player();
     if (player == kInvalidEntity || !world.is_alive(player))
         return;
-    if (!world.player_tags.has(player) || !world.desktop_moves.has(player))
+    if (!world.player_tags.has(player))
+        return;
+
+    // Follow-cam / authored body: never 6DOF-fly. WASD must move the character.
+    const CameraRig* rig_tp = world.camera_rigs.try_get(player);
+    const TransformLink* body = world.transform_links.try_get(player);
+    const bool has_body =
+        body && body->transform_index != ~0u && transforms &&
+        transforms->is_alive(body->transform_index);
+    if (has_body && (world.fps_moves.has(player) ||
+                     (rig_tp && rig_tp->third_person))) {
+        world.fps_moves.get_or_emplace(player);
+        fps_move_system_update(world, frame, camera, *transforms);
+        return;
+    }
+
+    if (!world.desktop_moves.has(player))
         return;
 
     constexpr float kSpeedMin = 0.01f;

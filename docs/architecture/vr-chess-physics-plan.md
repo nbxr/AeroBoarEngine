@@ -2,9 +2,9 @@
 
 **Product fantasy:** Load **ABeautifulGame** (Khronos chess set), put **physics on the pieces and board**, enter **OpenXR / Quest**, **shrink the player** so you can run around on the board, and **knock pieces over** with hands / body collision.
 
-**Status:** **Desktop Phase A largely working** — KHR rigid bodies on ABeautifulGameScene, `worldScale: 10`, player capsule knocks pieces, physics debug draw. ECS Player + free-fly camera exist. **Not yet:** FPS locomotion, finished multi-part pawn authoring for all pieces, OpenXR / shrink-to-board VR.
+**Status:** **Desktop Phase A largely working** — KHR rigid bodies on ABeautifulGame / ABeautifulGameGame, `worldScale: 10`, player knocks pieces, physics debug draw. **FpsMove + third-person boom landed** (WASD moves the authored body; `boom_offset` is sim meters). Combined chess+Barbarian still needs Idle/Walk clips exported. **Not yet:** finished multi-part pawn authoring for all pieces, OpenXR / shrink-to-board VR.
 
-**Next coding priority:** FPS player controller (walk / jump / crouch) on the capsule — see `ecs-plan.md` / `physics-plan.md`.
+**Next coding priority:** locomotion polish (clips / hysteresis / jump) or VR path — see `ecs-plan.md` / `animation-plan.md` §9 / `physics-plan.md`.
 
 **See also**
 - `docs/architecture/physics-plan.md` — Jolt foundation + phase checklist  

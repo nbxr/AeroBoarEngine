@@ -43,11 +43,25 @@ class SkinSystem {
     // Record mesh node transform for inv(meshWorld) skinning (first writer wins).
     void set_mesh_transform(uint32_t skin_index, uint32_t mesh_transform_index);
 
-    // Allocate host-visible per-frame joint buffers (call after load if skins exist).
+    // Palette SSBO (GpuOnly) + static IBM/meta + compute pipeline.
     bool create_gpu_buffers(VkDevice device, VmaAllocator allocator);
 
-    // Palette entry = inv(meshWorld) * jointWorld * IBM (glTF). VS applies mesh model.
+    // CPU fallback (tests / if compute failed). Frame path uses record().
     void update_joint_matrices(uint32_t frame_index, const TransformManager& transforms);
+
+    // Dispatch palette build. worlds must already be uploaded for this FIF slot.
+    // Record outside any render pass, before skinned draws (including prepass).
+    void record(VkCommandBuffer cmd, uint32_t frame_index,
+                const gfx::AllocatedBuffer& worlds, uint32_t world_count);
+
+    // Call after GpuCulling::build_scene (worlds buffer handle is stable).
+    void bind_worlds(const gfx::AllocatedBuffer& worlds0,
+                     const gfx::AllocatedBuffer& worlds1);
+
+    [[nodiscard]] bool gpu_compute_ready() const {
+        return gpu_ready_ && palette_pipeline_ != VK_NULL_HANDLE &&
+               total_joints_ > 0;
+    }
 
     [[nodiscard]] uint32_t skin_count() const {
         return static_cast<uint32_t>(skins_.size());
@@ -64,11 +78,24 @@ class SkinSystem {
     }
 
   private:
+    bool create_compute(VkDevice device);
+    void destroy_compute(VkDevice device, VmaAllocator allocator);
+    void write_set(uint32_t frame, const gfx::AllocatedBuffer& worlds);
+
     std::vector<Skin> skins_{};
     std::vector<glm::mat4> cpu_palette_{};
     std::array<gfx::AllocatedBuffer, kMaxFrames> joint_buffers_{};
+    gfx::AllocatedBuffer ibm_buffer_{};
+    gfx::AllocatedBuffer meta_buffer_{};
     uint32_t total_joints_ = 0;
     bool gpu_ready_ = false;
+
+    VkDevice device_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout set_layout_ = VK_NULL_HANDLE;
+    VkPipelineLayout pipeline_layout_ = VK_NULL_HANDLE;
+    VkPipeline palette_pipeline_ = VK_NULL_HANDLE;
+    VkDescriptorPool pool_ = VK_NULL_HANDLE;
+    std::array<VkDescriptorSet, kMaxFrames> sets_{};
 };
 
 } // namespace scene

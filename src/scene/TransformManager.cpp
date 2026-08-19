@@ -180,6 +180,7 @@ void TransformManager::set_world_matrix(uint32_t index, const glm::mat4& world) 
         return;
     }
     world_matrices_[index] = world;
+    ++world_serial_;
     if (parents_[index] == kInvalid) {
         local_matrices_[index] = world;
         local_trs_[index] = decompose_matrix(world);
@@ -271,6 +272,7 @@ bool TransformManager::propagate() {
             break;
         }
     }
+    ++world_serial_;
     return true;
 }
 
@@ -288,6 +290,7 @@ void TransformManager::clear() {
     dirty_.clear();
     free_list_.clear();
     any_dirty_ = false;
+    world_serial_ = 0;
 }
 
 } // namespace scene

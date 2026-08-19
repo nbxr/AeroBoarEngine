@@ -62,8 +62,9 @@ struct CameraRig {
     glm::vec3 eye_offset{0.0f, 0.08f, 0.0f};
 
     // Third-person follow (extras: "camera": "third_person", "boom_offset": [r, up, back]).
+    // boom_offset is sim meters (after worldScale). Not multiplied at load.
     bool third_person = false;
-    glm::vec3 boom_offset{0.0f, 1.6f, 3.0f}; // right, up, back (meters)
+    glm::vec3 boom_offset{0.0f, 1.6f, 3.0f}; // right, up, back (sim meters)
 };
 
 // Idle / walk / run driven by FpsMove.horizontal_speed. extras type

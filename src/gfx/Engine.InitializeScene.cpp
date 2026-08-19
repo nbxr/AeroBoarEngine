@@ -515,11 +515,11 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     // if none authored. Player owns view (first PlayerTag wins).
     {
         ecs::populate_world_from_gltf(ecs_world, model, renderer.scene_manager);
-        // Authored eye_offset / boom_offset are in asset meters; match worldScale.
+        // eye_offset is asset meters (tiny capsules). boom_offset is already
+        // sim meters (distance behind the scaled character) — do not * worldScale.
         if (std::abs(world_scale - 1.0f) > 1e-5f) {
             for (ecs::CameraRig& rig : ecs_world.camera_rigs.data()) {
                 rig.eye_offset *= world_scale;
-                rig.boom_offset *= world_scale;
             }
         }
         if (ecs_world.player_tags.size() == 0) {
@@ -699,33 +699,38 @@ void gfx::Engine::refresh_lights_from_transforms() {
 bool gfx::Engine::sync_scene_transforms() {
     // CPU hierarchy: propagate dirty locals → worlds. SceneInstance is load-time
     // only (shade reads the cull instance SSBO).
+    //
+    // FpsMove / physics often propagate() *before* render, which clears dirty.
+    // GPU worlds[] / skin palettes must still upload — compare world_serial(),
+    // not any_dirty() at this call site.
     const bool worlds_changed = renderer.scene_manager.sync_transforms();
-    if (worlds_changed) {
+    const uint64_t serial =
+        renderer.scene_manager.transforms().world_serial();
+    const uint32_t fi = renderer.current_frame;
+    const bool need_upload =
+        worlds_changed ||
+        renderer.uploaded_world_serial[fi] != serial;
+
+    if (need_upload) {
         refresh_lights_from_transforms();
-        // Both frame slots must see new models; each uploads after its own fence wait.
-        renderer.transform_upload_mask = (1u << Renderer::MAX_FRAMES_IN_FLIGHT) - 1u;
+        renderer.transform_upload_mask =
+            (1u << Renderer::MAX_FRAMES_IN_FLIGHT) - 1u;
     }
 
-    // Joint palettes always refresh when anything is dirty or any skin is playing.
-    // Use transform_upload_mask so each FIF slot gets a coherent palette write.
-    const uint32_t bit = 1u << renderer.current_frame;
-    const bool need_upload = (renderer.transform_upload_mask & bit) != 0 ||
-                             worlds_changed ||
-                             renderer.scene_manager.skins().has_skins();
-
-    if (need_upload && renderer.scene_manager.skins().has_skins()) {
-        renderer.scene_manager.skins().update_joint_matrices(
-            renderer.current_frame, renderer.scene_manager.transforms());
-        // Joint buffer descriptor is bound at load (bind_frame_lighting_to_all_sets).
+    const uint32_t bit = 1u << fi;
+    auto& skins = renderer.scene_manager.skins();
+    if (skins.total_joints() > 0 && !skins.gpu_compute_ready() &&
+        (need_upload || skins.has_skins())) {
+        skins.update_joint_matrices(fi, renderer.scene_manager.transforms());
     }
 
-    if ((renderer.transform_upload_mask & bit) == 0 && !worlds_changed)
-        return worlds_changed;
+    if (!need_upload && (renderer.transform_upload_mask & bit) == 0)
+        return false;
 
     if (renderer.gpu_culling.is_ready() &&
         (renderer.transform_upload_mask & bit) != 0) {
-        renderer.gpu_culling.update_models(renderer.current_frame,
-                                           renderer.scene_manager);
+        renderer.gpu_culling.update_models(fi, renderer.scene_manager);
+        renderer.uploaded_world_serial[fi] = serial;
     }
     renderer.transform_upload_mask &= ~bit;
     return true;
@@ -819,5 +824,7 @@ void gfx::Engine::cleanup_scene() {
     renderer.gpu_culling.clear_scene(renderer.vk.device, renderer.allocator);
     renderer.last_visible_instances = 0;
     renderer.last_total_render_meshes = 0;
+    renderer.transform_upload_mask = 0;
+    renderer.uploaded_world_serial = {};
     renderer.scene_manager.clear_scene_data();
 }

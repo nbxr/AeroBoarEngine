@@ -66,6 +66,7 @@ set(SHADER_FILES
     build_indirect.comp
     hzb_copy.comp
     hzb_reduce.comp
+    skin_palette.comp
 )
 
 # Create shader compilation rules

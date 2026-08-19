@@ -13,10 +13,9 @@ namespace ecs {
 
 class World;
 
-// Player free-fly + look. Only entities with PlayerTag + DesktopMove.
-// Writes scene::Camera (storage option A). If the player has a TransformLink,
-// also writes that transform so authored meshes (capsule, etc.) move with the player.
-// Y/T adjust movement_speed on the rig.
+// Player free-fly + look. Only entities with PlayerTag + DesktopMove and no
+// live body. Authored bodies / CameraRig.third_person are handed to FpsMove
+// (WASD moves the character, boom follows). Y/T adjust movement_speed on the rig.
 void desktop_move_system_update(World& world, const core::InputFrame& frame,
                                 scene::Camera& camera,
                                 scene::TransformManager* transforms = nullptr);

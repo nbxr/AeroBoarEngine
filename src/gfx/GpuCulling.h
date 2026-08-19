@@ -124,6 +124,9 @@ class GpuCulling {
 
     // Combined instance SSBO for graphics binding 1 (opaque half + transparent half).
     // Bound at build_scene — do not re-point binding 1 mid-command-buffer.
+    [[nodiscard]] AllocatedBuffer& worlds(uint32_t frame) { return worlds_[frame]; }
+    [[nodiscard]] uint32_t world_count() const { return world_count_; }
+
     [[nodiscard]] AllocatedBuffer& out_instances(uint32_t frame) {
         return out_instances_[frame];
     }

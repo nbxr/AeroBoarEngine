@@ -100,11 +100,20 @@ void fps_move_system_update(World& world, const core::InputFrame& frame,
     }
 
     const uint32_t ti = link->transform_index;
+    const bool third_person = rig && rig->third_person;
     transforms.propagate_if_dirty();
     glm::vec3 root = glm::vec3(transforms.get_world_matrix(ti)[3]);
 
-    if (!fps.initialized)
+    if (!fps.initialized) {
         init_from_camera_and_root(fps, camera, root);
+        const glm::vec3 boom =
+            rig ? rig->boom_offset : glm::vec3(0.0f, 1.6f, 3.0f);
+        LOG_INFO("[FPS] controller entity=" << player << " xform=" << ti
+                 << (third_person ? " third_person" : " first_person")
+                 << " root=(" << root.x << ", " << root.y << ", " << root.z
+                 << ") boom=(" << boom.x << ", " << boom.y << ", " << boom.z
+                 << ")");
+    }
 
     const float dt = std::max(frame.delta_time, 0.0f);
 
@@ -137,8 +146,6 @@ void fps_move_system_update(World& world, const core::InputFrame& frame,
         forward = glm::normalize(forward);
     const glm::vec3 right =
         glm::normalize(glm::cross(forward, glm::vec3(0.0f, 1.0f, 0.0f)));
-
-    const bool third_person = rig && rig->third_person;
 
     // --- Crouch (hold Ctrl) ---
     fps.crouching = frame.left_control;
@@ -212,6 +219,8 @@ void fps_move_system_update(World& world, const core::InputFrame& frame,
         trs.translation = glm::vec3(inv_parent * glm::vec4(root, 1.0f));
         transforms.set_local_trs(ti, trs);
     }
+    // Children (skinned meshes + skeleton) must see this pose before physics.
+    transforms.propagate_if_dirty();
 
     // --- Camera ---
     if (third_person) {

@@ -121,6 +121,7 @@ A `core::InputManager` provides the desktop input layer:
 - Remote/HIDDEN path (RDP / xRDP): `GLFW_CURSOR_HIDDEN`; Windows look from `WM_INPUT` (relative or scaled absolute). No `ClipCursor`. Warp only at the desktop / 0–65535 rail, and only if `GetCursorPos` actually moved.
 - **Accepted limit:** remote + trackpad look can still peg at that rail (`SetCursorPos` typically ignored). Parked until **camera cleanup**. See `docs/architecture/desktop-inputs.md` § Accepted look-rail limit.
 - **GPU cull buffers (Adreno/UMA):** packed `worlds[]` (one mat4 per transform); 64-byte `GpuCullItem`; instance + indirect **GpuOnly** (unmapped) when WBOIT GPU-emits. Frame UBO: camera every frame, lights/SH only when dirty. No staging copies for HostWrite.
+- **GPU skin palettes:** `skin_palette.comp` writes `inv(meshWorld)*jointWorld*IBM` from `worlds[]`. Palette SSBO is GpuOnly. VS unchanged. CPU palette path only if compute init fails. `worlds[]` re-uploads when `TransformManager::world_serial()` changes — FpsMove/physics may already have propagated (dirty flags clear) before `render()`.
 - Consumers: `InputFrame` → `DesktopMoveSystem` / `FpsMoveSystem` (look+move) and `EditorHotkeySystem` (Escape, R, N, …). `Camera` is pose storage (ecs-plan option A), not the device layer.
 
 See `docs/architecture/desktop-inputs.md` for the full design (singleton + user-pointer dispatch, capture reset, remote path, parked look-rail).

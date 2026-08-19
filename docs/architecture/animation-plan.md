@@ -25,6 +25,7 @@ Morph: `MorphSystem` loads target deltas, animation path `weights`, CPU blend in
 | Decomposed TRS on nodes | **Yes** — `TransformManager::LocalTrs` + set_local_translation/rotation/scale |
 | Clip playback | **Crossfade** (`crossfade`, N uses 0.2 s fade); exclusive still used for load / fade=0 |
 | JOINTS/WEIGHTS / skins / VS skinning | **Yes (Phase 2)** — `SkinSystem` + `pbr.vert` / prepass |
+| Joint palette build | **GPU compute** (`skin_palette.comp`) from `worlds[]` + static IBM; CPU fallback if compute fails |
 | Mesh-relative skin matrices | **Yes** — `inv(meshWorld) * jointWorld * IBM`, VS multiplies mesh model |
 | Missing NORMAL (e.g. Fox) | **Yes** — face-normal accumulation at load |
 | Morph targets | **Yes (CPU Phase 3)** — `MorphSystem`; path `weights`; POSITION+NORMAL deltas |
@@ -215,7 +216,7 @@ Defaults: name-match `T-Pose`/`Idle`, `Walk*`, `Run*` if extras omitted.
 
 ### 9.3 Third-person camera (parallel, same slice)
 
-**Landed (boom + look-at).** Storage option A (`scene::Camera`). `CameraRig.third_person` + `boom_offset` (right, up, back).
+**Landed (boom + look-at).** Storage option A (`scene::Camera`). `CameraRig.third_person` + `boom_offset` (right, up, back). An authored player **body** always uses `FpsMove` (WASD translates the extras node; camera boom-follows). Free-fly `DesktopMove` is only the no-body inspector — never a third-person character.
 
 | | First person | Third person |
 |--|----------------|--------------|
@@ -223,7 +224,7 @@ Defaults: name-match `T-Pose`/`Idle`, `Walk*`, `Run*` if extras omitted.
 | Look | yaw/pitch on camera | look-at root + boom.y (head height); pitch orbits |
 | Player yaw | authored rotation kept | **body faces camera yaw** (rest rotation preserved, Y-only) |
 
-Mouse still drives yaw/pitch. Boom is in **asset meters**, then `worldScale` (same as `eye_offset`). Extras:
+Mouse still drives yaw/pitch. **`boom_offset` is sim meters** (distance in the scaled world). It is **not** multiplied by `worldScale` — `[0, 1.6, 3]` is 1.6 m above the root and 3 m back. `eye_offset` is still asset meters × `worldScale`. Load applies Blender `ecs_components_settings` first, then **`ECS_Components_v1`** (hand-edited array wins). Re-export if you use the Blender component UI. Extras:
 
 ```json
 { "type": "player", "camera": "third_person", "boom_offset": [0, 1.6, 3] }

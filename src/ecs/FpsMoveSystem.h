@@ -12,9 +12,9 @@ namespace ecs {
 
 class World;
 
-// Grounded move for PlayerTag + FpsMove.
+// Grounded move for PlayerTag + a live TransformLink (any authored body).
 // - Mouse look (yaw/pitch, no roll)
-// - WASD on horizontal plane (relative to camera yaw)
+// - WASD on horizontal plane (relative to camera yaw) — moves the character
 // - Space jump, Left-Ctrl crouch (hold)
 // - Simple gravity vs ground_y (no raycast yet); kinematic body follows transform
 // - CameraRig.third_person: orbit boom + look-at + body yaw; else first-person eye

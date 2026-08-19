@@ -188,6 +188,13 @@ void gfx::Engine::render() {
     // ------------------------------------------------------------------
     write_frame_lighting(renderer.current_frame);
 
+    if (renderer.scene_manager.skins().gpu_compute_ready() &&
+        renderer.gpu_culling.is_ready()) {
+        renderer.scene_manager.skins().record(
+            frame.command_buffer, fi, renderer.gpu_culling.worlds(fi),
+            renderer.gpu_culling.world_count());
+    }
+
     auto record_transparent_cull = [&](bool hzb) {
         if (!gpu_transparent)
             return;

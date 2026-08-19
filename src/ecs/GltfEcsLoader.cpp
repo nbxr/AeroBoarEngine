@@ -5,10 +5,45 @@
 #include "core/Log.h"
 
 #include <tiny_gltf.h>
+#include <nlohmann/json.hpp>
 #include <cstdio>
 
 namespace ecs {
 namespace {
+
+tinygltf::Value json_to_tiny(const nlohmann::json& j) {
+    if (j.is_object()) {
+        tinygltf::Value::Object o;
+        for (auto it = j.begin(); it != j.end(); ++it)
+            o.emplace(it.key(), json_to_tiny(it.value()));
+        return tinygltf::Value(std::move(o));
+    }
+    if (j.is_array()) {
+        tinygltf::Value::Array a;
+        a.reserve(j.size());
+        for (const auto& e : j)
+            a.push_back(json_to_tiny(e));
+        return tinygltf::Value(std::move(a));
+    }
+    if (j.is_string())
+        return tinygltf::Value(j.get<std::string>());
+    if (j.is_boolean())
+        return tinygltf::Value(j.get<bool>());
+    if (j.is_number_integer())
+        return tinygltf::Value(j.get<int>());
+    if (j.is_number())
+        return tinygltf::Value(j.get<double>());
+    return {};
+}
+
+tinygltf::Value parse_extras_json(const std::string& s) {
+    if (s.empty())
+        return {};
+    const nlohmann::json j = nlohmann::json::parse(s, nullptr, false);
+    if (j.is_discarded())
+        return {};
+    return json_to_tiny(j);
+}
 
 const tinygltf::Value* find_ecs_array(const tinygltf::Value& extras) {
     if (!extras.IsObject())
@@ -97,7 +132,9 @@ uint32_t apply_component_entry(World& world, Entity entity,
         if (rig.third_person) {
             LOG_INFO("[ECS] player third_person boom=("
                      << rig.boom_offset.x << ", " << rig.boom_offset.y << ", "
-                     << rig.boom_offset.z << ")");
+                     << rig.boom_offset.z << ") entity=" << entity);
+        } else {
+            LOG_INFO("[ECS] player first_person entity=" << entity);
         }
         return 1;
     }
@@ -160,6 +197,74 @@ uint32_t apply_component_entry(World& world, Entity entity,
     return 0;
 }
 
+const tinygltf::Value* extras_object(const tinygltf::Node& node,
+                                     tinygltf::Value& storage) {
+    if (node.extras.IsObject())
+        return &node.extras;
+    if (node.extras.IsString()) {
+        storage = parse_extras_json(node.extras.Get<std::string>());
+        return storage.IsObject() ? &storage : nullptr;
+    }
+    if (!node.extras_json_string.empty()) {
+        storage = parse_extras_json(node.extras_json_string);
+        return storage.IsObject() ? &storage : nullptr;
+    }
+    return nullptr;
+}
+
+bool has_settings_components(const tinygltf::Value* extras) {
+    if (!extras || !extras->IsObject())
+        return false;
+    const auto& obj = extras->Get<tinygltf::Value::Object>();
+    auto it = obj.find("ecs_components_settings");
+    if (it == obj.end() || !it->second.IsObject())
+        return false;
+    const auto& s = it->second.Get<tinygltf::Value::Object>();
+    auto cit = s.find("components");
+    return cit != s.end() && cit->second.IsArray();
+}
+
+// Blender UI writes props here; overlay after ECS_Components_v1 so edits apply.
+uint32_t apply_settings_overlay(World& world, Entity entity,
+                                const tinygltf::Value& extras) {
+    if (!extras.IsObject())
+        return 0;
+    const auto& obj = extras.Get<tinygltf::Value::Object>();
+    auto sit = obj.find("ecs_components_settings");
+    if (sit == obj.end() || !sit->second.IsObject())
+        return 0;
+    const auto& settings = sit->second.Get<tinygltf::Value::Object>();
+    auto cit = settings.find("components");
+    if (cit == settings.end() || !cit->second.IsArray())
+        return 0;
+
+    uint32_t applied = 0;
+    for (const auto& comp : cit->second.Get<tinygltf::Value::Array>()) {
+        if (!comp.IsObject())
+            continue;
+        const auto& cobj = comp.Get<tinygltf::Value::Object>();
+        const std::string type = get_string(cobj, "type");
+        auto pit = cobj.find("props");
+        if (type.empty() || pit == cobj.end() || !pit->second.IsArray())
+            continue;
+
+        tinygltf::Value::Object synthetic;
+        synthetic.emplace("type", tinygltf::Value(type));
+        for (const auto& prop : pit->second.Get<tinygltf::Value::Array>()) {
+            if (!prop.IsObject())
+                continue;
+            const auto& pobj = prop.Get<tinygltf::Value::Object>();
+            const std::string key = get_string(pobj, "key");
+            auto vit = pobj.find("value");
+            if (key.empty() || vit == pobj.end())
+                continue;
+            synthetic.emplace(key, vit->second);
+        }
+        applied += apply_component_entry(world, entity, tinygltf::Value(synthetic));
+    }
+    return applied;
+}
+
 } // namespace
 
 uint32_t apply_ecs_components_v1(World& world, Entity entity,
@@ -167,14 +272,18 @@ uint32_t apply_ecs_components_v1(World& world, Entity entity,
     if (node_index < 0 || node_index >= static_cast<int>(model.nodes.size()))
         return 0;
     const auto& node = model.nodes[static_cast<size_t>(node_index)];
-    const tinygltf::Value* arr = find_ecs_array(node.extras);
-    if (!arr)
-        return 0;
+    tinygltf::Value storage;
+    const tinygltf::Value* extras = extras_object(node, storage);
+    const tinygltf::Value* arr = extras ? find_ecs_array(*extras) : nullptr;
 
     uint32_t applied = 0;
-    const auto& list = arr->Get<tinygltf::Value::Array>();
-    for (const auto& entry : list)
-        applied += apply_component_entry(world, entity, entry);
+    if (extras)
+        applied += apply_settings_overlay(world, entity, *extras);
+    if (arr) {
+        const auto& list = arr->Get<tinygltf::Value::Array>();
+        for (const auto& entry : list)
+            applied += apply_component_entry(world, entity, entry);
+    }
     return applied;
 }
 
@@ -207,8 +316,13 @@ uint32_t populate_world_from_gltf(World& world, const tinygltf::Model& model,
 
     // Non-mesh nodes (or any node) with ECS extras: ensure entity exists.
     uint32_t extras_hits = 0;
+    const auto& node_to_x = scene.gltf_node_to_transform();
     for (size_t ni = 0; ni < model.nodes.size(); ++ni) {
-        if (!find_ecs_array(model.nodes[ni].extras))
+        tinygltf::Value extras_storage;
+        const tinygltf::Value* extras =
+            extras_object(model.nodes[ni], extras_storage);
+        const tinygltf::Value* arr = extras ? find_ecs_array(*extras) : nullptr;
+        if (!arr && !has_settings_components(extras))
             continue;
 
         Entity e = kInvalidEntity;
@@ -217,19 +331,41 @@ uint32_t populate_world_from_gltf(World& world, const tinygltf::Model& model,
 
         if (e == kInvalidEntity) {
             e = world.create_entity();
-            const auto& node_to_x = scene.gltf_node_to_transform();
-            if (ni < node_to_x.size() &&
-                node_to_x[ni] != scene::TransformManager::kInvalid) {
-                TransformLink link{};
-                link.transform_index = node_to_x[ni];
-                world.transform_links.get_or_emplace(e, link);
-            }
             if (!model.nodes[ni].name.empty())
                 world.names.get_or_emplace(e, Name{model.nodes[ni].name});
             world.gltf_node_to_entity[ni] = e;
         }
 
-        extras_hits += apply_ecs_components_v1(world, e, model, static_cast<int>(ni));
+        // Always bind the glTF node transform so WASD has a body to move.
+        if (!world.transform_links.has(e) && ni < node_to_x.size() &&
+            node_to_x[ni] != scene::TransformManager::kInvalid) {
+            TransformLink link{};
+            link.transform_index = node_to_x[ni];
+            world.transform_links.get_or_emplace(e, link);
+        }
+
+        uint32_t applied = 0;
+        // Blender UI props first; ECS_Components_v1 last so a hand-edited
+        // boom_offset array wins over a stale ecs_components_settings string.
+        if (extras)
+            applied += apply_settings_overlay(world, e, *extras);
+        if (arr) {
+            const auto& list = arr->Get<tinygltf::Value::Array>();
+            for (const auto& entry : list)
+                applied += apply_component_entry(world, e, entry);
+        }
+        extras_hits += applied;
+
+        if (const TransformLink* link = world.transform_links.try_get(e)) {
+            LOG_INFO("[ECS] extras node=" << ni << " '"
+                     << model.nodes[ni].name << "' entity=" << e
+                     << " xform=" << link->transform_index
+                     << " entries=" << applied);
+        } else {
+            LOG_ERROR("[ECS] extras node=" << ni << " '"
+                      << model.nodes[ni].name << "' entity=" << e
+                      << " has no TransformLink — WASD cannot move this body");
+        }
     }
 
     world.resolve_active_player();

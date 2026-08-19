@@ -15,12 +15,12 @@ This file is the primary contract for all AI coding agents (Grok Build, Continue
 - `docs/architecture/pipeline-implementation.md`
 - `docs/architecture/game-object-implementation.md`
 - `docs/architecture/animation-plan.md` — glTF animation phases (node TRS → skin → morph)
-- `docs/architecture/ecs-plan.md` — custom ECS, InputFrame, Player + camera; **next:** FPS controller
+- `docs/architecture/ecs-plan.md` — custom ECS, InputFrame, Player + FpsMove / third-person boom
 - `docs/architecture/game-object-implementation.md` — GameObject / Transform / RenderMesh + ECS authoring sketch
 - `docs/architecture/gltf-extensions.md` — Khronos extension support matrix
 - `docs/architecture/physics-plan.md` — Jolt + KHR MVP, worldScale, debug draw
 - `docs/architecture/vr-chess-physics-plan.md` — ABeautifulGame desktop knock-over → FPS → VR
-- `docs/architecture/lighting-implementation.md` — lighting / IBL
+- `docs/architecture/lighting-implementation.md` — lighting / IBL; **investigate TCF** (tiled clustered forward) for Quest
 - `docs/architecture/visibility-lod-plan.md` — frustum / optional Hi-Z / Adreno GMEM
 - `docs/architecture/cascadebake-plan.md` — **CascadeBake** / `CascadeOven` (meshlets → impostors → skybox)
 

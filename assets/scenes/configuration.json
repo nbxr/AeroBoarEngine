@@ -1,5 +1,5 @@
 {
-  "defaultScene": "ABeautifulGameScene",
+  "defaultScene": "ABeautifulGameGame",
   "activeSystem": "Windows",
   "scenePhysics": true,
   "worldScale": 10.0,

@@ -69,6 +69,11 @@ class TransformManager {
     [[nodiscard]] bool any_dirty() const { return any_dirty_; }
     [[nodiscard]] bool is_dirty(uint32_t index) const;
 
+    // Bumps whenever a world matrix is written (propagate or set_world_matrix).
+    // GPU worlds[] must re-upload when this differs from the last uploaded serial
+    // — dirty flags can already be clear if FpsMove/physics propagated earlier.
+    [[nodiscard]] uint64_t world_serial() const { return world_serial_; }
+
     // Force full recompute next propagate() (e.g. after bulk load edits).
     void mark_all_dirty();
 
@@ -102,6 +107,7 @@ class TransformManager {
     std::vector<uint8_t> dirty_{}; // 1 = needs world recompute
     std::vector<uint32_t> free_list_{};
     bool any_dirty_ = false;
+    uint64_t world_serial_ = 0;
 };
 
 } // namespace scene

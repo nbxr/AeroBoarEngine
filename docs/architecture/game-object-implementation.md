@@ -127,7 +127,7 @@ Skinned path adds joint palette rebuild after worlds, then VS skin (both prepass
 |-------|----------|
 | Camera storage | Write into **`scene::Camera`**; render keeps reading it for now |
 | glTF camera vs Player | **`player` entity owns the view**; glTF camera is not the active controller. No player → free-fly Player seeded from glTF camera or frame |
-| Move input | **Player** path (`DesktopMove` + system) |
+| Move input | **Player** path (`FpsMove` on a body; `DesktopMove` only if no body) |
 | Editor keys (Escape, R, N, P, …) | **`EditorHotkeySystem`** — not on Player; Debug+Release for now |
 | Multiple players | **First wins** for `active_player` |
 | Triggers | **Jolt sensors** |

@@ -73,6 +73,8 @@ struct Renderer {
     std::array<bool, MAX_FRAMES_IN_FLIGHT> last_cull_used_hzb{};
     // Bit i set → cull_items_[i] still needs model rewrite after a hierarchy change.
     uint32_t transform_upload_mask = 0;
+    // Last TransformManager::world_serial() written into worlds_[i]. 0 = never.
+    std::array<uint64_t, MAX_FRAMES_IN_FLIGHT> uploaded_world_serial{};
 
     uint32_t current_frame = 0;
 

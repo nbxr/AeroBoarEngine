@@ -155,6 +155,9 @@ static glm::vec2 GetTexcoordFromAccessor(const tinygltf::Model& model,
 bool scene::GltfLoader::load_model(const std::string &filename,
                                   tinygltf::Model &model) {
     tinygltf::TinyGLTF loader{};
+    // Keep extras_json_string so ECS authoring still loads if Value extras is
+    // empty or stored as a JSON string (some Blender/tinygltf paths).
+    loader.SetStoreOriginalJSONForExtrasAndExtensions(true);
     std::string err;
     std::string warn;
 

@@ -5,7 +5,7 @@ Canonical description of how lighting works in AeroBoarEngine today, and what re
 **See also**
 - `docs/agents/current_state.md` — gaps and priorities
 - `docs/agents/tech_context.md` — descriptor bindings
-- `docs/architecture/pipeline-implementation.md` — pipeline / Quest vision
+- `docs/architecture/pipeline-implementation.md` — Quest pipeline; TCF / clustered lights still aspirational
 - `docs/agents/architecture_principles.md` — TBDR constraints
 
 ---
@@ -66,7 +66,7 @@ Baked at engine init:
 
 ## 3. Known limitations (current)
 
-- Fixed light count (`MAX_LIGHTS = 8`); no clustered/tiled many-lights.
+- Fixed light count (`MAX_LIGHTS = 8`); shade loops every light. No tiled/clustered many-lights yet.
 - No shadows (`PassType::Shadow` scaffolding only).
 - Lights live as a flat list on `Renderer`, not yet first-class GameObject components.
 - HDR bake is CPU-side at init (not runtime hot-swap without re-init).
@@ -75,7 +75,8 @@ Baked at engine init:
 
 ## 4. Next lighting work
 
-1. Larger light counts / clustering suitable for Quest  
+1. **Investigate Tiled Clustered Forward (TCF) for mobile / Quest lighting** (not started).  
+   Today `pbr.frag` loops up to `MAX_LIGHTS` (8) per pixel. TCF (tiled + clustered / Forward+ style light lists: 2D tiles × depth bins, compute cull, shade only local lights) is the candidate to raise light counts without a fat G-buffer. **Why it matters on Adreno 740:** TBDR wants lighting in the same tile/subpass; extra deferred attachments and full-screen DRAM round-trips are expensive. Any TCF design must stay GMEM-friendly (compute light lists outside the shade RP, small per-tile lists, no extra stored G-buffer). Scope before implementing: binning resolution, reverse-Z Z-bins, stereo/multiview, transparents/WBOIT, and whether 8 lights is enough until VR chess needs more.  
 2. Shadows and richer GI as later phases  
 3. Runtime IBL hot-reload / higher-res prefilter when needed  
 

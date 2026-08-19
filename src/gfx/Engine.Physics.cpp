@@ -161,6 +161,12 @@ bool gfx::Engine::rebuild_draw_batches() {
     }
     wire_hzb_descriptors();
 
+    if (renderer.gpu_culling.is_ready() &&
+        renderer.scene_manager.skins().gpu_compute_ready()) {
+        renderer.scene_manager.skins().bind_worlds(
+            renderer.gpu_culling.worlds(0), renderer.gpu_culling.worlds(1));
+    }
+
     // Rebind per-frame instance buffers (build_scene may recreate them).
     for (uint32_t i = 0; i < renderer.vk.bindless_descriptor_sets.size(); ++i) {
         auto& set = renderer.vk.bindless_descriptor_sets[i];
@@ -174,6 +180,7 @@ bool gfx::Engine::rebuild_draw_batches() {
 
     renderer.transform_upload_mask =
         (1u << Renderer::MAX_FRAMES_IN_FLIGHT) - 1u;
+    renderer.uploaded_world_serial = {};
 
     LOG_INFO("[Draw] GPU cull ready: " << n_rm << " renderMeshes / "
              << renderer.scene_manager.game_object_count() << " gameObjects / "
@@ -262,8 +269,23 @@ bool gfx::Engine::spawn_scene_physics(const tinygltf::Model& model) {
     xforms.propagate_if_dirty();
     const auto& node_to_x = scene.gltf_node_to_transform();
 
-    // Player transforms: force kinematic (gameplay owns pose).
+    // Player transforms: force kinematic (gameplay owns pose). Include every
+    // descendant so skinned mesh hulls cannot stay dynamic and snap the body.
     std::unordered_map<uint32_t, bool> player_xforms;
+    auto under_player = [&](uint32_t xform) -> bool {
+        uint32_t w = xform;
+        for (int i = 0; i < 64; ++i) {
+            if (player_xforms.count(w))
+                return true;
+            if (w == scene::TransformManager::kInvalid || !xforms.is_alive(w))
+                return false;
+            const uint32_t p = xforms.get_parent(w);
+            if (p == scene::TransformManager::kInvalid)
+                return false;
+            w = p;
+        }
+        return false;
+    };
     for (ecs::Entity pe : ecs_world.player_tags.entities()) {
         if (const ecs::TransformLink* link = ecs_world.transform_links.try_get(pe)) {
             if (link->transform_index != ~0u)
@@ -348,7 +370,7 @@ bool gfx::Engine::spawn_scene_physics(const tinygltf::Model& model) {
         }
         if (mass > 0.0f && std::abs(mass_scale - 1.0f) > 1e-5f)
             mass *= mass_scale;
-        if (player_xforms.count(xform))
+        if (player_xforms.count(xform) || under_player(xform))
             motion = physics::MotionType::Kinematic;
 
         // Collider

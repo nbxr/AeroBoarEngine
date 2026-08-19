@@ -1,0 +1,47 @@
+#version 450
+
+// One thread per joint. Palette = inv(meshWorld) * jointWorld * IBM (glTF).
+// VS still does world = meshModel * palette * v. Worlds come from GpuCulling.
+layout(local_size_x = 64) in;
+
+layout(push_constant) uniform PC {
+    uint joint_count;
+    uint world_count;
+} pc;
+
+layout(set = 0, binding = 0, std430) readonly buffer Worlds {
+    mat4 worlds[];
+};
+
+layout(set = 0, binding = 1, std430) readonly buffer Ibm {
+    mat4 ibm[];
+};
+
+// x = joint transform index, y = mesh transform index (~0u = identity mesh),
+// z = palette output index, w = unused
+layout(set = 0, binding = 2, std430) readonly buffer JointMeta {
+    uvec4 meta[];
+};
+
+layout(set = 0, binding = 3, std430) writeonly buffer Palette {
+    mat4 palette[];
+};
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.joint_count)
+        return;
+
+    uvec4 m = meta[i];
+    uint joint_tid = m.x;
+    uint mesh_tid = m.y;
+    uint out_i = m.z;
+
+    mat4 jw = (joint_tid < pc.world_count) ? worlds[joint_tid] : mat4(1.0);
+    mat4 inv_mesh = mat4(1.0);
+    if (mesh_tid < pc.world_count) {
+        inv_mesh = inverse(worlds[mesh_tid]);
+    }
+
+    palette[out_i] = inv_mesh * jw * ibm[i];
+}
