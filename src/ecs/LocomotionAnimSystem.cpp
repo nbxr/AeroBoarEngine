@@ -5,11 +5,12 @@
 #include "scene/TransformManager.h"
 #include "core/Log.h"
 
-#include <tiny_gltf.h>
 #include <algorithm>
 #include <cctype>
-#include <cmath>
 #include <cstring>
+#include <string>
+
+#include <tiny_gltf.h>
 
 namespace ecs {
 namespace {
@@ -92,8 +93,6 @@ void bind_player_animation_masks(World& world, scene::SceneManager& scene,
     const auto& n2x = scene.gltf_node_to_transform();
     uint32_t masked_root = scene::TransformManager::kInvalid;
     for (size_t i = 0; i < model.nodes.size(); ++i) {
-        if (!name_ieq(model.nodes[i].name, "root"))
-            continue;
         if (i >= n2x.size())
             continue;
         const uint32_t xi = n2x[i];
@@ -102,9 +101,10 @@ void bind_player_animation_masks(World& world, scene::SceneManager& scene,
             continue;
         if (!is_under(xforms, xi, link->transform_index))
             continue;
-        anims.ignore_transform_translation(xi);
-        masked_root = xi;
-        break;
+        if (name_ieq(model.nodes[i].name, "root")) {
+            anims.ignore_transform_translation(xi);
+            masked_root = xi;
+        }
     }
 
     LOG_INFO("[Anim] player root TRS masked xform=" << link->transform_index

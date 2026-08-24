@@ -86,7 +86,7 @@ class PhysicsWorld {
     void step(float delta_time);
 
     // Kinematic (and optional dynamic teleport): TransformManager → Jolt pose.
-    // Call *before* step() so player capsules / movers drive the sim.
+    // Call *before* step() so kinematic movers drive the sim.
     void sync_from_transforms(const scene::TransformManager& transforms);
 
     // Dynamic only: Jolt pose → TransformManager local T+R (keeps scale).
@@ -98,6 +98,11 @@ class PhysicsWorld {
                        const glm::quat& rotation);
 
     bool get_pose(BodyHandle body, glm::vec3& out_pos, glm::quat& out_rot);
+
+    // Closest hit against **static** bodies only (floors / world). Kinematic
+    // player hulls and dynamics are ignored so a ground probe does not hit the mover.
+    bool raycast_static(const glm::vec3& origin, const glm::vec3& direction,
+                        float max_distance, glm::vec3& out_hit) const;
 
     // Remove body from the sim. Handle slot is invalidated (not recycled).
     // Returns false if handle was already dead / invalid.

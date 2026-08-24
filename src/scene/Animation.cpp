@@ -592,7 +592,7 @@ bool AnimationSystem::play_default_clip(bool loop, float speed) {
     if (clips_.empty())
         return false;
 
-    // Prefix match so Walking_A / Run_Loop count (exact "Walk" was Fox-only).
+    // Prefix match so Walking_A / Run_Loop count as Walk / Run.
     static const char* kPreferred[] = {"Walk", "Run", "Survey", "Idle", "T-Pose",
                                        "TPose", "Animation"};
     for (const char* pref : kPreferred) {

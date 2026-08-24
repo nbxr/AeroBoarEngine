@@ -20,7 +20,7 @@ struct PlayerTag {};
 struct DesktopMove {};
 
 // First-person grounded controller (WASD walk, mouse look, jump, crouch).
-// Prefer this over DesktopMove for the chess player capsule.
+// Prefer this over DesktopMove for any authored player body.
 struct FpsMove {
     float yaw_deg = 0.0f;   // degrees, world Y
     float pitch_deg = 0.0f; // degrees, clamped
@@ -57,14 +57,19 @@ struct CameraRig {
 
     // Eye position relative to player root (glTF: +Y up).
     // FPS: camera at root + (0, eye_y, 0) with crouch scale; free-fly uses full offset.
-    // Default is a short tabletop eye height so a capsule on a chess board is not
-    // glued into the wood; override per-asset via extras (see ecs-plan authoring).
-    glm::vec3 eye_offset{0.0f, 0.08f, 0.0f};
+    // Defaults are human-scale asset meters; load multiplies by worldScale.
+    // Small assets override via extras (eye_height / eye_offset).
+    glm::vec3 eye_offset{0.0f, 1.6f, 0.0f};
 
     // Third-person follow (extras: "camera": "third_person", "boom_offset": [r, up, back]).
-    // boom_offset is sim meters (after worldScale). Not multiplied at load.
+    // boom_offset is asset meters; load multiplies by worldScale (same as eye_offset).
+    // Z is distance behind the WASD/camera heading; sign is ignored (always behind).
     bool third_person = false;
-    glm::vec3 boom_offset{0.0f, 1.6f, 3.0f}; // right, up, back (sim meters)
+    glm::vec3 boom_offset{0.0f, 1.6f, 3.0f}; // right, up, back (asset meters)
+
+    // Mesh facing vs engine camera forward (0,0,-1). extras "forward": [x,y,z]
+    // and/or "yaw_offset" degrees. Blender/glTF characters often face +Z → 180.
+    float body_yaw_offset_deg = 0.0f;
 };
 
 // Idle / walk / run driven by FpsMove.horizontal_speed. extras type
@@ -81,7 +86,7 @@ struct LocomotionAnim {
     State state = State::Stand;
     bool clips_bound = false;
 
-    std::string idle_name = "T-Pose";
+    std::string idle_name = "Idle";
     std::string walk_name = "Walk";
     std::string run_name = "Run";
 };

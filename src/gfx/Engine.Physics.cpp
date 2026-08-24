@@ -86,7 +86,7 @@ void gfx::Engine::process_kill_floor() {
     for (physics::BodyHandle h = 0; h < slots; ++h) {
         if (!physics.is_body_alive(h))
             continue;
-        // Only free-falling dynamics — leave static board and kinematic player.
+        // Only free-falling dynamics — leave static colliders and kinematic players.
         if (physics.get_motion_type(h) != physics::MotionType::Dynamic)
             continue;
 
@@ -220,6 +220,13 @@ std::vector<glm::vec3> mesh_positions(const tinygltf::Model& model, int mesh_ind
     return pts;
 }
 
+glm::vec3 scale_from_world(const glm::mat4& world) {
+    // Includes parent worldScale. Local TRS scale is 1 on skinned children.
+    return glm::vec3(glm::length(glm::vec3(world[0])),
+                     glm::length(glm::vec3(world[1])),
+                     glm::length(glm::vec3(world[2])));
+}
+
 void fill_pose_from_node(physics::BodyPoseDesc& pose, const glm::mat4& world,
                          const scene::LocalTrs& local_trs) {
     pose.position = glm::vec3(world[3]);
@@ -350,7 +357,11 @@ bool gfx::Engine::spawn_scene_physics(const tinygltf::Model& model) {
         const uint32_t xform = node_to_x[ni];
         const scene::LocalTrs& local_trs = xforms.get_local_trs(xform);
         const glm::mat4& world = xforms.get_world_matrix(xform);
-        const glm::vec3 scl = glm::abs(local_trs.scale);
+        // World scale (parent worldScale × local). Child skinned hulls are
+        // identity local scale — using only local_trs.scale left them
+        // worldScale times too small and they fell through statics / missed
+        // dynamics.
+        const glm::vec3 scl = glm::max(scale_from_world(world), glm::vec3(1e-6f));
 
         const auto& rb = eit->second.Get<tinygltf::Value::Object>();
 
@@ -391,7 +402,7 @@ bool gfx::Engine::spawn_scene_physics(const tinygltf::Model& model) {
             }
         }
 
-        // geometry: nested object (ABeautifulGameScene) or flat fields
+        // geometry: nested object or flat fields (KHR variants)
         const tinygltf::Value::Object* geom = nullptr;
         auto git = cobj.find("geometry");
         if (git != cobj.end() && git->second.IsObject())
@@ -488,7 +499,7 @@ bool gfx::Engine::spawn_scene_physics(const tinygltf::Model& model) {
             }
         }
 
-        // Mesh / convex hull geometry (ABeautifulGame pieces + board).
+        // Mesh / convex hull geometry.
         if (body == physics::kInvalidBody) {
             auto mesh_it = geom->find("mesh");
             if (mesh_it != geom->end() && mesh_it->second.IsNumber()) {
@@ -506,11 +517,34 @@ bool gfx::Engine::spawn_scene_physics(const tinygltf::Model& model) {
                         p.y *= scl.y;
                         p.z *= scl.z;
                     }
+                    // Skinned meshes are often authored in armature space:
+                    // vertex Y already includes the node's local height (feet
+                    // sit at node T.y). Applying node world T again stacks the
+                    // hull. Subtract node Y when the cloud's min Y is closer to
+                    // the node Y than to 0 (covers full-body and higher
+                    // sub-meshes that share the same baked offset).
+                    if (node.skin >= 0 && !pts.empty()) {
+                        float min_y = pts[0].y;
+                        for (const glm::vec3& p : pts)
+                            min_y = std::min(min_y, p.y);
+                        const float py = pose.position.y;
+                        if (std::abs(min_y - py) + 1e-4f < std::abs(min_y)) {
+                            for (glm::vec3& p : pts)
+                                p.y -= py;
+                        }
+                    }
                     if (convex || true) { // always hull for MVP (no mesh collider)
                         physics::ConvexHullDesc hull{};
                         static_cast<physics::BodyPoseDesc&>(hull) = pose;
                         hull.points = std::move(pts);
                         body = physics.create_convex_hull(hull);
+                        if (motion == physics::MotionType::Kinematic &&
+                            (player_xforms.count(xform) || under_player(xform))) {
+                            LOG_INFO("[Physics] player hull node="
+                                     << ni << " worldScale=(" << scl.x << ", "
+                                     << scl.y << ", " << scl.z << ") pts="
+                                     << hull.points.size());
+                        }
                     }
                 }
             }

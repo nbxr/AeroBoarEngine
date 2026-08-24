@@ -3,6 +3,7 @@
 #include "ecs/World.h"
 #include "scene/Camera.h"
 #include "scene/TransformManager.h"
+#include "physics/PhysicsWorld.h"
 #include "core/Log.h"
 
 #include <glm/gtc/matrix_inverse.hpp>
@@ -58,7 +59,8 @@ void init_from_camera_and_root(FpsMove& fps, const scene::Camera& camera,
 
 void fps_move_system_update(World& world, const core::InputFrame& frame,
                             scene::Camera& camera,
-                            scene::TransformManager& transforms) {
+                            scene::TransformManager& transforms,
+                            physics::PhysicsWorld* physics) {
     Entity player = world.active_player();
     if (player == kInvalidEntity || !world.is_alive(player))
         return;
@@ -169,28 +171,47 @@ void fps_move_system_update(World& world, const core::InputFrame& frame,
     fps.horizontal_speed = (glm::dot(wish, wish) > 1e-8f) ? speed : 0.0f;
     root += wish * (speed * dt);
 
-    // --- Jump / gravity ---
+    // --- Jump / gravity (static ground via Jolt when available) ---
     if (frame.space_pressed && fps.grounded && !fps.crouching) {
         fps.vertical_velocity = fps.jump_speed;
         fps.grounded = false;
     }
 
+    glm::vec3 ground_hit(0.0f);
+    bool hit_ground = false;
+    if (physics && physics->is_initialized()) {
+        const float probe =
+            std::max(0.5f, rig ? std::max(rig->boom_offset.y, rig->eye_offset.y)
+                               : 1.0f);
+        const glm::vec3 origin(root.x, root.y + probe, root.z);
+        hit_ground = physics->raycast_static(origin, glm::vec3(0.0f, -1.0f, 0.0f),
+                                             probe + 6.0f, ground_hit);
+    }
+
     if (!fps.grounded) {
         fps.vertical_velocity -= fps.gravity * dt;
         root.y += fps.vertical_velocity * dt;
-        if (root.y <= fps.ground_y) {
+        if (hit_ground && fps.vertical_velocity <= 0.0f &&
+            root.y <= ground_hit.y + 0.02f) {
+            root.y = ground_hit.y;
+            fps.ground_y = ground_hit.y;
+            fps.vertical_velocity = 0.0f;
+            fps.grounded = true;
+        } else if (!hit_ground && root.y <= fps.ground_y) {
             root.y = fps.ground_y;
             fps.vertical_velocity = 0.0f;
             fps.grounded = true;
         }
-    } else {
-        root.y = fps.ground_y;
+    } else if (hit_ground) {
+        root.y = ground_hit.y;
+        fps.ground_y = ground_hit.y;
         fps.vertical_velocity = 0.0f;
+    } else {
+        fps.grounded = false;
     }
 
     // Write root transform: translation always; yaw the body in third-person
-    // so Walk/Run face the camera heading. First-person keeps authored rotation
-    // (Blender capsules were not always Y-up-clean).
+    // so Walk/Run face the camera heading. First-person keeps authored rotation.
     scene::LocalTrs trs = transforms.get_local_trs(ti);
     if (third_person) {
         if (!fps.body_rest_captured) {
@@ -204,8 +225,10 @@ void fps_move_system_update(World& world, const core::InputFrame& frame,
             rest_fwd = glm::normalize(rest_fwd);
             rest_yaw = glm::degrees(std::atan2(rest_fwd.x, -rest_fwd.z));
         }
+        const float yaw_off = rig ? rig->body_yaw_offset_deg : 0.0f;
         const glm::quat yaw_delta = glm::angleAxis(
-            glm::radians(fps.yaw_deg - rest_yaw), glm::vec3(0.0f, 1.0f, 0.0f));
+            glm::radians(fps.yaw_deg - rest_yaw + yaw_off),
+            glm::vec3(0.0f, 1.0f, 0.0f));
         trs.rotation = glm::normalize(yaw_delta * fps.body_rest_rotation);
     }
     const uint32_t parent = transforms.get_parent(ti);
@@ -230,7 +253,7 @@ void fps_move_system_update(World& world, const core::InputFrame& frame,
         apply_follow_boom(camera, root, boom);
     } else {
         glm::vec3 eye_off =
-            rig ? rig->eye_offset : glm::vec3(0.0f, 0.08f, 0.0f);
+            rig ? rig->eye_offset : glm::vec3(0.0f, 1.6f, 0.0f);
         if (fps.crouching)
             eye_off.y *= fps.crouch_eye_scale;
 

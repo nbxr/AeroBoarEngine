@@ -13,7 +13,8 @@ namespace ecs {
 
 class World;
 
-// After extras are applied: mask player-object TRS + skeleton "root" translation.
+// After extras are applied: mask player-object TRS + skeleton "root" translation
+// so gameplay owns XZ. Do not edit hips/feet after sampling (breaks the clip).
 void bind_player_animation_masks(World& world, scene::SceneManager& scene,
                                  const tinygltf::Model& model);
 

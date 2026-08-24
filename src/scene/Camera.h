@@ -110,7 +110,7 @@ public:
     float mouse_sensitivity = 0.35f;
     float roll_speed = 90.0f;     // Q/E roll rate in degrees per second
     float fov_degrees = 60.0f;
-    // Defaults suit small glTF assets (e.g. ABeautifulGame). frame() retunes
+    // Defaults suit small glTF assets. frame() retunes
     // near/far from the framing sphere so large scenes stay stable too.
     float near_plane = 0.01f;
     float far_plane = 1000.0f;

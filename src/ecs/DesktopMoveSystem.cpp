@@ -16,12 +16,11 @@ namespace {
 glm::vec3 eye_offset_or_default(const CameraRig* rig) {
     if (rig)
         return rig->eye_offset;
-    return glm::vec3(0.0f, 0.08f, 0.0f);
+    return glm::vec3(0.0f, 1.6f, 0.0f);
 }
 
 // Only move the player root in world space. Keep authored rotation/scale so a
-// Blender capsule that was oriented correctly is not forced to camera yaw
-// (which showed up as a ~90° Z tilt).
+// correctly oriented body is not forced to camera yaw.
 //
 // eye = root + world_up * eye_height + horizontal offset in XZ from camera yaw.
 // For MVP we apply eye_offset mostly as world-Y height (and optional local XZ
@@ -116,7 +115,10 @@ void apply_follow_boom(scene::Camera& camera, const glm::vec3& root,
         up_ref = glm::vec3(0.0f, 0.0f, 1.0f);
     const glm::vec3 right = glm::normalize(glm::cross(look, up_ref));
 
-    const glm::vec3 eye = target - look * boom_offset.z + right * boom_offset.x;
+    // Z is distance *behind* the current look (WASD heading). Negative Z used
+    // to orbit 180° and made W/S feel reversed — always treat as behind.
+    const float back = std::abs(boom_offset.z);
+    const glm::vec3 eye = target - look * back + right * boom_offset.x;
     glm::vec3 to_target = target - eye;
     if (glm::dot(to_target, to_target) < 1e-10f)
         to_target = look;
@@ -248,8 +250,8 @@ void desktop_move_system_update(World& world, const core::InputFrame& frame,
             LOG_ERROR(
                 "[ECS] active player entity="
                 << player
-                << " has no TransformLink — put extras.player on the capsule "
-                   "mesh node (or its parent empty that owns the hierarchy)");
+                << " has no TransformLink — put extras.player on the body "
+                   "root (mesh node or parent empty that owns the hierarchy)");
             once = true;
         }
     }

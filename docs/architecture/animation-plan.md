@@ -10,6 +10,8 @@ Morph: `MorphSystem` loads target deltas, animation path `weights`, CPU blend in
 - `docs/architecture/game-object-implementation.md` — hierarchy + `TransformManager`
 - `docs/agents/tech_context.md` — pipeline timing notes
 - `docs/architecture/gltf-extensions.md` — extension support matrix (incl. **KHR_animation_pointer**)
+- `tools/blender/src/animation_transfer/` — Blender addon: copy clips between matching armatures, scale location to dest size
+- `tools/blender/src/ecs_components_editor/` — Blender addon: `ECS_Components_v1` extras UI
 
 ---
 
@@ -164,7 +166,7 @@ Do **not** bypass dirty propagate with ad-hoc GPU buffer writes.
 
 ## 9. Phase 4 — clip crossfade + locomotion graph (**landed**)
 
-**Goal:** player character **Idle / Walk / Run** with **smooth transitions**. Test: **`PlayerCharacters/glTF/Barbarian.gltf`** (clips: `T-Pose`, `Walking_A/B/C`, `Running_A/B`, jumps). There is **no Idle clip** — map stand → **`T-Pose`** (or a dedicated Idle if authored later).
+**Goal:** player character **Idle / Walk / Run** with **smooth transitions**. Clip names come from extras (`idle` / `walk` / `run`); defaults `Idle` / `Walk` / `Run`. If Idle is missing at bind, the engine also tries **`T-Pose`** (common Mixamo-style packs). Example pack: `PlayerCharacters/glTF/Barbarian.gltf` (`T-Pose`, `Walking_A/B/C`, `Running_A/B`, jumps).
 
 ### 9.1 Engine: two-clip crossfade (**landed**)
 
@@ -184,16 +186,24 @@ Do **not** bypass dirty propagate with ad-hoc GPU buffer writes.
 
 N-key cycle should **crossfade** (e.g. 0.2 s) instead of exclusive cut.
 
-**Root motion:** locomotion clips often key the root/hips. **Gameplay owns root translation** (`FpsMove` / later 3rd-person). Ignore (or optionally apply) channels that target the **player root** `TransformLink` node so Walk/Run stay **in place** on the capsule.
+**Root motion / feet on the floor:** gameplay owns the player extras node (`FpsMove` raycast Y + WASD XZ). Ignore translation on a skeleton node named **`root`** so Walk/Run stay in place on XZ. **Play hips/legs as authored** — do not clamp hips Y, lift skeleton `root`, or chase the lowest foot after sampling. Split body/leg meshes weighted to `hips` vs `upperleg.*` have those local translations keyed together; editing one bone after sample is what made the torso look like it left the legs.
+
+Feet through the floor (or a huge COM bounce) is an **authoring** problem, not an engine plant:
+
+1. **Retarget translations to the destination rest pose.** Animation Transfer **Duplicate** copies F-curves 1:1. If dest is a different size than source, scale `hips`/`root` location keys (addon **Scale location to dest size**), or bake with matching rest poses.
+2. **In-place clips** whose lowest foot sits on the armature origin (the extras empty).
+3. **Later, two-bone IK** (hips stay, feet meet the ground). Not started.
+
+`worldScale` only amplifies a bad clip; it is not the fix. `boom_offset` is asset meters × `worldScale`.
 
 ### 9.2 Gameplay: tiny locomotion graph (**landed**)
 
 `ecs::LocomotionAnim` on the player (extras `locomotion_anim` or typo `locomation_anim`):
 
 ```text
-stand  → clip name "T-Pose"     (speed ≈ 0)
-walk   → "Walking_A"
-run    → "Running_A"
+stand  → extras "idle"  (default "Idle"; bind also tries "T-Pose")
+walk   → extras "walk"  (default "Walk")
+run    → extras "run"   (default "Run")
 walk_threshold, run_threshold   (horizontal speed, sim m/s)
 fade_seconds                    (e.g. 0.15–0.25)
 ```
@@ -208,11 +218,11 @@ Authoring: glTF extras on the player node, e.g.
 
 ```json
 { "type": "locomotion_anim",
-  "idle": "T-Pose", "walk": "Walking_A", "run": "Running_A",
+  "idle": "Idle", "walk": "Walk", "run": "Run",
   "walk_speed": 1.2, "run_speed": 3.5, "fade": 0.2 }
 ```
 
-Defaults: name-match `T-Pose`/`Idle`, `Walk*`, `Run*` if extras omitted.
+Mixamo-style packs can use `"idle": "T-Pose", "walk": "Walking_A", "run": "Running_A"`. If extras omit names, bind uses `Idle`/`Walk`/`Run` then `T-Pose` as idle fallback.
 
 ### 9.3 Third-person camera (parallel, same slice)
 
@@ -224,13 +234,14 @@ Defaults: name-match `T-Pose`/`Idle`, `Walk*`, `Run*` if extras omitted.
 | Look | yaw/pitch on camera | look-at root + boom.y (head height); pitch orbits |
 | Player yaw | authored rotation kept | **body faces camera yaw** (rest rotation preserved, Y-only) |
 
-Mouse still drives yaw/pitch. **`boom_offset` is sim meters** (distance in the scaled world). It is **not** multiplied by `worldScale` — `[0, 1.6, 3]` is 1.6 m above the root and 3 m back. `eye_offset` is still asset meters × `worldScale`. Load applies Blender `ecs_components_settings` first, then **`ECS_Components_v1`** (hand-edited array wins). Re-export if you use the Blender component UI. Extras:
+Mouse still drives yaw/pitch. **`boom_offset` is asset meters** (same as `eye_offset`); load multiplies by `worldScale`. Human unscaled: `[0, 1.6, 3]`. Small assets (~0.05 m tall): `[0, 0.08, 0.15]`. Load applies Blender `ecs_components_settings` first, then **`ECS_Components_v1`** (hand-edited array wins). Re-export if you use the Blender component UI. Extras:
 
 ```json
-{ "type": "player", "camera": "third_person", "boom_offset": [0, 1.6, 3] }
+{ "type": "player", "camera": "third_person", "boom_offset": [0, 1.6, 3],
+  "forward": [0, 0, 1] }
 ```
 
-`boom_offset` without `camera` also enables follow. Toggle later (V key). Barbarian should **default third-person**.
+`boom_offset` without `camera` also enables follow. Toggle later (V key).
 
 **Order:** 3rd-person camera landed **before** crossfade (visible Walk hard-cut is OK). Then fade. Then graph.
 
@@ -241,6 +252,19 @@ Mouse still drives yaw/pitch. **`boom_offset` is sim meters** (distance in the s
 3. [x] Mask player-object TRS + skeleton `root` translation (Walk/Run in place).  
 4. [x] `LocomotionAnim` + thresholds from `FpsMove.horizontal_speed` (accepts `locomation_anim`). Default: any WASD → walk; `run_speed` extras required to enter run.  
 5. Polish hysteresis / jump clips later (`Jump_*` not required for v1).
+
+### 9.5 Blender: copy clips between characters
+
+Works on **any** scene with two armatures that share bone names (`root`, `hips`, `spine`, … — Mixamo prefixes like `mixamorig:Hips` match on the tail). Addon: `tools/blender/src/animation_transfer/` (install + README there).
+
+1. Select **source**, then **destination** (destination **active**).
+2. **Detect source → dest** (exactly two unique armatures in the selection, or in the scene).
+3. Copy method **Duplicate Actions** (picks *how* — does not run). Leave **Scale location to dest size** on if they differ in size.
+4. Click **Transfer Animations**. Optionally deletes the source hierarchy.
+5. If a 1:1 copy is already on dest: **Scale dest clip locations** (skip idle/bind). Do not stack.
+6. Export dest: glTF **Animation → NLA Tracks** and **Include → Custom Properties** so clip names match `locomotion_anim` extras.
+
+**Example:** Kenney `_Bot` → `_Barbarian` on a combined chess scene that only exported `Running_A`. Same workflow as any other pair.
 
 ---
 

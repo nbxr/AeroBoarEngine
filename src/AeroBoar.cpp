@@ -203,7 +203,8 @@ int AeroBoar::fly() {
                     tw.is_alive(link->transform_index)) {
                     engine.ecs_world.fps_moves.get_or_emplace(ap);
                     ecs::fps_move_system_update(engine.ecs_world, frame,
-                                                engine.camera, tw);
+                                                engine.camera, tw,
+                                                &engine.physics);
                     used_fps = true;
                 }
             }

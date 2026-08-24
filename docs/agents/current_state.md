@@ -4,7 +4,7 @@ Lightweight snapshot of the AeroBoarEngine project status. Intended to be read q
 
 ## Overall Status
 
-Desktop foundation is solid. The engine loads glTF scenes (multi-material, hierarchy, punctual lights), uploads bindless resources, and renders with **GPU frustum cull** (always), **optional conservative Hi-Z** (`occlusionCull`, off by default / off on Adreno), **mesh-grouped instancing**, and **one multi-draw indirect** call path plus procedural IBL. **Animation:** node TRS, GPU skin palettes (`skin_palette.comp` from `worlds[]`), CPU morph weights. **ECS Phase 1–3:** World, Player, `InputFrame`, **FpsMove** on any authored body + EditorHotkeys, glTF `extras.ECS_Components_v1`. **Third-person boom verified:** WASD moves the Barbarian; camera follows; `boom_offset` is **sim meters** (not × `worldScale`). **Physics:** Jolt + KHR MVP, LinearCast CCD, **`worldScale`** (chess `10`), **debug draw** (F3), **kill floor**; player-subtree hulls kinematic. Scene list includes the full glTF-Sample-Assets set. OpenXR / Quest remain roadmap; **reverse-Z is on desktop**. **Next product focus:** locomotion polish (export Idle/Walk clips; hysteresis / jump) or VR path — `animation-plan.md` §9 / `ecs-plan.md`. **Investigate:** Tiled Clustered Forward (**TCF**) for mobile/Quest lighting — `lighting-implementation.md` §4.
+Desktop foundation is solid. The engine loads glTF scenes (multi-material, hierarchy, punctual lights), uploads bindless resources, and renders with **GPU frustum cull** (always), **optional conservative Hi-Z** (`occlusionCull`, off by default / off on Adreno), **mesh-grouped instancing**, and **one multi-draw indirect** call path plus procedural IBL. **Animation:** node TRS, GPU skin palettes (`skin_palette.comp` from `worlds[]`), CPU morph weights. **ECS Phase 1–3:** World, Player, `InputFrame`, **FpsMove** on any authored body + EditorHotkeys, glTF `extras.ECS_Components_v1`. **Third-person boom:** WASD moves the extras `player` body; camera follows; `boom_offset` is **asset meters × `worldScale`**. **Physics:** Jolt + KHR MVP, LinearCast CCD, **`worldScale`** (small assets e.g. chess `10`), **debug draw** (F3), **kill floor**; player-subtree hulls kinematic. Player / loco / physics paths are **data-driven** (extras + KHR), not scene-name hardcoded. Current default test scene is **ABeautifulGameGame**. Scene list includes the full glTF-Sample-Assets set. OpenXR / Quest remain roadmap; **reverse-Z is on desktop**. **Next product focus:** locomotion authoring (in-place / scaled hip translations, or later IK) or VR path — `animation-plan.md` §9 / `ecs-plan.md`. **Investigate:** Tiled Clustered Forward (**TCF**) for mobile/Quest lighting — `lighting-implementation.md` §4.
 
 ## Major Completed Areas
 
@@ -53,12 +53,13 @@ Desktop foundation is solid. The engine loads glTF scenes (multi-material, hiera
 
 ## Current Focus Areas
 
-**Near-term priority:** polish locomotion (export missing Idle/Walk on ABeautifulGameGame; hysteresis / jump clips) or VR path. **Phase 4 crossfade + Idle/Walk/Run** landed; combined chess+Barbarian scene still only ships `Running_A`. See `animation-plan.md` §9.
+**Near-term priority:** polish locomotion (in-place / scaled hip translations, hysteresis / jump clips, or later IK) or VR path. **Phase 4 crossfade + Idle/Walk/Run** landed; clip names come from extras (`idle` / `walk` / `run`). Addon: `tools/blender/src/animation_transfer/` (any matching armatures). See `animation-plan.md` §9.5.
 
-- **ECS Phase 1–3 + FpsMove:** any live player **body** uses grounded WASD + boom/FPS cam; free-fly `DesktopMove` only when there is no `TransformLink`. **Third-person** extras `"camera": "third_person"` / `boom_offset` (sim meters). GPU `worlds[]` tracks `TransformManager::world_serial()` so skinning follows WASD after an early propagate.
+- **ECS Phase 1–3 + FpsMove:** any live player **body** uses grounded WASD + boom/FPS cam; free-fly `DesktopMove` only when there is no `TransformLink`. **Third-person** extras `"camera": "third_person"` / `boom_offset` (asset meters × `worldScale`). GPU `worlds[]` tracks `TransformManager::world_serial()` so skinning follows WASD after an early propagate.
 - Desktop rendering + animation solid (TRS / skin / morph, Hi-Z, opaque/transparent; CarConcept usable)
-- **Chess / physics:** knock-over + `worldScale: 10` + KHR + kill floor + debug draw; pawns use shared multi-prim meshes
+- **Physics:** knock-over + `worldScale` + KHR + kill floor + debug draw. Current tabletop test: ABeautifulGameGame at `worldScale: 10`
 - **Extension matrix:** `docs/architecture/gltf-extensions.md`
+- **Blender addons:** `tools/blender/src/ecs_components_editor/` (extras UI; human-scale / small-asset presets); `tools/blender/src/animation_transfer/` (copy clips between matching armatures, scale location to dest size)
 - **Future tooling:** `glslc` → **glslang** when Quest/Android work starts
 
 ## Known Gaps / Not Yet Implemented
@@ -90,7 +91,7 @@ Desktop foundation is solid. The engine loads glTF scenes (multi-material, hiera
 - **Depth model:** **reverse-Z** (1=near, 0=far, `GREATER`, clear 0). Hi-Z conservative test uses min (far/hole). Multiview HZB still later — `tech_context.md`
 - No OpenXR / VR input layer (desktop GLFW only)
 - **Desktop look rail (accepted):** remote/HIDDEN + trackpad can still stop at the desktop/screen edge. Not chasing another warp/`ClipCursor` pass. **Reopen at camera cleanup** — `desktop-inputs.md` § Accepted look-rail limit. Local `DISABLED` + USB mouse unchanged.
-- **Player locomotion:** any authored player **body** (`TransformLink`) uses **FpsMove** — WASD moves the character, not the camera. **Third-person boom** when extras `"camera": "third_person"` / `boom_offset` (**sim meters**, not × `worldScale`). GPU `worlds[]` follows `TransformManager::world_serial()` so a WASD root still skins after an early propagate. **`LocomotionAnim`** (extras `locomotion_anim` / `locomation_anim`) crossfades Idle/`T-Pose` / Walk / Run from `horizontal_speed`. **N** crossfades clips (0.2 s). **Free-fly `DesktopMove`** only for the inspector player (no body). Player-subtree KHR hulls are forced **kinematic**.
+- **Player locomotion:** any authored player **body** (`TransformLink`) uses **FpsMove** — WASD moves the character, not the camera. **Third-person boom** when extras `"camera": "third_person"` / `boom_offset` (**asset meters × `worldScale`**). GPU `worlds[]` follows `TransformManager::world_serial()` so a WASD root still skins after an early propagate. **`LocomotionAnim`** (extras `locomotion_anim` / `locomation_anim`) crossfades Idle/`T-Pose` / Walk / Run from `horizontal_speed`. Clips play as authored (no post-sample hips clamp / foot plant). Feet through the floor is retarget/IK — `animation-plan.md` §9.1. **N** crossfades clips (0.2 s). **Free-fly `DesktopMove`** only for the inspector player (no body). Player-subtree KHR hulls are forced **kinematic**.
 - **Scene model:** `GameObject` + `RenderMesh` + `TransformManager` (local + parent + dirty `propagate`); dual-write `SceneInstance`; ECS dual-write. Full GameObject→Entity render migration later
 - **glTF animation Phase 1–3 yes.** Skin palettes are a **GPU compute** pass from `worlds[]` (`skin_palette.comp`). Static `KHR_texture_transform` yes. **Not yet:** `KHR_animation_pointer`, GPU morph, full material set — see `gltf-extensions.md`
 - **Physics:** Jolt + KHR MVP, CCD, `worldScale`, debug lines. **Missing:** compound/triangle mesh colliders, raycast/impulse tools, proper character controller — `physics-plan.md`
@@ -132,11 +133,13 @@ Desktop foundation is solid. The engine loads glTF scenes (multi-material, hiera
 - [done] Full sample-assets list in `configuration.json` for manual regression
 - [done] Docs: extension matrix, VR chess plan, ECS plan
 - [done] Third-person follow boom (`CameraRig.third_person` / extras `boom_offset`)
-- [done] Animation crossfade + `LocomotionAnim` Idle/Walk/Run (Bot / Barbarian extras)
+- [done] Animation crossfade + `LocomotionAnim` Idle/Walk/Run (extras clip names)
 - [done] GPU skin palettes (`skin_palette.comp`) + `worlds[]` upload via `world_serial` (WASD moves the skinned mesh)
-- [done] Authored body always `FpsMove`; `boom_offset` sim meters (not × `worldScale`); `ECS_Components_v1` wins over Blender settings
+- [done] Authored body always `FpsMove`; `boom_offset` asset meters × `worldScale`; `ECS_Components_v1` wins over Blender settings
 - [done] Player-subtree KHR hulls forced kinematic
-- **Next immediate:** locomotion polish (export Idle/Walk into ABeautifulGameGame; run key / jump clips) or VR path
+- [done] Reverted post-sample foot plant / hips Y clamp (was splitting body vs legs). Next: author in-place / scaled hip translations, or IK.
+- [done] Engine + Blender addons generalized: no scene-name hardcoding; `CameraRig` defaults human-scale; extras/KHR data-driven
+- **Next immediate:** locomotion polish (hysteresis / jump clips) or VR path
 - **Investigate (lighting / Quest):** Tiled Clustered Forward (**TCF**) instead of looping all lights in the forward shader — `lighting-implementation.md` §4. Do not start this until scoped; Adreno TBDR / GMEM constraints apply.
 - **Then:** ECS Phase 4 events/timers or Jolt sensors; GameObject→Entity render migration
 - **When cameras are cleaned up:** reopen captured look-rail (`desktop-inputs.md`); do not spend an input-only pass before that

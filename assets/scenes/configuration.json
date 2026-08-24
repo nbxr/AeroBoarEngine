@@ -3,7 +3,7 @@
   "activeSystem": "Windows",
   "scenePhysics": true,
   "worldScale": 10.0,
-  "physicsDebugDraw": false,
+  "physicsDebugDraw": true,
   "killFloor": {
     "enabled": true,
     "margin": 2.0
@@ -34,7 +34,7 @@
     },
     {
       "name": "ABeautifulGameGame",
-      "filename": "glTF-Sample-Assets/Models/ABeautifulGameGame/glTF/ABeautifulGameGame.gltf"
+      "filename": "glTF-Sample-Assets/Models/ABeautifulGameGame/glTF-Binary/ABeautifulGameGame.glb"
     },
     {
       "name": "ABeautifulGameScene",

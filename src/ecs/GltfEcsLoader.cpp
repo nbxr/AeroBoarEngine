@@ -6,7 +6,9 @@
 
 #include <tiny_gltf.h>
 #include <nlohmann/json.hpp>
+#include <cmath>
 #include <cstdio>
+#include <glm/glm.hpp>
 
 namespace ecs {
 namespace {
@@ -108,7 +110,7 @@ uint32_t apply_component_entry(World& world, Entity entity,
 
     if (type == "player") {
         world.player_tags.get_or_emplace(entity);
-        // Grounded FPS for demo player; free-fly still available via DesktopMove only.
+        // Authored body: FpsMove. Free-fly inspector is DesktopMove only (no TransformLink).
         world.fps_moves.get_or_emplace(entity);
         CameraRig& rig = world.camera_rigs.get_or_emplace(entity);
         // Optional eye height: "eye_offset": [x,y,z] or string "[x, y, z]"
@@ -129,10 +131,28 @@ uint32_t apply_component_entry(World& world, Entity entity,
         auto bit = obj.find("boom_offset");
         if (bit != obj.end() && parse_vec3(bit->second, rig.boom_offset))
             rig.third_person = true; // boom implies follow cam
+        auto fit = obj.find("forward");
+        if (fit != obj.end()) {
+            glm::vec3 fwd(0.0f, 0.0f, -1.0f);
+            if (parse_vec3(fit->second, fwd)) {
+                fwd.y = 0.0f;
+                if (glm::dot(fwd, fwd) > 1e-8f) {
+                    fwd = glm::normalize(fwd);
+                    // Engine camera/WASD forward is (0,0,-1) at yaw 0.
+                    rig.body_yaw_offset_deg =
+                        glm::degrees(std::atan2(fwd.x, -fwd.z));
+                }
+            }
+        }
+        auto yit = obj.find("yaw_offset");
+        if (yit != obj.end() && yit->second.IsNumber())
+            rig.body_yaw_offset_deg +=
+                static_cast<float>(yit->second.GetNumberAsDouble());
         if (rig.third_person) {
             LOG_INFO("[ECS] player third_person boom=("
                      << rig.boom_offset.x << ", " << rig.boom_offset.y << ", "
-                     << rig.boom_offset.z << ") entity=" << entity);
+                     << rig.boom_offset.z << ") yaw_offset="
+                     << rig.body_yaw_offset_deg << " entity=" << entity);
         } else {
             LOG_INFO("[ECS] player first_person entity=" << entity);
         }
@@ -224,7 +244,8 @@ bool has_settings_components(const tinygltf::Value* extras) {
     return cit != s.end() && cit->second.IsArray();
 }
 
-// Blender UI writes props here; overlay after ECS_Components_v1 so edits apply.
+// Blender UI stores a parallel ecs_components_settings blob. Applied *before*
+// ECS_Components_v1 so a hand-edited extras array wins if both are present.
 uint32_t apply_settings_overlay(World& world, Entity entity,
                                 const tinygltf::Value& extras) {
     if (!extras.IsObject())

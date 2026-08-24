@@ -331,7 +331,7 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
              << " transform slots)");
 
     // worldScale: uniform load-time scale of scene roots (visual + physics).
-    // Tabletop assets (chess, dice) are often cm–dm thick while Jolt defaults
+    // Small assets (cm–dm thick) while Jolt defaults
     // (e.g. ~2 cm penetration slop) are tuned for larger props — scale them up
     // in sim space, keep gravity 9.81. Omit or 1.0 = identity. Mass × S³ in
     // spawn_scene_physics. Legacy key: debugWorldScale.
@@ -515,11 +515,12 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     // if none authored. Player owns view (first PlayerTag wins).
     {
         ecs::populate_world_from_gltf(ecs_world, model, renderer.scene_manager);
-        // eye_offset is asset meters (tiny capsules). boom_offset is already
-        // sim meters (distance behind the scaled character) — do not * worldScale.
+        // eye_offset and boom_offset are asset meters (same space as the glTF
+        // node). worldScale maps them into sim meters.
         if (std::abs(world_scale - 1.0f) > 1e-5f) {
             for (ecs::CameraRig& rig : ecs_world.camera_rigs.data()) {
                 rig.eye_offset *= world_scale;
+                rig.boom_offset *= world_scale;
             }
         }
         if (ecs_world.player_tags.size() == 0) {
@@ -555,7 +556,7 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
                 const glm::vec3 pos = camera.get_position();
                 const ecs::CameraRig* rig = ecs_world.camera_rigs.try_get(player);
                 const glm::vec3 eye =
-                    rig ? rig->eye_offset : glm::vec3(0.f, 0.08f, 0.f);
+                    rig ? rig->eye_offset : glm::vec3(0.f, 1.6f, 0.f);
                 const glm::vec3 boom =
                     rig ? rig->boom_offset : glm::vec3(0.f);
                 const bool tp = rig && rig->third_person;
@@ -606,8 +607,8 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
 
     camera.reset_mouse_state();
 
-    // Scene physics from KHR_physics_rigid_bodies (pieces as single hulls; pawn
-    // tops are child meshes without their own body — they follow the body node).
+    // Scene physics from KHR_physics_rigid_bodies. Child meshes without their
+    // own body follow the parent body's node.
     {
         bool enable_scene_phys = true;
         const nlohmann::json& cfg = core::Configuration::get_root();

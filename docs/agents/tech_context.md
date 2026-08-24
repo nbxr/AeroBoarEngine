@@ -26,7 +26,7 @@
 - **Layers:** static `NON_MOVING` vs dynamic/kinematic `MOVING`
 - **CCD:** dynamic bodies use Jolt `LinearCast` motion quality
 - **Scene link:** optional `transform_index` per body; dynamic poses write local T+R each frame
-- **Config:** `scenePhysics`, **`worldScale`** (root scale; mass × S³; chess `10`), **`physicsDebugDraw`** (+ **F3**), **`killFloor`** (`enabled` / `margin` or absolute `y`)
+- **Config:** `scenePhysics`, **`worldScale`** (root scale; mass × S³; small assets e.g. chess `10`), **`physicsDebugDraw`** (+ **F3**), **`killFloor`** (`enabled` / `margin` or absolute `y`)
 - **Debug draw:** Jolt wireframe → `gfx::DebugLinePass` (LINE_LIST overlay)
 - **Kill floor:** destroy dynamic bodies below Y; hide linked mesh (scale 0)
 

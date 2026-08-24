@@ -12,6 +12,9 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
+#include <Jolt/Physics/Body/BodyLock.h>
+#include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/PhysicsSettings.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/RegisterTypes.h>
@@ -143,6 +146,24 @@ Quat to_jolt_quat(const glm::quat& q) {
     return Quat(q.x, q.y, q.z, q.w);
 }
 
+// World matrices include worldScale. quat_cast on a scaled mat3 is not a
+// rotation — yaw drifts a few degrees either way as the player turns.
+glm::quat rotation_from_world(const glm::mat4& w) {
+    glm::vec3 c0(w[0]), c1(w[1]), c2(w[2]);
+    const float s0 = glm::length(c0);
+    const float s1 = glm::length(c1);
+    const float s2 = glm::length(c2);
+    if (s0 > 1e-8f)
+        c0 /= s0;
+    if (s1 > 1e-8f)
+        c1 /= s1;
+    if (s2 > 1e-8f)
+        c2 /= s2;
+    if (glm::dot(c2, glm::cross(c0, c1)) < 0.0f)
+        c2 = -c2;
+    return glm::normalize(glm::quat_cast(glm::mat3(c0, c1, c2)));
+}
+
 glm::quat to_glm_quat(Quat q) {
     return glm::quat(q.GetW(), q.GetX(), q.GetY(), q.GetZ());
 }
@@ -256,7 +277,7 @@ BodyHandle PhysicsWorld::add_body_with_shape(void* shape_ref,
     settings.mRestitution = pose.restitution;
     settings.mFriction = pose.friction;
     // Continuous collision (linear cast) so small/fast dynamics don't tunnel
-    // thin statics like a chessboard slab. Discrete is fine for statics/kinematics.
+    // thin statics (floors, tabletops). Discrete is fine for statics/kinematics.
     if (pose.motion == MotionType::Dynamic)
         settings.mMotionQuality = EMotionQuality::LinearCast;
     if (pose.motion == MotionType::Dynamic && pose.mass > 0.0f) {
@@ -288,8 +309,8 @@ BodyHandle PhysicsWorld::create_box(const BoxDesc& desc) {
     if (!initialized_ || !impl_)
         return kInvalidBody;
 
-    // Chess pieces are tiny; Jolt default convex radius (~0.05) exceeds half-extents
-    // and fails with "Invalid convex radius". Scale radius down with the box.
+    // Jolt's default convex radius (~0.05 m) exceeds half-extents on small
+    // boxes and fails with "Invalid convex radius". Scale radius with size.
     const float hx = std::max(desc.half_extents.x, 1e-4f);
     const float hy = std::max(desc.half_extents.y, 1e-4f);
     const float hz = std::max(desc.half_extents.z, 1e-4f);
@@ -338,14 +359,49 @@ BodyHandle PhysicsWorld::create_convex_hull(const ConvexHullDesc& desc) {
         return kInvalidBody;
     }
 
-    Array<Vec3> pts;
-    pts.reserve(static_cast<size_t>(desc.points.size()));
     glm::vec3 bmin(1e30f), bmax(-1e30f);
     for (const glm::vec3& p : desc.points) {
-        pts.push_back(Vec3(p.x, p.y, p.z));
         bmin = glm::min(bmin, p);
         bmax = glm::max(bmax, p);
     }
+
+    // Dense render meshes (100k+ verts) make Jolt's hull error check fail.
+    // Do NOT inject AABB corners — those are not on the mesh, so the hull
+    // becomes a box. Keep silhouette support points instead.
+    constexpr size_t kDirectMax = 2048;
+    constexpr int kSupportDirs = 48;
+    std::vector<glm::vec3> thinned;
+    const std::vector<glm::vec3>* src = &desc.points;
+    if (desc.points.size() > kDirectMax) {
+        thinned.resize(static_cast<size_t>(kSupportDirs));
+        for (int i = 0; i < kSupportDirs; ++i) {
+            const float z =
+                1.0f - 2.0f * (static_cast<float>(i) + 0.5f) /
+                           static_cast<float>(kSupportDirs);
+            const float r = std::sqrt(std::max(0.0f, 1.0f - z * z));
+            const float th =
+                2.3999632f * static_cast<float>(i); // golden angle
+            const glm::vec3 d(r * std::cos(th), z, r * std::sin(th));
+            float best = -1.0e30f;
+            glm::vec3 bp = desc.points[0];
+            for (const glm::vec3& p : desc.points) {
+                const float s = glm::dot(p, d);
+                if (s > best) {
+                    best = s;
+                    bp = p;
+                }
+            }
+            thinned[static_cast<size_t>(i)] = bp;
+        }
+        src = &thinned;
+        LOG_INFO("[Physics] ConvexHull support-sampled " << desc.points.size()
+                 << " -> " << thinned.size() << " points");
+    }
+
+    Array<Vec3> pts;
+    pts.reserve(src->size());
+    for (const glm::vec3& p : *src)
+        pts.push_back(Vec3(p.x, p.y, p.z));
     const glm::vec3 ext = bmax - bmin;
     const float convex_r =
         std::min(0.05f, 0.05f * std::max({ext.x, ext.y, ext.z, 1e-3f}));
@@ -431,15 +487,28 @@ void PhysicsWorld::sync_from_transforms(const scene::TransformManager& transform
         if (rec.transform_index == ~0u || !transforms.is_alive(rec.transform_index))
             continue;
 
-        // Body is authored at the *world* AABB center; mesh root may differ.
-        // For player capsule we create the box centered on the node origin with
-        // half-extents covering the mesh — use node world T+R directly.
+        // Hulls are posed at the node origin (T+R); use node world directly.
         const glm::mat4& w = transforms.get_world_matrix(rec.transform_index);
         const glm::vec3 pos(w[3]);
-        const glm::quat rot = glm::normalize(glm::quat_cast(glm::mat3(w)));
+        const glm::quat rot = rotation_from_world(w);
 
         bi.SetPositionAndRotation(rec.id, RVec3(pos.x, pos.y, pos.z),
                                   to_jolt_quat(rot), EActivation::Activate);
+
+        // Kinematic movers do not wake sleeping dynamics by themselves, so a
+        // settled object would ignore a later shove. Activate anything in a
+        // padded AABB around the hull.
+        AABox box;
+        {
+            BodyLockRead lock(impl_->system.GetBodyLockInterface(), rec.id);
+            if (!lock.Succeeded())
+                continue;
+            box = lock.GetBody().GetWorldSpaceBounds();
+        }
+        box.ExpandBy(Vec3::sReplicate(0.2f));
+        SpecifiedBroadPhaseLayerFilter bp(BPLayers::MOVING);
+        SpecifiedObjectLayerFilter obj(Layers::MOVING);
+        bi.ActivateBodiesInAABox(box, bp, obj);
     }
 }
 
@@ -482,6 +551,37 @@ void PhysicsWorld::set_body_pose(BodyHandle body, const glm::vec3& position,
     bi.SetPositionAndRotation(impl_->bodies[body].id,
                               RVec3(position.x, position.y, position.z),
                               to_jolt_quat(rotation), EActivation::Activate);
+}
+
+bool PhysicsWorld::raycast_static(const glm::vec3& origin,
+                                  const glm::vec3& direction, float max_distance,
+                                  glm::vec3& out_hit) const {
+    if (!initialized_ || !impl_ || max_distance <= 1e-8f)
+        return false;
+    glm::vec3 dir = direction;
+    const float len = glm::length(dir);
+    if (len < 1e-8f)
+        return false;
+    dir /= len;
+
+    class StaticOnlyFilter final : public ObjectLayerFilter {
+      public:
+        bool ShouldCollide(ObjectLayer layer) const override {
+            return layer == Layers::NON_MOVING;
+        }
+    };
+
+    const RRayCast ray{
+        RVec3(origin.x, origin.y, origin.z),
+        Vec3(dir.x, dir.y, dir.z) * max_distance,
+    };
+    RayCastResult hit;
+    StaticOnlyFilter filt{};
+    if (!impl_->system.GetNarrowPhaseQuery().CastRay(ray, hit, {}, filt))
+        return false;
+    const float t = hit.mFraction * max_distance;
+    out_hit = origin + dir * t;
+    return true;
 }
 
 bool PhysicsWorld::get_pose(BodyHandle body, glm::vec3& out_pos,

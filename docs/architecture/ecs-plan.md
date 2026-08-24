@@ -371,17 +371,20 @@ Authoring long-term: KHR physics + filter layers, or ECS component that creates 
 - Camera = **eye**; body stays **upright** (yaw only — pitch/roll do not flip the capsule).
 - `eye_world = root + yaw_only(R) * eye_offset`
 - Optional on the player entry:
-  - `"eye_height": 0.08` → `(0, 0.08, 0)` local Y (preferred for tabletop)
-  - `"eye_offset": [0, 0.08, 0]` → full local offset (X/Z are side/forward in body space)
+  - `"eye_height": 1.6` → `(0, 1.6, 0)` local Y. Small assets: `0.08`.
+  - `"eye_offset": [0, 1.6, 0]` → full local offset (X/Z are side/forward in body space)
   - `"camera": "third_person"` → follow boom (default is first-person)
-  - `"boom_offset": [right, up, back]` → **sim meters** (not multiplied by `worldScale`). Implies third-person. Default `[0, 1.6, 3]`. Blender `ecs_components_settings` is applied first; **`ECS_Components_v1` wins** if both are present (re-export so the UI and the array stay in sync).
-- `{ "type": "locomotion_anim", "idle": "T-Pose", "walk": "Walking_A", "run": "Running_A", "fade": 0.2 }`
+  - `"boom_offset": [right, up, back]` → **asset meters**, multiplied by `worldScale` at load (same as `eye_offset`). Implies third-person. Default `[0, 1.6, 3]`. Small assets (~0.05 m): `[0, 0.08, 0.15]`. **Z is distance behind the WASD heading** (sign ignored). Blender `ecs_components_settings` is applied first; **`ECS_Components_v1` wins** if both are present (re-export so the UI and the array stay in sync).
+  - `"forward": [x, y, z]` → mesh facing in the node’s space. Engine WASD/camera forward is **(0,0,-1)**. Blender/glTF characters usually face **+Z** → `"forward": [0, 0, 1]` (same as `"yaw_offset": 180`).
+  - `"yaw_offset": 180` → extra body yaw in degrees (added to `forward` if both are set).
+- `{ "type": "locomotion_anim", "idle": "Idle", "walk": "Walk", "run": "Run", "fade": 0.2 }`
+  - Mixamo-style: `"idle": "T-Pose", "walk": "Walking_A", "run": "Running_A"`.
   - Typo `locomation_anim` is accepted.
   - Optional `walk_speed` / `run_speed` are **thresholds** (m/s). Omit `run_speed` to stay on walk for any WASD.
-- Default offset `(0, 0.08, 0)`. Human-scale: `"eye_height": 1.6`. Default boom `(0, 1.6, 3)`.
-- `eye_offset` is asset meters; load scales it by `worldScale`. **`boom_offset` is sim meters** (distance in the scaled world) and is **not** scaled.
+- Default `eye_offset` `(0, 1.6, 0)` and boom `(0, 1.6, 3)` (human-scale asset meters). Small assets override via extras (Blender **small assets** presets).
+- `eye_offset` and `boom_offset` are asset meters; load scales both by `worldScale`.
 - Blender: origin at feet, **+Y up**, apply rotation; avoid 180° X export quirks if the mesh looks inverted in a glTF viewer.
-- Do **not** key the player extras node in clips (gameplay owns that TRS). Bone `root` translation is masked so Walk/Run stay in place.
+- Do **not** key the player extras node in clips (gameplay owns that TRS). Bone `root` translation is masked so Walk/Run stay in place. Do **not** rewrite hips/feet after sample — see `animation-plan.md` §9.1.
 
 Unknown types: log + skip.
 
@@ -498,7 +501,7 @@ Scripts implement `on_event`; dispatch delivers `TriggerEnter`, `TimerElapsed`, 
 
 ### Phase 6 — Retire GameObject; render by Entity  
 
-### Phase 7+ — Physics components, VR, chess demo  
+### Phase 7+ — Physics components, VR / tabletop demo  
 
 ---
 

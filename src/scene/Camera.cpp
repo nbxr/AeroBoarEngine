@@ -154,7 +154,7 @@ void Camera::frame(const glm::vec3& center, float radius) {
     glm::vec3 offset = glm::normalize(glm::vec3(0.7f, 0.9f, 1.3f)) * distance;
     position = center + offset;
 
-    // Clip planes scale with the scene so small models (chess, props) are not
+    // Clip planes scale with the scene so small models (props, tabletops) are not
     // sliced by a fixed near of 0.1, and large scenes keep a usable far plane.
     // near ≈ 0.1% of view distance, floored for numerical stability.
     const float r = std::max(radius, 0.01f);
