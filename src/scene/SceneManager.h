@@ -97,6 +97,7 @@ class SceneManager {
     [[nodiscard]] glm::mat4 get_first_instance_transform() const;
     [[nodiscard]] std::pair<glm::vec3, float> get_first_instance_framing_sphere() const;
     [[nodiscard]] std::pair<glm::vec3, float> get_scene_framing_sphere() const;
+    [[nodiscard]] core::AABB get_scene_aabb() const;
 
     [[nodiscard]] uint32_t get_instance_count() const { return instance_count_; }
     [[nodiscard]] const SceneInstance& get_instance(uint32_t index) const {
@@ -124,6 +125,7 @@ class SceneManager {
     std::vector<RenderMesh> render_meshes_{};
 
     mutable std::shared_mutex instance_mutex_;
+    core::AABB scene_aabb_unlocked() const;
 };
 
 } // namespace scene

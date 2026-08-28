@@ -11,6 +11,7 @@
 #include "core/Log.h"
 #include "VkBootstrap.h"
 #include "vk_mem_alloc.h"
+#include <algorithm>
 #include <filesystem>
 #include <string>
 
@@ -19,6 +20,42 @@ bool gfx::Engine::initialize() {
         return true;
     } else
         return false;
+}
+
+bool gfx::Engine::try_recover_gpu() {
+    constexpr uint32_t kMaxRecoveries = 3;
+    if (gpu_recoveries_ >= kMaxRecoveries) {
+        LOG_ERROR("[Vulkan] GPU recovery cap (" << kMaxRecoveries
+                  << ") reached — giving up");
+        return false;
+    }
+    ++gpu_recoveries_;
+    LOG_ERROR("[Vulkan] Recovering GPU (attempt " << gpu_recoveries_ << "/"
+              << kMaxRecoveries << ")");
+
+    const bool debug_draw = physics.is_debug_draw_enabled();
+    const std::string scene = last_scene_name_;
+
+    cleanup_scene();
+    destroy();
+    renderer.vk.device_lost = false;
+    renderer.current_frame = 0;
+    dwm_composition_known_ = false;
+
+    if (!initialize()) {
+        LOG_ERROR("[Vulkan] Recovery: initialize() failed");
+        renderer.vk.device_lost = true;
+        return false;
+    }
+    if (scene.empty() || !load_scene(scene)) {
+        LOG_ERROR("[Vulkan] Recovery: load_scene('" << scene << "') failed");
+        renderer.vk.device_lost = true;
+        return false;
+    }
+    physics.set_debug_draw_enabled(debug_draw);
+    camera.save_initial_pose();
+    LOG_INFO("[Vulkan] GPU recovery succeeded — reloaded '" << scene << "'");
+    return true;
 }
 
 bool gfx::Engine::init_vulkan() {
@@ -30,7 +67,10 @@ bool gfx::Engine::init_vulkan() {
         return false;
 
     // surface
-    init_surface(); // destroy_devices
+    if (!init_surface()) {
+        LOG_ERROR("[Vulkan] init_surface failed");
+        return false;
+    }
 
     // physical and logical devices
     auto init_phys = init_physical_device(); // n/a
@@ -118,6 +158,40 @@ bool gfx::Engine::init_vulkan() {
 
     if (!init_command_buffers())
         return false;
+
+    uint32_t shadow_res = 2048;
+    configure_shadows(shadow_res);
+    if (!renderer.shadow_map.create(
+            renderer.vk.device.device, renderer.allocator, renderer.vk.depth_format,
+            shadow_res, renderer.vk.graphics_queue,
+            renderer.vk.generic_command_pool)) {
+        LOG_ERROR("[Init] ShadowMap failed — shadows disabled");
+    } else if (!init_shadow_pipeline()) {
+        LOG_ERROR("[Init] shadow pipeline failed — shadows disabled");
+        renderer.shadow_map.destroy(renderer.vk.device.device, renderer.allocator);
+    } else {
+        for (uint32_t i = 0; i < Renderer::MAX_FRAMES_IN_FLIGHT; ++i) {
+            if (i < renderer.vk.bindless_descriptor_sets.size())
+                renderer.shadow_map.bind_descriptor(
+                    renderer.vk.device.device, renderer.vk.bindless_descriptor_sets[i],
+                    Renderer::BINDING_SHADOW);
+        }
+    }
+
+    if (!renderer.hud_text.create(
+            renderer.vk.device.device, renderer.allocator,
+            renderer.vk.graphics_queue, renderer.vk.generic_command_pool,
+            renderer.vk.swap_chain_image_format)) {
+        LOG_ERROR("[Init] HudTextPass failed (overlay text disabled)");
+    } else if (!renderer.hud_text.set_swapchain(
+                   renderer.vk.device.device, renderer.vk.swap_chain_extent,
+                   renderer.vk.swap_chain_image_views)) {
+        LOG_ERROR("[Init] HudTextPass swapchain framebuffers failed");
+    }
+
+    if (!gpu_times.create(renderer.vk.device.device, renderer.vk.physical_device)) {
+        LOG_INFO("[Init] GPU timestamps unavailable — HUD gpu lines will show --");
+    }
 
     // Initialize framebuffers
     if (!init_framebuffers())
@@ -266,6 +340,34 @@ bool gfx::Engine::init_resource_managers() {
     configure_occlusion_cull();
 
     return true;
+}
+
+void gfx::Engine::configure_shadows(uint32_t& out_resolution) {
+#ifdef AERO_TARGET_ADRENO
+    out_resolution = 1024;
+#else
+    out_resolution = 2048;
+#endif
+    renderer.shadow_map.enabled = true;
+    renderer.shadow_map.bias = 0.002f;
+    const auto& root = core::Configuration::get_root();
+    if (!root.contains("shadows") || !root["shadows"].is_object()) {
+        LOG_INFO("[Shadow] enabled=" << renderer.shadow_map.enabled
+                 << " res=" << out_resolution);
+        return;
+    }
+    const auto& s = root["shadows"];
+    if (s.contains("enabled") && s["enabled"].is_boolean())
+        renderer.shadow_map.enabled = s["enabled"].get<bool>();
+    if (s.contains("resolution") && s["resolution"].is_number_unsigned())
+        out_resolution = std::max(64u, s["resolution"].get<uint32_t>());
+    if (s.contains("bias") && s["bias"].is_number())
+        renderer.shadow_map.bias = s["bias"].get<float>();
+#ifdef AERO_TARGET_ADRENO
+    out_resolution = std::min(out_resolution, 1024u);
+#endif
+    LOG_INFO("[Shadow] enabled=" << renderer.shadow_map.enabled
+             << " res=" << out_resolution << " bias=" << renderer.shadow_map.bias);
 }
 
 void gfx::Engine::configure_occlusion_cull() {

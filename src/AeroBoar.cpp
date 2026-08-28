@@ -1,7 +1,5 @@
 #include "AeroBoar.h"
 #include <iostream>
-#include <algorithm>
-#include <cmath>
 #include <thread>
 #include <chrono>
 #define GLFW_INCLUDE_VULKAN
@@ -12,6 +10,8 @@
 #include "core/InputFrame.h"
 #include "core/Configuration.h"
 #include "core/Log.h"
+#include "core/FrameStats.h"
+#include "core/Profiler.h"
 #include "ecs/DesktopMoveSystem.h"
 #include "ecs/FpsMoveSystem.h"
 #include "ecs/LocomotionAnimSystem.h"
@@ -74,8 +74,10 @@ int AeroBoar::fly() {
 
     // initialize
     if (!engine.initialize()) {
+        LOG_ERROR("Engine initialize() failed");
         engine.destroy();
-        return -1; // Return an error code if initialization fails
+        glfwTerminate();
+        return -1;
     }
 
     // load the default scene defined in configuration.yaml
@@ -148,47 +150,69 @@ int AeroBoar::fly() {
         float delta_time = static_cast<float>(current_time - last_frame_time);
         last_frame_time = current_time;
 
-        glfwPollEvents();
-        auto& input = core::InputManager::get_instance();
-        input.update(delta_time);
-
-        // handle resizing
-        int width, height;
-        glfwGetFramebufferSize(engine.renderer.window.glfw_handle, &width, &height);
-        if (width > 0 && height > 0) {
-            if (width != engine.renderer.window.width ||
-                height != engine.renderer.window.height) {
-                LOG_INFO("[Main] Window size changed: "
-                         << engine.renderer.window.width << "x"
-                         << engine.renderer.window.height << " -> " << width << "x"
-                         << height << " (triggering swapchain recreate)");
-                engine.renderer.window.width = width;
-                engine.renderer.window.height = height;
-                engine.recreate_swapchain();
+        // render() ends the CPU frame; if we skip it (minimize / recover), the
+        // destructor writes the snapshot so the HUD still has last-frame times.
+        struct CpuFrameGuard {
+            core::FrameStats& stats;
+            bool armed = true;
+            explicit CpuFrameGuard(core::FrameStats& s) : stats(s) {
+                s.begin_cpu_frame();
             }
+            void disarm() { armed = false; }
+            ~CpuFrameGuard() {
+                if (armed)
+                    stats.end_cpu_frame();
+            }
+        } cpu_frame{engine.frame_stats};
+
+        int width = 0;
+        int height = 0;
+        core::InputFrame frame{};
+        {
+            auto input_scope = engine.frame_stats.scope(core::CpuStage::Input);
+            glfwPollEvents();
+            auto& input = core::InputManager::get_instance();
+            input.update(delta_time);
+
+            glfwGetFramebufferSize(engine.renderer.window.glfw_handle, &width,
+                                   &height);
+            if (width > 0 && height > 0) {
+                if (width != engine.renderer.window.width ||
+                    height != engine.renderer.window.height) {
+                    LOG_INFO("[Main] Window size changed: "
+                             << engine.renderer.window.width << "x"
+                             << engine.renderer.window.height << " -> " << width
+                             << "x" << height << " (triggering swapchain recreate)");
+                    engine.renderer.window.width = width;
+                    engine.renderer.window.height = height;
+                    engine.recreate_swapchain();
+                }
+            }
+
+            static bool first_frame_after_load = true;
+            if (first_frame_after_load) {
+                input.reset_mouse_state();
+                engine.camera.reset_mouse_state();
+                input_frames.reset_edges();
+                first_frame_after_load = false;
+            }
+
+            // 3) InputFrame  4) EditorHotkeys  5) DesktopMove (player)
+            frame = input_frames.build(input, delta_time);
+
+            ecs::EditorHotkeyContext editor_ctx{};
+            editor_ctx.input = &input;
+            editor_ctx.camera = &engine.camera;
+            editor_ctx.scene = &engine.renderer.scene_manager;
+            editor_ctx.physics = &engine.physics;
+            editor_ctx.stats_hud = &engine.frame_stats.hud_enabled;
+            ecs::editor_hotkey_system_update(frame, editor_ctx);
         }
-
-        static bool first_frame_after_load = true;
-        if (first_frame_after_load) {
-            input.reset_mouse_state();
-            engine.camera.reset_mouse_state();
-            input_frames.reset_edges();
-            first_frame_after_load = false;
-        }
-
-        // 3) InputFrame  4) EditorHotkeys  5) DesktopMove (player)
-        const core::InputFrame frame = input_frames.build(input, delta_time);
-
-        ecs::EditorHotkeyContext editor_ctx{};
-        editor_ctx.input = &input;
-        editor_ctx.camera = &engine.camera;
-        editor_ctx.scene = &engine.renderer.scene_manager;
-        editor_ctx.physics = &engine.physics;
-        ecs::editor_hotkey_system_update(frame, editor_ctx);
 
         // Move first so LocomotionAnim sees this-frame speed; player-root
         // channels are masked so clips cannot overwrite FpsMove.
         {
+            auto sim = engine.frame_stats.scope(core::CpuStage::Simulate);
             auto& tw = engine.renderer.scene_manager.transforms();
             const ecs::Entity ap = engine.ecs_world.active_player();
             // Any live player body is a character controller (WASD + 1st/3rd
@@ -212,24 +236,43 @@ int AeroBoar::fly() {
                 ecs::desktop_move_system_update(engine.ecs_world, frame,
                                                 engine.camera, &tw);
             }
+
+            ecs::locomotion_anim_system_update(
+                engine.ecs_world, engine.renderer.scene_manager.animations());
+            engine.update_animations(delta_time);
+            ecs::script_system_update(engine.ecs_world, delta_time);
         }
 
-        ecs::locomotion_anim_system_update(
-            engine.ecs_world, engine.renderer.scene_manager.animations());
-        engine.update_animations(delta_time);
-
-        ecs::script_system_update(engine.ecs_world, delta_time);
-
-        // Kinematic player → Jolt, step, dynamics → meshes.
-        engine.step_physics(delta_time);
+        {
+            auto phys = engine.frame_stats.scope(core::CpuStage::Physics);
+            engine.step_physics(delta_time);
+        }
 
         if (engine.renderer.vk.device_lost) {
-            LOG_ERROR("Device lost - exiting main loop to avoid log spam and further invalid calls.");
-            glfwSetWindowShouldClose(engine.renderer.window.glfw_handle, GLFW_TRUE);
-            break;
+            if (!engine.try_recover_gpu()) {
+                LOG_ERROR("GPU recovery failed — exiting");
+                glfwSetWindowShouldClose(engine.renderer.window.glfw_handle,
+                                         GLFW_TRUE);
+                break;
+            }
+            continue;
         }
 
-        engine.render();
+        // Overlay stats are filled inside Engine::render() after GPU collect.
+        // Minimized / zero-extent: skip present (DWM/RDP often reports 0x0).
+        if (width > 0 && height > 0) {
+            cpu_frame.disarm();
+            engine.render();
+        }
+
+        if (engine.renderer.vk.device_lost) {
+            if (!engine.try_recover_gpu()) {
+                LOG_ERROR("GPU recovery failed — exiting");
+                glfwSetWindowShouldClose(engine.renderer.window.glfw_handle,
+                                         GLFW_TRUE);
+                break;
+            }
+        }
     }
 
     // cleanup and terminate

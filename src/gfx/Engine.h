@@ -3,13 +3,16 @@
 #include "gfx/AllocatedImage.h"
 #include "gfx/Light.h"
 #include "gfx/Renderer.h"
+#include "gfx/GpuTimestamps.h"
 #include "physics/PhysicsWorld.h"
 #include "scene/Camera.h"
 #include "ecs/World.h"
+#include "core/FrameStats.h"
 #include "core/Log.h"
 #include <glm/glm.hpp>
 #include <iostream>
 #include <stdio.h>
+#include <string>
 #include <utility>
 
 namespace tinygltf {
@@ -23,6 +26,8 @@ class Engine {
     scene::Camera camera{};   // Desktop + future VR camera system
     physics::PhysicsWorld physics{};
     ecs::World ecs_world{};   // Entities / components (render still dual-writes GameObject)
+    core::FrameStats frame_stats{};
+    GpuTimestamps gpu_times{};
 
 
     bool initialize();
@@ -34,6 +39,11 @@ class Engine {
     bool load_default_scene();
     bool load_scene(const std::string &scene_name);
     void cleanup_scene();
+
+    // TDR / DWM composition drop / SURFACE_LOST: rebuild device + reload scene.
+    // GLFW window is kept. Happy-path cost is zero (only runs after DEVICE_LOST).
+    bool try_recover_gpu();
+    void mark_device_lost(const char* where);
 
     // Lighting runtime API (mutations take effect on the next frame write).
     // Re-apply world pos/dir from TransformManager after propagate().
@@ -93,6 +103,14 @@ class Engine {
     bool init_present_queue(vkb::Device &dev);
     bool init_transfer_queue(vkb::Device &dev);
     bool init_swapchain(vkb::Device &dev);
+    bool gpu_wait_idle();
+    void poll_display_composition();
+    void apply_present_modes(vkb::SwapchainBuilder& builder);
+
+    std::string last_scene_name_;
+    uint32_t gpu_recoveries_ = 0;
+    bool dwm_composition_on_ = true;
+    bool dwm_composition_known_ = false;
     bool init_render_pass();
     bool init_depth_prepass();
     bool init_msaa_color_image();
@@ -123,6 +141,8 @@ class Engine {
     bool init_pipeline_layout();
     bool init_graphics_pipeline();
     bool init_depth_prepass_pipeline();
+    bool init_shadow_pipeline();
+    void configure_shadows(uint32_t& out_resolution);
 
     // Wire prepass depth → HZB copy sets and HZB → cull sets (idle only).
     void wire_hzb_descriptors();

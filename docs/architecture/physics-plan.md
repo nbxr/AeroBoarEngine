@@ -3,7 +3,7 @@
 Canonical plan for rigid-body physics in AeroBoarEngine.
 
 **Status:** **Foundation + KHR load MVP** — Jolt `PhysicsWorld`, step/sync, demo boxes, `spawn_scene_physics` (`KHR_physics_rigid_bodies` / `KHR_implicit_shapes`), LinearCast CCD, **`worldScale`**, wireframe **debug draw**. Desktop knock-over verified on ABeautifulGameScene / ABeautifulGameGame (`worldScale: 10`) as the current tabletop test. Engine paths are scene-agnostic.  
-**Not yet:** compound colliders, triangle mesh colliders, joints, rich filters, FPS/character controller, raycast/impulse API.
+**Not yet:** compound colliders, triangle mesh colliders, joints, rich filters, Jolt `CharacterVirtual` (optional vs `FpsMove`), raycast/impulse API.
 
 **See also**
 - `docs/agents/current_state.md` — status / next immediate
@@ -120,7 +120,7 @@ When a prop uses separate materials/meshes (body + glass top, etc.):
 
 - [x] Capsule / convex hull (+ box) create APIs
 - [x] Dynamic **LinearCast** CCD; scaled box/hull convex radius for small shapes
-- [x] Dense convex hulls **support-sampled** (not AABB corners — those drew as boxes). Skinned player hulls subtract baked armature Y so they sit on the body.
+- [x] Dense convex hulls **support-sampled** (not AABB corners — those drew as boxes). Skinned KHR mesh colliders become per-bone kinematic hulls (dominant joint + IBM); rigid hulls stay on the mesh node.
 - [x] Kinematic player wakes sleeping dynamics in a padded AABB (knock-over after settle)
 - [x] **`worldScale`** for tabletop / thin-collider scenes (collider points use **world** scale so skinned children under a scaled player root match the mesh)
 - [x] Physics wireframe debug draw
@@ -142,7 +142,8 @@ Full product sequencing: **`vr-chess-physics-plan.md`**.
 
 ### Phase 3 — Gameplay systems
 
-- [x] **FPS / grounded player controller** (`ecs::FpsMove`). Kinematic hulls are bind-pose on mesh nodes — they do **not** follow skinned feet. Ground is a static raycast on the extras empty, not Jolt depenetration (kinematics are not pushed out of the floor). Foot clip vs floor is authoring / future IK — `animation-plan.md` §9.1.
+- [x] **FPS / grounded player controller** (`ecs::FpsMove`). Ground is a static raycast on the extras empty, not Jolt depenetration (kinematics are not pushed out of the floor). Foot clip vs floor is authoring / future IK — `animation-plan.md` §9.1.
+- [x] **Skinned hulls follow animation:** KHR mesh colliders on skinned nodes spawn **per-bone kinematic hulls** (dominant joint + IBM local). `sync_from_transforms` poses them from joint worlds after clips sample. Rigid (non-skinned) hulls unchanged.
 - [x] Third-person boom + `LocomotionAnim` Idle/Walk/Run (clips play as authored)
 - [ ] Collision filters / layers beyond static/dynamic
 - [ ] Triggers / contact callbacks (engine-facing)

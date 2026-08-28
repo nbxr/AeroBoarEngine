@@ -68,6 +68,12 @@ void editor_hotkey_system_update(const core::InputFrame& frame,
         LOG_INFO("[Physics] debug draw " << (next ? "ON" : "OFF")
                  << " (bodies=" << ctx.physics->body_count() << ")");
     }
+
+    // F4: toggle frame-stats overlay (skips the extra swapchain pass when off).
+    if (frame.f4_pressed && ctx.stats_hud) {
+        *ctx.stats_hud = !*ctx.stats_hud;
+        LOG_INFO("[HUD] frame stats " << (*ctx.stats_hud ? "ON" : "OFF"));
+    }
 }
 
 } // namespace ecs

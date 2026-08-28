@@ -5,12 +5,14 @@
 #include "ecs/Entity.h"
 #include "core/Configuration.h"
 #include "core/Log.h"
+#include "scene/Skin.h"
 #include "scene/TransformManager.h"
 #include "tiny_gltf.h"
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -245,6 +247,228 @@ void fill_pose_from_node(physics::BodyPoseDesc& pose, const glm::mat4& world,
     (void)local_trs;
 }
 
+const uint8_t* accessor_bytes(const tinygltf::Model& model,
+                              const tinygltf::Accessor& acc, int* stride_out,
+                              int packed_stride) {
+    if (acc.bufferView < 0 ||
+        acc.bufferView >= static_cast<int>(model.bufferViews.size()))
+        return nullptr;
+    const auto& bv = model.bufferViews[static_cast<size_t>(acc.bufferView)];
+    if (bv.buffer < 0 || bv.buffer >= static_cast<int>(model.buffers.size()))
+        return nullptr;
+    const auto& buf = model.buffers[static_cast<size_t>(bv.buffer)];
+    int stride = acc.ByteStride(bv);
+    if (stride <= 0)
+        stride = packed_stride;
+    *stride_out = stride;
+    const size_t off = static_cast<size_t>(bv.byteOffset) +
+                       static_cast<size_t>(acc.byteOffset);
+    if (off >= buf.data.size())
+        return nullptr;
+    return buf.data.data() + off;
+}
+
+struct BoneHullAccum {
+    std::vector<glm::vec3> points;
+    float friction = 0.5f;
+    float restitution = 0.1f;
+};
+
+// Cluster skinned verts by dominant joint, IBM → bone local, bake joint scale.
+// Hulls are posed each frame from the joint transform (animation follows).
+uint32_t accumulate_skinned_bone_hulls(
+    const tinygltf::Model& model, int mesh_index, int skin_index,
+    const scene::SkinSystem& skins, const scene::TransformManager& xforms,
+    float friction, float restitution,
+    std::unordered_map<uint32_t, BoneHullAccum>& out) {
+    if (mesh_index < 0 ||
+        mesh_index >= static_cast<int>(model.meshes.size()))
+        return 0;
+    if (skin_index < 0 ||
+        skin_index >= static_cast<int>(skins.skin_count()))
+        return 0;
+    const scene::Skin& skin = skins.skin(static_cast<uint32_t>(skin_index));
+    const int n_joints = static_cast<int>(skin.joint_transform_indices.size());
+    if (n_joints <= 0)
+        return 0;
+
+    const auto& mesh = model.meshes[static_cast<size_t>(mesh_index)];
+    uint32_t clustered = 0;
+
+    for (const auto& prim : mesh.primitives) {
+        auto pit = prim.attributes.find("POSITION");
+        auto jit = prim.attributes.find("JOINTS_0");
+        auto wit = prim.attributes.find("WEIGHTS_0");
+        if (pit == prim.attributes.end() || jit == prim.attributes.end() ||
+            wit == prim.attributes.end())
+            continue;
+        const auto& pacc = model.accessors[static_cast<size_t>(pit->second)];
+        const auto& jacc = model.accessors[static_cast<size_t>(jit->second)];
+        const auto& wacc = model.accessors[static_cast<size_t>(wit->second)];
+        if (pacc.componentType != TINYGLTF_COMPONENT_TYPE_FLOAT ||
+            pacc.type != TINYGLTF_TYPE_VEC3)
+            continue;
+        if (jacc.type != TINYGLTF_TYPE_VEC4 ||
+            (jacc.componentType != TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE &&
+             jacc.componentType != TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT))
+            continue;
+        if (wacc.type != TINYGLTF_TYPE_VEC4 ||
+            (wacc.componentType != TINYGLTF_COMPONENT_TYPE_FLOAT &&
+             wacc.componentType != TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE &&
+             wacc.componentType != TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT))
+            continue;
+
+        int pstride = 0, jstride = 0, wstride = 0;
+        const int jpacked =
+            (jacc.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT)
+                ? 8
+                : 4;
+        int wpacked = 16;
+        if (wacc.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE)
+            wpacked = 4;
+        else if (wacc.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT)
+            wpacked = 8;
+        const uint8_t* pbase = accessor_bytes(model, pacc, &pstride, 12);
+        const uint8_t* jbase = accessor_bytes(model, jacc, &jstride, jpacked);
+        const uint8_t* wbase = accessor_bytes(model, wacc, &wstride, wpacked);
+        if (!pbase || !jbase || !wbase)
+            continue;
+
+        const size_t n = pacc.count;
+        for (size_t i = 0; i < n; ++i) {
+            const float* pf = reinterpret_cast<const float*>(
+                pbase + i * static_cast<size_t>(pstride));
+            const glm::vec3 pos(pf[0], pf[1], pf[2]);
+
+            uint16_t joints[4] = {0, 0, 0, 0};
+            if (jacc.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
+                const uint16_t* j =
+                    reinterpret_cast<const uint16_t*>(
+                        jbase + i * static_cast<size_t>(jstride));
+                joints[0] = j[0];
+                joints[1] = j[1];
+                joints[2] = j[2];
+                joints[3] = j[3];
+            } else {
+                const uint8_t* j = jbase + i * static_cast<size_t>(jstride);
+                joints[0] = j[0];
+                joints[1] = j[1];
+                joints[2] = j[2];
+                joints[3] = j[3];
+            }
+
+            float weights[4] = {0.f, 0.f, 0.f, 0.f};
+            if (wacc.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT) {
+                const float* w = reinterpret_cast<const float*>(
+                    wbase + i * static_cast<size_t>(wstride));
+                weights[0] = w[0];
+                weights[1] = w[1];
+                weights[2] = w[2];
+                weights[3] = w[3];
+            } else if (wacc.componentType ==
+                       TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
+                const uint16_t* w = reinterpret_cast<const uint16_t*>(
+                    wbase + i * static_cast<size_t>(wstride));
+                weights[0] = static_cast<float>(w[0]) / 65535.0f;
+                weights[1] = static_cast<float>(w[1]) / 65535.0f;
+                weights[2] = static_cast<float>(w[2]) / 65535.0f;
+                weights[3] = static_cast<float>(w[3]) / 65535.0f;
+            } else {
+                const uint8_t* w = wbase + i * static_cast<size_t>(wstride);
+                weights[0] = static_cast<float>(w[0]) / 255.0f;
+                weights[1] = static_cast<float>(w[1]) / 255.0f;
+                weights[2] = static_cast<float>(w[2]) / 255.0f;
+                weights[3] = static_cast<float>(w[3]) / 255.0f;
+            }
+
+            int dom = 0;
+            for (int k = 1; k < 4; ++k) {
+                if (weights[k] > weights[dom])
+                    dom = k;
+            }
+            if (weights[dom] < 0.01f)
+                continue;
+            const int ji = static_cast<int>(joints[static_cast<size_t>(dom)]);
+            if (ji < 0 || ji >= n_joints)
+                continue;
+            const uint32_t jx = skin.joint_transform_indices[static_cast<size_t>(ji)];
+            if (jx == scene::TransformManager::kInvalid || !xforms.is_alive(jx))
+                continue;
+
+            const glm::mat4& ibm =
+                (static_cast<size_t>(ji) < skin.inverse_bind_matrices.size())
+                    ? skin.inverse_bind_matrices[static_cast<size_t>(ji)]
+                    : glm::mat4(1.0f);
+            glm::vec3 p_bone = glm::vec3(ibm * glm::vec4(pos, 1.0f));
+            const glm::vec3 js = glm::max(
+                scale_from_world(xforms.get_world_matrix(jx)), glm::vec3(1e-6f));
+            p_bone.x *= js.x;
+            p_bone.y *= js.y;
+            p_bone.z *= js.z;
+
+            BoneHullAccum& acc = out[jx];
+            acc.friction = friction;
+            acc.restitution = restitution;
+            acc.points.push_back(p_bone);
+            ++clustered;
+        }
+    }
+    return clustered;
+}
+
+constexpr size_t kMinBoneHullVerts = 8;
+constexpr float kMinBoneHullExtent = 1e-3f;
+constexpr size_t kMaxBoneHulls = 64;
+
+uint32_t spawn_accumulated_bone_hulls(
+    physics::PhysicsWorld& physics, const scene::TransformManager& xforms,
+    std::unordered_map<uint32_t, BoneHullAccum>& bone_hulls) {
+    struct Ranked {
+        uint32_t xform = 0;
+        size_t n = 0;
+    };
+    std::vector<Ranked> ranked;
+    ranked.reserve(bone_hulls.size());
+    for (const auto& kv : bone_hulls) {
+        if (kv.second.points.size() < kMinBoneHullVerts)
+            continue;
+        glm::vec3 bmin(1e30f), bmax(-1e30f);
+        for (const glm::vec3& p : kv.second.points) {
+            bmin = glm::min(bmin, p);
+            bmax = glm::max(bmax, p);
+        }
+        const glm::vec3 ext = bmax - bmin;
+        if (std::max({ext.x, ext.y, ext.z}) < kMinBoneHullExtent)
+            continue;
+        ranked.push_back({kv.first, kv.second.points.size()});
+    }
+    std::sort(ranked.begin(), ranked.end(),
+              [](const Ranked& a, const Ranked& b) { return a.n > b.n; });
+    if (ranked.size() > kMaxBoneHulls)
+        ranked.resize(kMaxBoneHulls);
+
+    uint32_t spawned = 0;
+    scene::LocalTrs dummy{};
+    for (const Ranked& r : ranked) {
+        auto it = bone_hulls.find(r.xform);
+        if (it == bone_hulls.end())
+            continue;
+        const glm::mat4& world = xforms.get_world_matrix(r.xform);
+        physics::ConvexHullDesc hull{};
+        fill_pose_from_node(hull, world, dummy);
+        hull.motion = physics::MotionType::Kinematic;
+        hull.mass = 0.0f;
+        hull.friction = it->second.friction;
+        hull.restitution = it->second.restitution;
+        hull.transform_index = r.xform;
+        hull.points = std::move(it->second.points);
+        const physics::BodyHandle body = physics.create_convex_hull(hull);
+        if (body != physics::kInvalidBody)
+            ++spawned;
+    }
+    return spawned;
+}
+
 } // namespace
 
 bool gfx::Engine::spawn_scene_physics(const tinygltf::Model& model) {
@@ -342,6 +566,7 @@ bool gfx::Engine::spawn_scene_physics(const tinygltf::Model& model) {
     }
 
     uint32_t n_static = 0, n_dynamic = 0, n_kinematic = 0, n_fail = 0;
+    std::unordered_map<uint32_t, BoneHullAccum> bone_hulls;
 
     for (size_t ni = 0; ni < model.nodes.size(); ++ni) {
         const auto& node = model.nodes[ni];
@@ -509,6 +734,17 @@ bool gfx::Engine::spawn_scene_physics(const tinygltf::Model& model) {
                 if (ch != geom->end() && ch->second.IsBool())
                     convex = ch->second.Get<bool>();
 
+                // Skinned mesh: one kinematic hull per dominant bone (IBM local),
+                // posed from the joint transform so clips move the colliders.
+                // Merge clouds across meshes that share a joint.
+                if (node.skin >= 0) {
+                    const uint32_t clustered = accumulate_skinned_bone_hulls(
+                        model, mesh_idx, node.skin, scene.skins(), xforms,
+                        friction, restitution, bone_hulls);
+                    if (clustered > 0)
+                        continue;
+                }
+
                 std::vector<glm::vec3> pts = mesh_positions(model, mesh_idx);
                 if (!pts.empty()) {
                     // Bake node scale into points (body pose is unscaled T+R).
@@ -516,22 +752,6 @@ bool gfx::Engine::spawn_scene_physics(const tinygltf::Model& model) {
                         p.x *= scl.x;
                         p.y *= scl.y;
                         p.z *= scl.z;
-                    }
-                    // Skinned meshes are often authored in armature space:
-                    // vertex Y already includes the node's local height (feet
-                    // sit at node T.y). Applying node world T again stacks the
-                    // hull. Subtract node Y when the cloud's min Y is closer to
-                    // the node Y than to 0 (covers full-body and higher
-                    // sub-meshes that share the same baked offset).
-                    if (node.skin >= 0 && !pts.empty()) {
-                        float min_y = pts[0].y;
-                        for (const glm::vec3& p : pts)
-                            min_y = std::min(min_y, p.y);
-                        const float py = pose.position.y;
-                        if (std::abs(min_y - py) + 1e-4f < std::abs(min_y)) {
-                            for (glm::vec3& p : pts)
-                                p.y -= py;
-                        }
                     }
                     if (convex || true) { // always hull for MVP (no mesh collider)
                         physics::ConvexHullDesc hull{};
@@ -560,6 +780,12 @@ bool gfx::Engine::spawn_scene_physics(const tinygltf::Model& model) {
             ++n_kinematic;
         else
             ++n_dynamic;
+    }
+
+    const uint32_t n_bone = spawn_accumulated_bone_hulls(physics, xforms, bone_hulls);
+    n_kinematic += n_bone;
+    if (n_bone > 0) {
+        LOG_INFO("[Physics] skinned bone hulls=" << n_bone << " (kinematic, follow joints)");
     }
 
     LOG_INFO("[Physics] KHR_physics_rigid_bodies: static=" << n_static

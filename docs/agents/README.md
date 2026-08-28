@@ -8,7 +8,7 @@ These files are intended to be read by any AI coding agent (Grok Build, Continue
 
 - `project_brief.md` — High-level vision and goals for the project.
 - `product_context.md` — Problem being solved and target outcomes.
-- `tech_context.md` — Core tech stack, libraries, and coding conventions.
+- `tech_context.md` — Core tech stack, libraries, and coding conventions (incl. optional Tracy, HUD / frame stats).
 - `architecture_principles.md` — Key architectural patterns and Quest 3 optimization principles.
 - `current_state.md` — Lightweight view of where the project currently stands (what is done, what is in progress, major gaps).
   - The `scene::Camera` desktop controls are documented in detail in `src/scene/Camera.h`.

@@ -51,6 +51,7 @@ struct VulkanContext {
     VkPipeline transparent_pipeline{VK_NULL_HANDLE};  // blend: depth write off
     // Depth-only prepass for same-frame Hi-Z (opaque writers only).
     VkPipeline depth_prepass_pipeline{VK_NULL_HANDLE};
+    VkPipeline shadow_pipeline{VK_NULL_HANDLE};
     VkPushConstantRange push_constant_range{
         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, // stageFlags
         0, // offset
@@ -73,10 +74,7 @@ struct VulkanContext {
 
     bool use_descriptor_heap{false};
 
-    // Set to true if we ever receive VK_ERROR_DEVICE_LOST (or equivalent fatal
-    // result). The main loop can observe this and stop spinning (which would
-    // otherwise cause the validation callback + log file to be flooded with
-    // millions of repeated errors).
+    // DEVICE_LOST / SURFACE_LOST. Main loop recovers (try_recover_gpu) or exits.
     bool device_lost{false};
 };
 }; // namespace gfx

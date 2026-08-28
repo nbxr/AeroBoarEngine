@@ -44,8 +44,9 @@ layout(set = 0, binding = 2) readonly buffer Materials {
 layout(set = 0, binding = 7) uniform samplerCube prefilteredEnv;
 layout(set = 0, binding = 8) uniform sampler2D brdfLut;
 
+layout(set = 0, binding = 10) uniform sampler2DShadow shadowMap;
 // Bindless textures — must be highest binding (VARIABLE_DESCRIPTOR_COUNT).
-layout(set = 0, binding = 10) uniform sampler2D bindlessTextures[];
+layout(set = 0, binding = 11) uniform sampler2D bindlessTextures[];
 
 layout(location = 0) in vec3 inWorldPos;
 layout(location = 1) in vec3 inNormal;
@@ -82,6 +83,8 @@ layout(set = 0, binding = 0) uniform FrameConstants {
     uvec4 lightMeta;        // x = lightCount
     vec4  shCoefficients[9];
     uvec4 iblIndices;       // x = specularEnvMapIndex, y = brdfLutIndex
+    mat4  shadowViewProj;
+    vec4  shadowParams;     // x=texel UV, y=enabled, z=light index, w=bias
 } globals;
 
 // Single SSBO + runtime array (std430). Matches gfx::GpuLight (64 bytes).
@@ -158,6 +161,36 @@ vec3 getNormalFromMap(vec3 N, vec3 T, vec3 B, vec2 uv, uint normalTexIdx, float 
     normalMap.xy *= strength;
     mat3 TBN = mat3(T, B, N);
     return normalize(TBN * normalMap);
+}
+
+// Reverse-Z directional map: COMPARE_OP_GREATER_OR_EQUAL.
+// 8-tap Vogel PCF (~1.25 texels): anti-aliases the silhouette without a fat penumbra.
+// LINEAR compare still does a 2x2 filter per tap. Cheap enough for stereo later.
+float sample_shadow(vec3 worldPos) {
+    if (globals.shadowParams.y < 0.5)
+        return 1.0;
+    vec4 sc = globals.shadowViewProj * vec4(worldPos, 1.0);
+    sc.xyz /= max(sc.w, 1e-6);
+    vec2 uv = sc.xy * 0.5 + 0.5;
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)
+        return 1.0;
+    float z = sc.z + globals.shadowParams.w;
+    float t = max(globals.shadowParams.x, 1e-6) * 1.25;
+    // Vogel disk (golden-angle). Fixed offsets, uniform across the wave.
+    const vec2 kOff[8] = vec2[](
+        vec2( 0.1250,  0.0000),
+        vec2(-0.1585,  0.1970),
+        vec2(-0.0644, -0.3369),
+        vec2( 0.3552,  0.1298),
+        vec2(-0.3543,  0.2573),
+        vec2( 0.0329, -0.4989),
+        vec2( 0.4250,  0.3492),
+        vec2(-0.5688, -0.0825)
+    );
+    float s = 0.0;
+    for (int i = 0; i < 8; ++i)
+        s += texture(shadowMap, vec3(uv + kOff[i] * t, z));
+    return s * 0.125;
 }
 
 void main() {
@@ -286,6 +319,9 @@ void main() {
         vec3 lightColor = light.colorIntensity.rgb;
         float intensity = light.colorIntensity.a;
         float lightScale = intensity * attenuation * exposure;
+        if (globals.shadowParams.y > 0.5 &&
+            i == uint(globals.shadowParams.z + 0.5))
+            lightScale *= sample_shadow(inWorldPos);
 
         color += (diff + spec) * lightColor * lightScale;
 

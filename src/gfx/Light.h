@@ -67,11 +67,16 @@ struct FrameConstants {
     glm::uvec4 lightMeta;     // x = lightCount (0..MAX_LIGHTS)
     glm::vec4 shCoefficients[9];
     glm::uvec4 iblIndices; // x = specularEnvMapIndex, y = brdfLutIndex
+    // Directional shadow (one map, shared by both eyes later). mat4 = 4×vec4.
+    glm::mat4 shadowViewProj{1.0f};
+    glm::vec4 shadowParams{0.0f}; // x=texel UV, y=enabled, z=light index, w=bias
 };
-static_assert(sizeof(FrameConstants) == 192, "FrameConstants size mismatch");
+static_assert(sizeof(FrameConstants) == 272, "FrameConstants size mismatch");
 static_assert(offsetof(FrameConstants, lightMeta) == 16, "FrameConstants layout");
 static_assert(offsetof(FrameConstants, shCoefficients) == 32, "FrameConstants layout");
 static_assert(offsetof(FrameConstants, iblIndices) == 176, "FrameConstants layout");
+static_assert(offsetof(FrameConstants, shadowViewProj) == 192, "FrameConstants layout");
+static_assert(offsetof(FrameConstants, shadowParams) == 256, "FrameConstants layout");
 
 // Estimate unshaded peak contribution used for auto-exposure (before NdotL / PI).
 inline float estimate_light_contribution(const Light& L, const glm::vec3& scene_center) {

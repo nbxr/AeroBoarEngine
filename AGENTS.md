@@ -65,7 +65,9 @@ Update the `home` paths for your platform(s) before running. The `scenes[].filen
 
 ### Important Notes
 - A basic render loop (`Engine::render()`) draws glTF scenes with bindless PBR, GPU frustum/Hi-Z cull, and multi-draw indirect.
-- OpenXR / multiview / Quest packaging and reverse-Z are still future work — see `docs/agents/current_state.md`.
+- OpenXR / multiview / Quest packaging are still future work. **Reverse-Z is on desktop.** See `docs/agents/current_state.md`.
+- Optional Tracy: `cmake -B build -DAERO_TRACY=ON` then capture with the **v0.14.1** Tracy GUI. No engine zones yet (`src/core/Profiler.h`).
+- Desktop overlay HUD (`HudTextPass`) shows frame-stats (busy/wait, EMA, auto units). **F4** toggles. See `docs/agents/tech_context.md`.
 - Check `docs/agents/current_state.md` for the latest implementation status and focus areas.
 
 ## 4. Instructions for AI Agents

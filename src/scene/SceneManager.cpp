@@ -219,9 +219,12 @@ std::pair<glm::vec3, float> SceneManager::get_first_instance_framing_sphere() co
     return {glm::vec3(inst.transform[3]), 7.0f};
 }
 
-std::pair<glm::vec3, float> SceneManager::get_scene_framing_sphere() const {
+core::AABB SceneManager::get_scene_aabb() const {
     std::shared_lock lock(instance_mutex_);
+    return scene_aabb_unlocked();
+}
 
+core::AABB SceneManager::scene_aabb_unlocked() const {
     core::AABB scene_bounds;
     bool any = false;
 
@@ -257,9 +260,15 @@ std::pair<glm::vec3, float> SceneManager::get_scene_framing_sphere() const {
             scene_bounds.expand(glm::vec3(inst.transform[3]));
             any = true;
         }
-        if (!any)
-            return {{0.0f, 0.0f, 0.0f}, 5.0f};
     }
+    return scene_bounds;
+}
+
+std::pair<glm::vec3, float> SceneManager::get_scene_framing_sphere() const {
+    std::shared_lock lock(instance_mutex_);
+    core::AABB scene_bounds = scene_aabb_unlocked();
+    if (!scene_bounds.is_valid())
+        return {{0.0f, 0.0f, 0.0f}, 5.0f};
 
     glm::vec3 c = scene_bounds.center();
     float radius = glm::length(scene_bounds.extents()) * 0.5f;

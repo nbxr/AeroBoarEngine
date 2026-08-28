@@ -531,7 +531,7 @@ bool gfx::Engine::init_descriptor_pool() {
     // ~9998 remaining after the first set).
     const uint32_t frames = Renderer::MAX_FRAMES_IN_FLIGHT;
     constexpr uint32_t kMaxBindlessTextures = 10000;
-    constexpr uint32_t kFixedImageSamplersPerSet = 2; // IBL cube + BRDF LUT
+    constexpr uint32_t kFixedImageSamplersPerSet = 3; // IBL cube + BRDF LUT + shadow
     const uint32_t image_samplers_per_set =
         kMaxBindlessTextures + kFixedImageSamplersPerSet;
     // Storage: FrameConstants not counted here; lights + scene tables + extras
@@ -563,8 +563,8 @@ bool gfx::Engine::init_descriptor_set_layout() {
     // Global bindless descriptor layout.
     // VARIABLE_DESCRIPTOR_COUNT (textures) MUST be the highest binding number.
     // 0: FrameConstants | 1-5: scene | 6: lights | 7: env cube | 8: BRDF LUT
-    // 9: joint matrices | 10: textures
-    VkDescriptorSetLayoutBinding bindings[11] = {};
+    // 9: joint matrices | 10: shadow | 11: textures
+    VkDescriptorSetLayoutBinding bindings[12] = {};
 
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -632,17 +632,23 @@ bool gfx::Engine::init_descriptor_set_layout() {
     bindings[9].descriptorCount = 1;
     bindings[9].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
 
-    // 10: Textures — MUST be highest binding
-    bindings[10].binding = Renderer::BINDING_TEXTURES;
+    // 10: Directional shadow map (compare sampler)
+    bindings[10].binding = Renderer::BINDING_SHADOW;
     bindings[10].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    bindings[10].descriptorCount = 10000;
+    bindings[10].descriptorCount = 1;
     bindings[10].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    // 11: Textures — MUST be highest binding
+    bindings[11].binding = Renderer::BINDING_TEXTURES;
+    bindings[11].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[11].descriptorCount = 10000;
+    bindings[11].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
     VkDescriptorSetLayoutBindingFlagsCreateInfo binding_flags_info{};
     binding_flags_info.sType =
         VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
 
-    VkDescriptorBindingFlags binding_flags[11] = {};
+    VkDescriptorBindingFlags binding_flags[12] = {};
     binding_flags[0] = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
     binding_flags[1] = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
     binding_flags[2] = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
@@ -654,15 +660,17 @@ bool gfx::Engine::init_descriptor_set_layout() {
     binding_flags[8] = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
     binding_flags[9] = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
     binding_flags[10] = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT |
+                        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
+    binding_flags[11] = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT |
                         VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
                         VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT;
 
-    binding_flags_info.bindingCount = 11;
+    binding_flags_info.bindingCount = 12;
     binding_flags_info.pBindingFlags = binding_flags;
 
     VkDescriptorSetLayoutCreateInfo layout_info = {};
     layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layout_info.bindingCount = 11;
+    layout_info.bindingCount = 12;
     layout_info.pBindings = bindings;
     layout_info.flags =
         VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;

@@ -60,6 +60,8 @@ set(SHADER_FILES
     depth_prepass.frag
     debug_line.vert
     debug_line.frag
+    hud_text.vert
+    hud_text.frag
     fullscreen.vert
     wboit_composite.frag
     cull_frustum.comp
@@ -233,11 +235,23 @@ FetchContent_Declare(
     SOURCE_SUBDIR Build
 )
 
+# 8. Tracy profiler client (instrumentation later). GUI is not built here —
+#    use the matching GitHub release binary. Default OFF = no runtime cost.
+option(AERO_TRACY "Enable Tracy profiler client (CPU; GPU/Vulkan zones later)" OFF)
+set(TRACY_ENABLE ${AERO_TRACY} CACHE BOOL "Tracy: enable profiling in TracyClient" FORCE)
+set(TRACY_ON_DEMAND ON CACHE BOOL "Tracy: connect when the GUI attaches" FORCE)
+set(TRACY_STATIC ON CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    tracy
+    GIT_REPOSITORY https://github.com/wolfpld/tracy.git
+    GIT_TAG v0.14.1
+)
+
 # Enable updating dependencies
 set(FETCHCONTENT_QUIET OFF)
 
 # Fetch and make dependencies available
-FetchContent_MakeAvailable(VulkanMemoryAllocator vk-bootstrap tinygltf glfw glm nlohmann_json JoltPhysics)
+FetchContent_MakeAvailable(VulkanMemoryAllocator vk-bootstrap tinygltf glfw glm nlohmann_json JoltPhysics tracy)
 
 # Quest / Adreno: skip extra-pass Hi-Z (GMEM). Desktop can enable via config.
 # Planned meshlets: meshoptimizer (zeux/meshoptimizer) — see visibility-lod-plan.md
@@ -290,12 +304,16 @@ add_executable(Aero_Boar_Engine
     src/gfx/Engine.Destroy.cpp
     src/gfx/Engine.Initialize.cpp
     src/gfx/Engine.InitializeDevices.cpp
+    src/gfx/Engine.Platform.cpp
     src/gfx/Engine.InitializePasses.cpp
     src/gfx/Engine.InitializePipeline.cpp
     src/gfx/Engine.InitializeScene.cpp
     src/gfx/Engine.Physics.cpp
     src/gfx/Engine.Render.cpp
     src/gfx/DebugLinePass.cpp
+    src/gfx/HudTextPass.cpp
+    src/gfx/ShadowMap.cpp
+    src/gfx/GpuTimestamps.cpp
     src/gfx/TransparentPass.cpp
     src/physics/PhysicsWorld.cpp
     src/scene/Animation.cpp
@@ -343,7 +361,27 @@ target_link_libraries(Aero_Boar_Engine PRIVATE
     glfw
     glm::glm
     Jolt
+    TracyClient
 )
+
+if(AERO_TRACY)
+    target_compile_definitions(Aero_Boar_Engine PRIVATE AERO_TRACY=1)
+    message(STATUS "AERO_TRACY: ON (TRACY_ENABLE, on-demand). Open Tracy v0.14.1 GUI to capture.")
+else()
+    message(STATUS "AERO_TRACY: OFF (TracyClient linked as no-op). cmake -DAERO_TRACY=ON to enable.")
+endif()
+
+if(TARGET TracyClient)
+    if(MSVC)
+        target_compile_options(TracyClient PRIVATE /W0)
+    else()
+        target_compile_options(TracyClient PRIVATE -w)
+    endif()
+endif()
+
+if(WIN32)
+    target_link_libraries(Aero_Boar_Engine PRIVATE dwmapi)
+endif()
 
 if(AERO_TARGET_ADRENO)
     target_compile_definitions(Aero_Boar_Engine PRIVATE AERO_TARGET_ADRENO=1)

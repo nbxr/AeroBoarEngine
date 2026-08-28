@@ -3,6 +3,7 @@
 #include "gfx/Renderer.h"
 #include "gfx/TextureManager.h"
 #include "gfx/DrawBatch.h"
+#include "core/AABB.h"
 #include "core/Configuration.h"
 #include "core/Frustum.h"
 #include "core/Log.h"
@@ -449,6 +450,7 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
         return false;
 
     {
+        last_scene_name_ = scene_name;
         LOG_INFO("[Scene] Loaded scene '" << scene_name << "':"
                  << " textures=" << renderer.texture_manager.get_uploaded_count()
                  << " materials=" << renderer.material_manager.get_material_count()
@@ -679,6 +681,49 @@ void gfx::Engine::write_frame_lighting(uint32_t frame_index) {
 
     constants->cameraPosition =
         glm::vec4(camera.get_position(), constants->cameraPosition.w);
+
+    bool shadow_on = renderer.shadow_map.enabled && renderer.shadow_map.is_ready();
+    uint32_t shadow_idx = 0;
+    glm::vec3 to_light(0.0f, 1.0f, 0.0f);
+    if (shadow_on) {
+        shadow_on = false;
+        uint32_t n = 0;
+        auto consider = [&](const gfx::Light& L) {
+            if (!L.enabled || n >= gfx::MAX_LIGHTS)
+                return;
+            if (!shadow_on && L.type == gfx::LightType::Directional) {
+                shadow_idx = n;
+                to_light = L.direction;
+                shadow_on = true;
+            }
+            ++n;
+        };
+        if (!renderer.lights.empty()) {
+            for (const auto& L : renderer.lights)
+                consider(L);
+        }
+        if (n == 0)
+            consider(renderer.globalLight);
+    }
+    if (shadow_on) {
+        core::AABB bounds = renderer.scene_manager.get_scene_aabb();
+        if (!bounds.is_valid()) {
+            const glm::vec3 c = renderer.scene_center;
+            bounds.min = c - glm::vec3(1.0f);
+            bounds.max = c + glm::vec3(1.0f);
+        }
+        constants->shadowViewProj =
+            renderer.shadow_map.fit_view_proj(to_light, bounds.min, bounds.max);
+        constants->shadowParams =
+            glm::vec4(renderer.shadow_map.texel_uv(), 1.0f,
+                      static_cast<float>(shadow_idx), renderer.shadow_map.bias);
+        renderer.shadow_map.last_view_proj = constants->shadowViewProj;
+        renderer.shadow_map.last_on = true;
+    } else {
+        constants->shadowViewProj = glm::mat4(1.0f);
+        constants->shadowParams = glm::vec4(0.0f);
+        renderer.shadow_map.last_on = false;
+    }
 }
 
 void gfx::Engine::refresh_lights_from_transforms() {
@@ -810,9 +855,7 @@ void gfx::Engine::bind_frame_lighting_to_all_sets() {
 }
 
 void gfx::Engine::cleanup_scene() {
-    if (renderer.vk.device.device != VK_NULL_HANDLE) {
-        vkDeviceWaitIdle(renderer.vk.device.device);
-    }
+    gpu_wait_idle();
 
     // Drop rigid bodies so transform links are not dangling after clear.
     if (physics.is_initialized())

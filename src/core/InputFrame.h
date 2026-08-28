@@ -33,6 +33,7 @@ struct InputFrame {
     bool y_pressed = false;
     bool t_pressed = false;
     bool f3_pressed = false; // physics debug draw toggle
+    bool f4_pressed = false; // frame-stats HUD toggle
     bool space_pressed = false; // jump (FPS)
 
     [[nodiscard]] bool shift_held() const {
@@ -67,6 +68,7 @@ class InputFrameBuilder {
         const bool y = input.is_key_down(GLFW_KEY_Y);
         const bool t = input.is_key_down(GLFW_KEY_T);
         const bool f3 = input.is_key_down(GLFW_KEY_F3);
+        const bool f4 = input.is_key_down(GLFW_KEY_F4);
         const bool space = f.space;
 
         f.escape_pressed = edge(escape, prev_escape_);
@@ -76,6 +78,7 @@ class InputFrameBuilder {
         f.y_pressed = edge(y, prev_y_);
         f.t_pressed = edge(t, prev_t_);
         f.f3_pressed = edge(f3, prev_f3_);
+        f.f4_pressed = edge(f4, prev_f4_);
         f.space_pressed = edge(space, prev_space_);
 
         prev_escape_ = escape;
@@ -85,13 +88,14 @@ class InputFrameBuilder {
         prev_y_ = y;
         prev_t_ = t;
         prev_f3_ = f3;
+        prev_f4_ = f4;
         prev_space_ = space;
         return f;
     }
 
     void reset_edges() {
         prev_escape_ = prev_r_ = prev_p_ = prev_n_ = prev_y_ = prev_t_ =
-            prev_f3_ = prev_space_ = false;
+            prev_f3_ = prev_f4_ = prev_space_ = false;
     }
 
   private:
@@ -104,6 +108,7 @@ class InputFrameBuilder {
     bool prev_y_ = false;
     bool prev_t_ = false;
     bool prev_f3_ = false;
+    bool prev_f4_ = false;
     bool prev_space_ = false;
 };
 

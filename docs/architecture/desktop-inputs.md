@@ -14,7 +14,7 @@
 **Planned split (ECS near-term):** `InputManager` stays the **device** layer. Per-frame **`InputFrame`** feeds:
 
 - **`DesktopMoveSystem`** — Player fly/look (entity with `PlayerTag` / `DesktopMove`)
-- **`EditorHotkeySystem`** — Escape, R, N, P, … (**app/editor**, not on Player; Debug+Release for now)
+- **`EditorHotkeySystem`** — Escape, R, N, P, F3 (physics debug), F4 (stats HUD), … (**app/editor**, not on Player; Debug+Release for now)
 
 `Camera` and `AeroBoar.cpp` stop polling keys. See `docs/architecture/ecs-plan.md` §4.4.
 - Keep the CPU-side input path lightweight and cache-friendly (data-oriented style).
@@ -169,6 +169,18 @@ This is more robust than the pre-refactor `first_mouse` flag that lived inside `
 - USB mouse or a non-RDP remote path (Sunshine / similar) that actually delivers relative motion
 
 Local USB-mouse + `DISABLED` is the supported infinite-look path and must stay identical when the remote path changes.
+
+## GPU reset / DWM composition (RDP)
+
+RDP often disables DWM composition. A Windows “desktop composition off” balloon and a Vulkan `DEVICE_LOST` are usually the same event (TDR / adapter reset), not an engine CPU crash.
+
+Resilience (no extra GPU work on the happy path):
+
+- Remote or composition-off → FIFO present (vsync). Local console still prefers MAILBOX.
+- Composition on/off transition → swapchain recreate.
+- `DEVICE_LOST` / `SURFACE_LOST` → `Engine::try_recover_gpu()` (new device + reload last scene, up to 3 times) instead of exiting.
+- Fence wait timeout 1s: skip the frame if the GPU is stuck; wait still returns immediately when it is not.
+- After TDR the Vulkan loader may not advertise `VK_KHR_surface` / `VK_KHR_win32_surface` (`windowing_extensions_not_present`). Instance create retries for ~8s. If the ICD never comes back, reboot (that restored a working session after the composition-off TDR).
 
 ## Relationship to Existing Code (Pre-Refactor Baseline)
 

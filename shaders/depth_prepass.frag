@@ -36,7 +36,7 @@ layout(set = 0, binding = 2) readonly buffer Materials {
     Material materials[];
 };
 
-layout(set = 0, binding = 10) uniform sampler2D bindlessTextures[];
+layout(set = 0, binding = 11) uniform sampler2D bindlessTextures[];
 
 layout(location = 0) in vec3 inWorldPos;
 layout(location = 1) in vec3 inNormal;

@@ -95,7 +95,7 @@ This project aims to develop a cross-platform game engine targeting VR via OpenX
   - Remote/trackpad look can still peg at the desktop rail — **accepted**; reopen at camera cleanup (`desktop-inputs.md`)
 - **Physics foundation (landed runtime; asset path open):**
   - Jolt + KHR rigid-body MVP, `worldScale`, debug draw (`physics-plan.md`)
-  - Desktop chess knock-over working; **next:** FPS player controller, then VR shrink-to-board — `vr-chess-physics-plan.md`
+  - Desktop chess knock-over + **FpsMove** / third-person boom working; **next:** VR shrink-to-board — `vr-chess-physics-plan.md`
   - glTF KHR physics load MVP landed; compounds / mesh colliders / character controller remaining
 
 ### Phase 3: VR Features (Weeks 9-12)

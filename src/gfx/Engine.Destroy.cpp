@@ -5,22 +5,30 @@
 #include "vk_mem_alloc.h"
 
 void gfx::Engine::destroy() {
-    vkDeviceWaitIdle(renderer.vk.device);
+    if (renderer.vk.device.device == VK_NULL_HANDLE &&
+        renderer.vk.instance.instance == VK_NULL_HANDLE)
+        return;
 
     if (physics.is_initialized())
         physics.shutdown();
 
-    destroy_buffers();
-    destroy_images();
-    destroy_command_buffers();
-    destroy_swapchain();
-    destroy_framebuffers();
-    destroy_sync_primitives();
-    destroy_descriptor_pool();
-    destroy_pipelines();
-    destroy_render_targets();
-    destroy_resource_managers();
-    destroy_vma();
+    // Device-owned GPU objects: skip if initialize() died before vkCreateDevice.
+    if (renderer.vk.device.device != VK_NULL_HANDLE) {
+        gpu_wait_idle();
+        destroy_buffers();
+        destroy_images();
+        destroy_command_buffers();
+        destroy_swapchain();
+        destroy_framebuffers();
+        destroy_sync_primitives();
+        destroy_descriptor_pool();
+        destroy_pipelines();
+        destroy_render_targets();
+        destroy_resource_managers();
+        if (renderer.allocator)
+            destroy_vma();
+        renderer.allocator = {};
+    }
     destroy_devices();
 }
 
@@ -28,6 +36,9 @@ void gfx::Engine::destroy_buffers() {
     renderer.scene_manager.skins().destroy(renderer.vk.device, renderer.allocator);
     renderer.transparent.destroy(renderer.vk.device, renderer.allocator);
     renderer.debug_lines.destroy(renderer.vk.device, renderer.allocator);
+    renderer.hud_text.destroy(renderer.vk.device, renderer.allocator);
+    renderer.shadow_map.destroy(renderer.vk.device, renderer.allocator);
+    gpu_times.destroy(renderer.vk.device.device);
     renderer.hzb.destroy(renderer.vk.device, renderer.allocator);
     renderer.gpu_culling.destroy(renderer.vk.device, renderer.allocator);
     renderer.ibl.destroy(renderer.vk.device, renderer.allocator);
@@ -130,6 +141,10 @@ void gfx::Engine::destroy_descriptor_pool() {
 }
 
 void gfx::Engine::destroy_pipelines() {
+    if (renderer.vk.shadow_pipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(renderer.vk.device, renderer.vk.shadow_pipeline, nullptr);
+        renderer.vk.shadow_pipeline = VK_NULL_HANDLE;
+    }
     if (renderer.vk.depth_prepass_pipeline != VK_NULL_HANDLE) {
         vkDestroyPipeline(renderer.vk.device, renderer.vk.depth_prepass_pipeline, nullptr);
         renderer.vk.depth_prepass_pipeline = VK_NULL_HANDLE;
@@ -178,11 +193,22 @@ void gfx::Engine::destroy_framebuffers() {
 void gfx::Engine::destroy_vma() { vmaDestroyAllocator(renderer.allocator); }
 
 void gfx::Engine::destroy_devices() {
-    vkb::destroy_debug_utils_messenger(renderer.vk.instance.instance,
-                                       renderer.vk.instance.debug_messenger,
-                                       nullptr);
-
-    vkDestroySurfaceKHR(renderer.vk.instance, renderer.vk.surface, nullptr);
-    vkDestroyDevice(renderer.vk.device, nullptr);
-    vkDestroyInstance(renderer.vk.instance, nullptr);
+    if (renderer.vk.instance.instance != VK_NULL_HANDLE) {
+        if (renderer.vk.instance.debug_messenger != VK_NULL_HANDLE) {
+            vkb::destroy_debug_utils_messenger(renderer.vk.instance.instance,
+                                               renderer.vk.instance.debug_messenger,
+                                               nullptr);
+        }
+        if (renderer.vk.surface != VK_NULL_HANDLE) {
+            vkDestroySurfaceKHR(renderer.vk.instance, renderer.vk.surface, nullptr);
+            renderer.vk.surface = VK_NULL_HANDLE;
+        }
+        if (renderer.vk.device.device != VK_NULL_HANDLE) {
+            vkDestroyDevice(renderer.vk.device, nullptr);
+            renderer.vk.device.device = VK_NULL_HANDLE;
+        }
+        vkDestroyInstance(renderer.vk.instance, nullptr);
+        renderer.vk.instance.instance = VK_NULL_HANDLE;
+        renderer.vk.instance.debug_messenger = VK_NULL_HANDLE;
+    }
 }

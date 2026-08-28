@@ -1,9 +1,15 @@
 #include "gfx/Engine.h"
 #include "gfx/Renderer.h"
 #include "core/Configuration.h"
+#include "core/Log.h"
 #include "VkBootstrap.h"
 #include <vulkan/vulkan.h>
 #include <nlohmann/json.hpp>
+#include <chrono>
+#include <thread>
+
+#define GLFW_INCLUDE_VULKAN
+#include <GLFW/glfw3.h>
 
 // Custom debug messenger callback. Routes all validation layer output through
 // our logger (console + aero_boar.log with flush) so messages are retained
@@ -149,32 +155,70 @@ bool gfx::Engine::init_vk_instance(vkb::InstanceBuilder &builder) {
         }
     }
 
+    // GLFW's required WSI extensions (VK_KHR_surface + VK_KHR_win32_surface).
+    // vk-bootstrap also adds them, but after TDR the loader can briefly omit
+    // them from enumeration; enabling explicitly + retrying covers both.
+    {
+        uint32_t glfw_ext_count = 0;
+        const char** glfw_exts = glfwGetRequiredInstanceExtensions(&glfw_ext_count);
+        LOG_INFO("[Vulkan] glfwVulkanSupported="
+                 << (glfwVulkanSupported() ? "yes" : "no")
+                 << " glfwRequiredExts=" << glfw_ext_count);
+        if (glfw_exts) {
+            for (uint32_t i = 0; i < glfw_ext_count; ++i)
+                builder.enable_extension(glfw_exts[i]);
+        } else {
+            LOG_ERROR("[Vulkan] glfwGetRequiredInstanceExtensions returned null");
+        }
+    }
+
     // vulkan instance
     // Use our custom debug callback (instead of use_default_debug_messenger)
     // so that validation messages are written to both console *and* the log file
     // (aero_boar.log) with immediate flush. This lets us recover the exact
     // validation errors that precede a crash.
-    auto inst_ret =
-        builder.set_app_name("AeroBoar")
-            .require_api_version(1, 4)
-            .set_debug_callback(vulkan_debug_callback)
-            .set_debug_messenger_severity(
-                VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT |
-                VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
-            // Note: We deliberately do not request INFO level by default.
-            // INFO produces a lot of one-time loader messages at startup (useful)
-            // but can also be very chatty at runtime. The dedup logic above plus
-            // only ERROR+WARNING keeps the log file practical while still capturing
-            // the validation failures you care about for crash diagnosis.
-            // If you need more context, temporarily add INFO_BIT_EXT here.
-            .build();
+    builder.set_app_name("AeroBoar")
+        .require_api_version(1, 4)
+        .set_debug_callback(vulkan_debug_callback)
+        .set_debug_messenger_severity(
+            VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT |
+            VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT);
+    // Note: We deliberately do not request INFO level by default.
 
-    if (!inst_ret) {
-        throw std::runtime_error("Failed to create Vulkan instance");
+    constexpr int kAttempts = 8;
+    for (int attempt = 1; attempt <= kAttempts; ++attempt) {
+        auto inst_ret = builder.build();
+        if (inst_ret) {
+            renderer.vk.instance = inst_ret.value();
+            LOG_INFO("[Vulkan] Instance created");
+            return true;
+        }
+
+        const std::string err = inst_ret.error().message();
+        auto sys_ret = vkb::SystemInfo::get_system_info();
+        bool has_surface = false;
+        bool has_win32 = false;
+        if (sys_ret) {
+            has_surface = sys_ret.value().is_extension_available(
+                VK_KHR_SURFACE_EXTENSION_NAME);
+            has_win32 = sys_ret.value().is_extension_available(
+                "VK_KHR_win32_surface");
+        }
+        LOG_ERROR("[Vulkan] Instance create attempt " << attempt << "/"
+                  << kAttempts << " failed: " << err
+                  << " (VK_KHR_surface=" << (has_surface ? "yes" : "no")
+                  << " VK_KHR_win32_surface=" << (has_win32 ? "yes" : "no")
+                  << ")");
+
+        const bool wsi_missing =
+            err.find("windowing_extensions") != std::string::npos;
+        if (!wsi_missing || attempt == kAttempts)
+            return false;
+
+        LOG_INFO("[Vulkan] WSI not ready (TDR / RDP / composition). Retrying in 1s…");
+        std::this_thread::sleep_for(std::chrono::seconds(1));
     }
-
-    renderer.vk.instance = inst_ret.value();
-    return true;
+    return false;
 }
 
 void gfx::Engine::add_features(vkb::PhysicalDeviceSelector &selector) {
@@ -224,7 +268,8 @@ std::pair<bool, vkb::PhysicalDevice> gfx::Engine::init_physical_device() {
     auto phys_ret = selector.set_surface(renderer.vk.surface).select();
 
     if (!phys_ret) {
-        LOG_ERROR("Failed to find suitable physical device");
+        LOG_ERROR("[Vulkan] Failed to find a physical device: "
+                  << phys_ret.error().message());
         return {false, vkb::PhysicalDevice{}};
     }
 
@@ -237,7 +282,8 @@ gfx::Engine::init_logical_device(vkb::PhysicalDevice &phys) {
     vkb::DeviceBuilder device_builder{phys};
     auto dev_ret = device_builder.build();
     if (!dev_ret) {
-        LOG_ERROR("Failed to find suitable logical device");
+        LOG_ERROR("[Vulkan] Failed to create logical device: "
+                  << dev_ret.error().message());
         return {false, vkb::Device{}};
     }
     renderer.vk.device = dev_ret.value();
@@ -324,8 +370,30 @@ bool gfx::Engine::init_transfer_queue(vkb::Device &dev) {
     return true;
 }
 
+void gfx::Engine::mark_device_lost(const char* where) {
+    if (!renderer.vk.device_lost) {
+        LOG_ERROR("[Vulkan] GPU reset required at " << (where ? where : "?")
+                  << " (TDR / DWM composition / SURFACE_LOST). Will try to recover.");
+    }
+    renderer.vk.device_lost = true;
+}
+
+bool gfx::Engine::gpu_wait_idle() {
+    if (renderer.vk.device_lost)
+        return false;
+    if (renderer.vk.device.device == VK_NULL_HANDLE)
+        return false;
+    const VkResult r = vkDeviceWaitIdle(renderer.vk.device);
+    if (r == VK_ERROR_DEVICE_LOST) {
+        mark_device_lost("vkDeviceWaitIdle");
+        return false;
+    }
+    return r == VK_SUCCESS;
+}
+
 bool gfx::Engine::init_swapchain(vkb::Device &dev) {
     vkb::SwapchainBuilder swapchain_builder{dev, renderer.vk.surface};
+    apply_present_modes(swapchain_builder);
     auto swap_ret =
         swapchain_builder
             // Request one extra image beyond MAX_FRAMES_IN_FLIGHT so present has
@@ -335,7 +403,8 @@ bool gfx::Engine::init_swapchain(vkb::Device &dev) {
             .build();
 
     if (!swap_ret) {
-        LOG_ERROR("Failed to create swapchain");
+        LOG_ERROR("[Vulkan] Failed to create swapchain: "
+                  << swap_ret.error().message());
         return false;
     }
 
@@ -364,7 +433,10 @@ bool gfx::Engine::init_swapchain(vkb::Device &dev) {
 }
 
 void gfx::Engine::recreate_swapchain() {
-    vkDeviceWaitIdle(renderer.vk.device);
+    if (renderer.vk.device_lost || renderer.vk.device.device == VK_NULL_HANDLE)
+        return;
+    if (!gpu_wait_idle())
+        return;
 
     // ============================================================
     // TWO-PHASE RECREATION (Error Recovery Pattern)
@@ -388,7 +460,8 @@ void gfx::Engine::recreate_swapchain() {
     // --------------------------------------------------------
     // 1. Create new swapchain (using old one as oldSwapchain for efficiency)
     // --------------------------------------------------------
-    vkb::SwapchainBuilder swapchain_builder{renderer.vk.device};
+    vkb::SwapchainBuilder swapchain_builder{renderer.vk.device, renderer.vk.surface};
+    apply_present_modes(swapchain_builder);
     auto swap_ret = swapchain_builder
         .set_old_swapchain(renderer.vk.swapchain)
         .set_desired_min_image_count(renderer.MAX_FRAMES_IN_FLIGHT + 1)
@@ -638,6 +711,10 @@ void gfx::Engine::recreate_swapchain() {
         if (renderer.transparent.is_ready())
             renderer.transparent.resize(renderer.vk.device.device,
                                         renderer.allocator, renderer);
+        if (renderer.hud_text.is_ready())
+            renderer.hud_text.set_swapchain(renderer.vk.device.device,
+                                            renderer.vk.swap_chain_extent,
+                                            renderer.vk.swap_chain_image_views);
         wire_hzb_descriptors();
 
         // Restart frame index after swapchain recreation. The per-frame fences

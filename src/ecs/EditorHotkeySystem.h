@@ -24,6 +24,7 @@ struct EditorHotkeyContext {
     scene::Camera* camera = nullptr;
     scene::SceneManager* scene = nullptr;
     physics::PhysicsWorld* physics = nullptr;
+    bool* stats_hud = nullptr; // Engine::frame_stats.hud_enabled (F4)
 };
 
 void editor_hotkey_system_update(const core::InputFrame& frame,

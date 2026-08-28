@@ -383,3 +383,127 @@ bool gfx::Engine::init_depth_prepass_pipeline() {
     vkDestroyShaderModule(renderer.vk.device, fragment_shader_module, nullptr);
     return true;
 }
+
+bool gfx::Engine::init_shadow_pipeline() {
+    if (!renderer.shadow_map.is_ready())
+        return true;
+
+    std::vector<unsigned int> vertex_code;
+    std::vector<unsigned int> fragment_code;
+    if (!load_shader_source("shaders/pbr.vert.spv", vertex_code) ||
+        !load_shader_source("shaders/depth_prepass.frag.spv", fragment_code)) {
+        LOG_ERROR("[Shadow] failed to load depth shaders");
+        return false;
+    }
+
+    VkShaderModule vert = VK_NULL_HANDLE;
+    VkShaderModule frag = VK_NULL_HANDLE;
+    VkShaderModuleCreateInfo ci{};
+    ci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    ci.codeSize = vertex_code.size() * sizeof(unsigned int);
+    ci.pCode = vertex_code.data();
+    if (vkCreateShaderModule(renderer.vk.device, &ci, nullptr, &vert) != VK_SUCCESS)
+        return false;
+    ci.codeSize = fragment_code.size() * sizeof(unsigned int);
+    ci.pCode = fragment_code.data();
+    if (vkCreateShaderModule(renderer.vk.device, &ci, nullptr, &frag) != VK_SUCCESS) {
+        vkDestroyShaderModule(renderer.vk.device, vert, nullptr);
+        return false;
+    }
+
+    VkPipelineShaderStageCreateInfo stages[2]{};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vert;
+    stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = frag;
+    stages[1].pName = "main";
+
+    static const VkVertexInputBindingDescription binding_desc = {
+        .binding = 0,
+        .stride = static_cast<uint32_t>(gfx::Vertex::stride),
+        .inputRate = VK_VERTEX_INPUT_RATE_VERTEX};
+    static const VkVertexInputAttributeDescription attr_descs[] = {
+        {.location = 0, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 0},
+        {.location = 1, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 12},
+        {.location = 2, .binding = 0, .format = VK_FORMAT_R32G32B32A32_SFLOAT, .offset = 24},
+        {.location = 3, .binding = 0, .format = VK_FORMAT_R16G16B16A16_SFLOAT, .offset = 40},
+        {.location = 4, .binding = 0, .format = VK_FORMAT_R8G8B8A8_UNORM, .offset = 48},
+        {.location = 5, .binding = 0, .format = VK_FORMAT_R8G8B8A8_UNORM, .offset = 52},
+        {.location = 6, .binding = 0, .format = VK_FORMAT_R8G8B8A8_UINT, .offset = 56},
+    };
+    VkPipelineVertexInputStateCreateInfo vertex_input_info{};
+    vertex_input_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertex_input_info.vertexBindingDescriptionCount = 1;
+    vertex_input_info.pVertexBindingDescriptions = &binding_desc;
+    vertex_input_info.vertexAttributeDescriptionCount = 7;
+    vertex_input_info.pVertexAttributeDescriptions = attr_descs;
+
+    VkPipelineInputAssemblyStateCreateInfo input_assembly{};
+    input_assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkPipelineViewportStateCreateInfo viewport_state{};
+    viewport_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewport_state.viewportCount = 1;
+    viewport_state.scissorCount = 1;
+
+    VkPipelineRasterizationStateCreateInfo rasterizer{};
+    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.lineWidth = 1.0f;
+    rasterizer.cullMode = VK_CULL_MODE_NONE;
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rasterizer.depthBiasEnable = VK_TRUE;
+    rasterizer.depthBiasConstantFactor = -1.25f;
+    rasterizer.depthBiasSlopeFactor = -1.5f;
+
+    VkPipelineMultisampleStateCreateInfo multisampling{};
+    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineColorBlendStateCreateInfo color_blending{};
+    color_blending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+
+    VkPipelineDepthStencilStateCreateInfo depth_stencil{};
+    depth_stencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depth_stencil.depthTestEnable = VK_TRUE;
+    depth_stencil.depthWriteEnable = VK_TRUE;
+    depth_stencil.depthCompareOp = gfx::kDepthCompare;
+
+    std::array<VkDynamicState, 2> dynamic_states = {VK_DYNAMIC_STATE_VIEWPORT,
+                                                    VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynamic_state{};
+    dynamic_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamic_state.dynamicStateCount = 2;
+    dynamic_state.pDynamicStates = dynamic_states.data();
+
+    VkGraphicsPipelineCreateInfo pipeline_info{};
+    pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipeline_info.stageCount = 2;
+    pipeline_info.pStages = stages;
+    pipeline_info.pVertexInputState = &vertex_input_info;
+    pipeline_info.pInputAssemblyState = &input_assembly;
+    pipeline_info.pViewportState = &viewport_state;
+    pipeline_info.pRasterizationState = &rasterizer;
+    pipeline_info.pMultisampleState = &multisampling;
+    pipeline_info.pDepthStencilState = &depth_stencil;
+    pipeline_info.pColorBlendState = &color_blending;
+    pipeline_info.pDynamicState = &dynamic_state;
+    pipeline_info.layout = renderer.vk.pipeline_layout;
+    pipeline_info.renderPass = renderer.shadow_map.render_pass();
+    pipeline_info.subpass = 0;
+
+    const VkResult r = vkCreateGraphicsPipelines(
+        renderer.vk.device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr,
+        &renderer.vk.shadow_pipeline);
+    vkDestroyShaderModule(renderer.vk.device, vert, nullptr);
+    vkDestroyShaderModule(renderer.vk.device, frag, nullptr);
+    if (r != VK_SUCCESS) {
+        LOG_ERROR("[Shadow] pipeline create failed");
+        return false;
+    }
+    return true;
+}

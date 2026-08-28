@@ -159,7 +159,7 @@ InputManager (device)
 | Concern | Where | Why |
 |---------|--------|-----|
 | WASD / mouse look / QE / **Y·T** speed | **Player** (`DesktopMove` + system) | Character / free-fly **intent** |
-| Escape (capture), R, Shift+R, P, N, … | **`EditorHotkeySystem`** | **Tooling / shell** — not “what the avatar does.” Runs in Debug **and** Release for now; later we may compile out or gate to debug-only |
+| Escape (capture), R, Shift+R, P, N, F3 (physics debug), F4 (stats HUD), … | **`EditorHotkeySystem`** | **Tooling / shell** — not “what the avatar does.” Runs in Debug **and** Release for now; later we may compile out or gate to debug-only |
 | Cursor capture state | `InputManager` API called **from** EditorHotkeySystem | Device ownership stays core |
 
 **Y/T:** treated as **move tuning** on the free-fly / player rig (with DesktopMove), not editor-only — unless we later split “editor camera speed” vs “player speed.”
@@ -477,7 +477,7 @@ Scripts implement `on_event`; dispatch delivers `TriggerEnter`, `TimerElapsed`, 
 
 1. [x] `InputFrame` + edges (`core/InputFrame.h`)  
 2. [x] `DesktopMoveSystem` (player fly/look + Y/T speed)  
-3. [x] `EditorHotkeySystem` (Escape, R, Shift+R, P, N; Debug+Release)  
+3. [x] `EditorHotkeySystem` (Escape, R, Shift+R, P, N, F3, F4; Debug+Release)  
 4. [x] Strip `Camera` / `AeroBoar` key logic → `Camera::apply_desktop_input`  
 5. [x] Minimal World (with Phase 2)  
 

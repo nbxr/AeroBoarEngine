@@ -9,6 +9,11 @@
     "margin": 2.0
   },
   "occlusionCull": true,
+  "shadows": {
+    "enabled": true,
+    "resolution": 2048,
+    "bias": 0.002
+  },
   "home": [
     {
       "system": "Windows",
