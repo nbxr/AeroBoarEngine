@@ -1,6 +1,7 @@
 #include "gfx/Engine.h"
 #include "gfx/BufferUtils.h"
 #include "gfx/DrawBatch.h"
+#include "gfx/MeshData.h"
 #include "ecs/Components.h"
 #include "ecs/Entity.h"
 #include "core/Configuration.h"
@@ -138,6 +139,7 @@ bool gfx::Engine::rebuild_draw_batches() {
     }
     std::sort(mesh_keys.begin(), mesh_keys.end());
 
+    std::vector<MeshletDesc> scene_meshlets;
     for (uint32_t mesh_idx : mesh_keys) {
         MeshDrawInfo info{};
         info.mesh_index = mesh_idx;
@@ -148,6 +150,13 @@ bool gfx::Engine::rebuild_draw_batches() {
         info.vertex_offset = static_cast<int32_t>(
             renderer.mesh_manager.get_primitive_vertex_offset(mesh_idx));
         info.render_mesh_ids = std::move(by_mesh[mesh_idx]);
+        const MeshData* md = renderer.mesh_manager.cpu_mesh(mesh_idx);
+        if (md && md->allow_meshlet_cull && !md->meshlets.empty()) {
+            info.meshlet_offset = static_cast<uint32_t>(scene_meshlets.size());
+            info.meshlet_count = static_cast<uint32_t>(md->meshlets.size());
+            scene_meshlets.insert(scene_meshlets.end(), md->meshlets.begin(),
+                                  md->meshlets.end());
+        }
         renderer.mesh_draw_infos.push_back(std::move(info));
     }
 
@@ -157,7 +166,8 @@ bool gfx::Engine::rebuild_draw_batches() {
                                           renderer.mesh_draw_infos,
                                           renderer.scene_manager,
                                           &renderer.material_manager,
-                                          renderer.transparent.wboit_ready())) {
+                                          renderer.transparent.wboit_ready(),
+                                          &scene_meshlets)) {
         LOG_ERROR("[Draw] GPU cull build_scene failed");
         return false;
     }
@@ -469,6 +479,81 @@ uint32_t spawn_accumulated_bone_hulls(
     return spawned;
 }
 
+const tinygltf::Value::Object* rigid_body_object(const tinygltf::Node& node) {
+    auto eit = node.extensions.find("KHR_physics_rigid_bodies");
+    if (eit != node.extensions.end() && eit->second.IsObject())
+        return &eit->second.Get<tinygltf::Value::Object>();
+    if (node.extras.IsObject() && node.extras.Has("KHR_physics_rigid_bodies")) {
+        const tinygltf::Value& v = node.extras.Get("KHR_physics_rigid_bodies");
+        if (v.IsObject())
+            return &v.Get<tinygltf::Value::Object>();
+    }
+    return nullptr;
+}
+
+bool extras_rb_json(const tinygltf::Node& node, nlohmann::json& out) {
+    if (!node.extras.IsObject() || !node.extras.Has("KHR_physics_rigid_bodies"))
+        return false;
+    const tinygltf::Value& v = node.extras.Get("KHR_physics_rigid_bodies");
+    if (!v.IsString())
+        return false;
+    try {
+        out = nlohmann::json::parse(v.Get<std::string>());
+    } catch (...) {
+        return false;
+    }
+    return out.is_object();
+}
+
+physics::BodyHandle try_box_from_geom(physics::PhysicsWorld& physics,
+                                      const tinygltf::Value::Object& geom,
+                                      const physics::BodyPoseDesc& pose,
+                                      const glm::vec3& scl) {
+    auto bit = geom.find("box");
+    if (bit == geom.end() || !bit->second.IsObject())
+        return physics::kInvalidBody;
+    glm::vec3 size(1.0f);
+    const auto& boxo = bit->second.Get<tinygltf::Value::Object>();
+    auto sit2 = boxo.find("size");
+    if (sit2 != boxo.end() && sit2->second.IsArray()) {
+        const auto& a = sit2->second.Get<tinygltf::Value::Array>();
+        if (a.size() >= 3) {
+            size = glm::vec3(static_cast<float>(a[0].GetNumberAsDouble()),
+                             static_cast<float>(a[1].GetNumberAsDouble()),
+                             static_cast<float>(a[2].GetNumberAsDouble()));
+        }
+    }
+    physics::BoxDesc box{};
+    static_cast<physics::BodyPoseDesc&>(box) = pose;
+    box.half_extents = glm::max(0.5f * size * scl, glm::vec3(1e-3f));
+    return physics.create_box(box);
+}
+
+physics::BodyHandle try_box_from_json(physics::PhysicsWorld& physics,
+                                      const nlohmann::json& rb,
+                                      const physics::BodyPoseDesc& pose,
+                                      const glm::vec3& scl) {
+    if (!rb.contains("collider") || !rb["collider"].is_object())
+        return physics::kInvalidBody;
+    const nlohmann::json& col = rb["collider"];
+    const nlohmann::json* geom = col.contains("geometry") && col["geometry"].is_object()
+                                     ? &col["geometry"]
+                                     : &col;
+    if (!geom->contains("box") || !(*geom)["box"].is_object())
+        return physics::kInvalidBody;
+    glm::vec3 size(1.0f);
+    const auto& boxj = (*geom)["box"];
+    if (boxj.contains("size") && boxj["size"].is_array() && boxj["size"].size() >= 3) {
+        size = glm::vec3(static_cast<float>(boxj["size"][0].get<double>()),
+                         static_cast<float>(boxj["size"][1].get<double>()),
+                         static_cast<float>(boxj["size"][2].get<double>()));
+    }
+    physics::BoxDesc box{};
+    static_cast<physics::BodyPoseDesc&>(box) = pose;
+    box.half_extents = glm::max(0.5f * size * scl, glm::vec3(1e-3f));
+    return physics.create_box(box);
+}
+
 } // namespace
 
 bool gfx::Engine::spawn_scene_physics(const tinygltf::Model& model) {
@@ -570,8 +655,10 @@ bool gfx::Engine::spawn_scene_physics(const tinygltf::Model& model) {
 
     for (size_t ni = 0; ni < model.nodes.size(); ++ni) {
         const auto& node = model.nodes[ni];
-        auto eit = node.extensions.find("KHR_physics_rigid_bodies");
-        if (eit == node.extensions.end() || !eit->second.IsObject())
+        const tinygltf::Value::Object* rb_obj = rigid_body_object(node);
+        nlohmann::json rb_json;
+        const bool rb_from_json = (rb_obj == nullptr) && extras_rb_json(node, rb_json);
+        if (rb_obj == nullptr && !rb_from_json)
             continue;
 
         if (ni >= node_to_x.size() ||
@@ -588,7 +675,23 @@ bool gfx::Engine::spawn_scene_physics(const tinygltf::Model& model) {
         // dynamics.
         const glm::vec3 scl = glm::max(scale_from_world(world), glm::vec3(1e-6f));
 
-        const auto& rb = eit->second.Get<tinygltf::Value::Object>();
+        if (rb_from_json) {
+            physics::BodyPoseDesc pose{};
+            fill_pose_from_node(pose, world, local_trs);
+            pose.motion = physics::MotionType::Static;
+            pose.friction = 0.5f;
+            pose.restitution = 0.1f;
+            const physics::BodyHandle body =
+                try_box_from_json(physics, rb_json, pose, scl);
+            if (body == physics::kInvalidBody) {
+                ++n_fail;
+                continue;
+            }
+            ++n_static;
+            continue;
+        }
+
+        const auto& rb = *rb_obj;
 
         // Motion → dynamic (or kinematic for ECS player / isKinematic).
         physics::MotionType motion = physics::MotionType::Static;
@@ -723,6 +826,9 @@ bool gfx::Engine::spawn_scene_physics(const tinygltf::Model& model) {
                 }
             }
         }
+
+        if (body == physics::kInvalidBody)
+            body = try_box_from_geom(physics, *geom, pose, scl);
 
         // Mesh / convex hull geometry.
         if (body == physics::kInvalidBody) {

@@ -257,6 +257,7 @@ void gfx::Engine::add_features(vkb::PhysicalDeviceSelector &selector) {
     features12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
     features12.descriptorBindingPartiallyBound = VK_TRUE;
     features12.bufferDeviceAddress = VK_TRUE;
+    features12.drawIndirectCount = VK_TRUE; // meshlet MDI count
     selector.set_required_features_12(features12);
 }
 

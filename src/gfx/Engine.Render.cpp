@@ -63,12 +63,7 @@ void record_indirect_draws(VkCommandBuffer cmd, gfx::Renderer& renderer,
                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                        sizeof(gfx::PbrPush), &pushData);
 
-    const uint32_t batches = renderer.gpu_culling.batch_count();
-    auto& indirect = renderer.gpu_culling.indirect_cmds(renderer.current_frame, pass);
-    if (batches > 0) {
-        vkCmdDrawIndexedIndirect(cmd, indirect.buffer, 0, batches,
-                                 sizeof(VkDrawIndexedIndirectCommand));
-    }
+    renderer.gpu_culling.cmd_draw_indexed(cmd, renderer.current_frame, pass);
 }
 
 enum class HudTimeUnit { Ns, Us, Ms };
@@ -234,6 +229,14 @@ void fill_frame_stats_hud(gfx::HudTextPass& hud, const core::FrameSnapshot& snap
         std::snprintf(line, sizeof(line), "vis --");
     }
     hud.add_text(line, x, y, size, head);
+    y += dy;
+    if (snap.meshlet && snap.ml_total > 0) {
+        std::snprintf(line, sizeof(line), "ml %u/%u  cone", snap.ml_vis,
+                      snap.ml_total);
+    } else {
+        std::snprintf(line, sizeof(line), "ml --");
+    }
+    hud.add_text(line, x, y, size, head);
 }
 
 } // namespace
@@ -295,6 +298,9 @@ void gfx::Engine::render() {
             const uint32_t total = renderer.last_total_render_meshes;
             const bool hzb = renderer.last_cull_used_hzb[renderer.current_frame];
             frame_stats.set_cull(visible, total, hzb);
+            const auto ml = renderer.gpu_culling.read_meshlet_stats(
+                renderer.current_frame);
+            frame_stats.set_meshlet_cull(ml.drawn, ml.tested, ml.active);
             static uint32_t frames_with_cull = 0;
             if (total > 0) {
                 ++frames_with_cull;
@@ -312,6 +318,19 @@ void gfx::Engine::render() {
                                  << (hzb ? " [hzb=on]" : " [hzb=off]"));
                     }
                     renderer.last_visible_instances = visible;
+                    if (ml.active && ml.tested > 0) {
+                        const uint32_t ml_culled =
+                            (ml.tested > ml.drawn) ? (ml.tested - ml.drawn) : 0u;
+                        static uint32_t prev_ml_c = ~0u;
+                        static uint32_t prev_ml_t = ~0u;
+                        if (ml_culled != prev_ml_c || ml.tested != prev_ml_t) {
+                            prev_ml_c = ml_culled;
+                            prev_ml_t = ml.tested;
+                            LOG_INFO("[Meshlet] " << ml_culled << " of " << ml.tested
+                                     << " clusters culled (" << ml.drawn
+                                     << " drawn)");
+                        }
+                    }
                 }
             }
         }
@@ -424,9 +443,13 @@ void gfx::Engine::render() {
                            vk.shadow_pipeline != VK_NULL_HANDLE && can_cull;
     if (do_shadow) {
         auto shadow = gpu_times.scope(frame.command_buffer, fi, core::GpuStage::Shadow);
+        // Whole-mesh casters: meshlet cone/frustum is camera-oriented and
+        // drops clusters that still fill the shadow map (off-screen, backfaces).
         renderer.gpu_culling.record(frame.command_buffer, fi,
                                     renderer.shadow_map.last_view_proj, false, 0, 0, 0,
-                                    0.003f, gfx::CullEmitFilter::OpaqueDepth);
+                                    0.003f, gfx::CullEmitFilter::OpaqueDepth,
+                                    camera.get_position(), /*cone_cull=*/false,
+                                    /*expand_meshlets=*/false);
         renderer.shadow_map.begin(frame.command_buffer);
         const VkExtent2D shadow_extent{renderer.shadow_map.resolution(),
                                        renderer.shadow_map.resolution()};
@@ -451,10 +474,12 @@ void gfx::Engine::render() {
             renderer.gpu_culling.record(frame.command_buffer, fi, viewProj, true,
                                         renderer.hzb.width(), renderer.hzb.height(),
                                         renderer.hzb.mip_count(), 0.003f,
-                                        gfx::CullEmitFilter::Transparent);
+                                        gfx::CullEmitFilter::Transparent,
+                                        camera.get_position(), true);
         } else {
             renderer.gpu_culling.record(frame.command_buffer, fi, viewProj, false, 0,
-                                        0, 0, 0.003f, gfx::CullEmitFilter::Transparent);
+                                        0, 0, 0.003f, gfx::CullEmitFilter::Transparent,
+                                        camera.get_position(), true);
         }
     };
 
@@ -463,7 +488,8 @@ void gfx::Engine::render() {
             auto depth = gpu_times.scope(frame.command_buffer, fi,
                                          core::GpuStage::DepthHzb);
             renderer.gpu_culling.record(frame.command_buffer, fi, viewProj, false, 0, 0,
-                                        0, 0.003f, gfx::CullEmitFilter::OpaqueDepth);
+                                        0, 0.003f, gfx::CullEmitFilter::OpaqueDepth,
+                                        camera.get_position(), true);
 
             VkClearValue clear_depth{};
             clear_depth.depthStencil = {gfx::kDepthClear, 0};
@@ -491,7 +517,8 @@ void gfx::Engine::render() {
             renderer.gpu_culling.record(frame.command_buffer, fi, viewProj, true,
                                         renderer.hzb.width(), renderer.hzb.height(),
                                         renderer.hzb.mip_count(), 0.003f,
-                                        gfx::CullEmitFilter::OpaqueDepth);
+                                        gfx::CullEmitFilter::OpaqueDepth,
+                                        camera.get_position(), true);
             record_transparent_cull(true);
         }
         renderer.last_cull_used_hzb[fi] = true;
@@ -499,7 +526,8 @@ void gfx::Engine::render() {
         if (can_cull) {
             auto cull = gpu_times.scope(frame.command_buffer, fi, core::GpuStage::Cull);
             renderer.gpu_culling.record(frame.command_buffer, fi, viewProj, false, 0,
-                                        0, 0, 0.003f, gfx::CullEmitFilter::OpaqueDepth);
+                                        0, 0, 0.003f, gfx::CullEmitFilter::OpaqueDepth,
+                                        camera.get_position(), true);
             record_transparent_cull(false);
         }
         renderer.last_cull_used_hzb[fi] = false;

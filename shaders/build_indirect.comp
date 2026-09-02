@@ -13,9 +13,9 @@ struct BatchMeta {
     uint index_count;
     uint first_index;
     int  vertex_offset;
-    uint _pad0;
-    uint _pad1;
-    uint _pad2;
+    uint meshlet_offset;
+    uint meshlet_count;
+    uint flags;
 };
 
 // Layout must match cull_frustum.comp / GpuCullGlobals (std140).

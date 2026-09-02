@@ -338,6 +338,7 @@ bool gfx::Engine::init_resource_managers() {
     }
 
     configure_occlusion_cull();
+    configure_meshlet_cull();
 
     return true;
 }
@@ -383,6 +384,16 @@ void gfx::Engine::configure_occlusion_cull() {
     LOG_INFO("[Cull] occlusionCull="
              << (occlusion_cull_enabled_ ? "ON (same-frame Hi-Z)" : "OFF (frustum only)"));
 #endif
+}
+
+void gfx::Engine::configure_meshlet_cull() {
+    bool on = true;
+    const auto& cfg = core::Configuration::get_instance();
+    if (cfg.is_loaded() && core::Configuration::get_root().contains("meshletCull"))
+        on = cfg.find<bool>("meshletCull");
+    renderer.gpu_culling.set_meshlet_cull(on);
+    LOG_INFO("[Cull] meshletCull=" << (on ? "ON (cone+frustum, indexed MDI)"
+                                          : "OFF (whole-mesh draws)"));
 }
 
 void gfx::Engine::wire_hzb_descriptors() {

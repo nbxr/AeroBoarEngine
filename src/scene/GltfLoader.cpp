@@ -6,7 +6,10 @@
 #include "core/Handle.h"
 #include "core/Log.h"
 #include "gfx/MeshData.h"
+#include "gfx/MeshOptimizer.h"
+#include "scene/Morph.h"
 #include <algorithm>
+#include <cstdint>
 #include <cmath>
 #include <filesystem>
 #include <glm/glm.hpp>
@@ -538,11 +541,16 @@ void scene::GltfLoader::apply_world_transform_to_light(gfx::Light& light,
 
 std::vector<gfx::MeshPrimitiveID>
 scene::GltfLoader::extract_mesh_data(const tinygltf::Model &model,
-                                    gfx::Renderer &renderer) {
+                                    gfx::Renderer &renderer,
+                                    bool optimize_meshes) {
 
     std::vector<gfx::MeshPrimitiveID> meshes{};
     meshes.reserve(model.meshes.size() *
                    2); // most glTF meshes have multiple primitives
+    gfx::MeshOptimizeTotals opt_totals{};
+    uint32_t meshlet_prims = 0;
+    uint32_t meshlet_count = 0;
+    uint32_t meshlet_cull_prims = 0;
 
     for (const auto &mesh : model.meshes) {
         for (const auto &primitive : mesh.primitives) {
@@ -953,9 +961,50 @@ scene::GltfLoader::extract_mesh_data(const tinygltf::Model &model,
 
             mesh_data.local_aabb = aabb;
 
+            if (optimize_meshes) {
+                std::vector<uint8_t> extra;
+                size_t extra_stride = 0;
+                bool weld = true;
+                if (!primitive.targets.empty()) {
+                    if (!scene::pack_morph_weld_bytes(model, primitive,
+                                                      num_vertices, extra,
+                                                      extra_stride)) {
+                        extra.clear();
+                        extra_stride = 0;
+                        weld = false;
+                    }
+                }
+                gfx::MeshOptimizeResult opt = gfx::optimize_indexed_mesh(
+                    mesh_data,
+                    extra.empty() ? nullptr : extra.data(), extra_stride, weld);
+                opt_totals.add(opt);
+                if (!primitive.targets.empty() && opt.applied)
+                    mesh_data.vertex_remap = std::move(opt.remap);
+            }
+
+            mesh_data.allow_meshlet_cull =
+                !has_joints && primitive.targets.empty();
+            const uint32_t nml = gfx::build_meshlets(mesh_data);
+            if (nml > 0) {
+                ++meshlet_prims;
+                meshlet_count += nml;
+                if (mesh_data.allow_meshlet_cull)
+                    ++meshlet_cull_prims;
+            }
+
             meshes.push_back(renderer.mesh_manager.add_mesh(mesh_data));
         }
     }
+    if (optimize_meshes) {
+        LOG_INFO("[MeshOpt] prims=" << opt_totals.primitives << " skipped="
+                                    << opt_totals.skipped << " verts "
+                                    << opt_totals.vertices_in << " -> "
+                                    << opt_totals.vertices_out << " indices="
+                                    << opt_totals.indices);
+    }
+    LOG_INFO("[Meshlet] prims=" << meshlet_prims << " meshlets=" << meshlet_count
+                                << " cone_cull_prims=" << meshlet_cull_prims
+                                << " (skin/morph draw whole mesh)");
     return meshes;
 }
 

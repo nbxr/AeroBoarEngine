@@ -40,7 +40,89 @@ bool read_vec3_accessor(const tinygltf::Model& model, int accessor_index,
     return true;
 }
 
+void remap_vec3(std::vector<glm::vec3>& arr, const std::vector<uint32_t>& remap,
+                uint32_t new_count) {
+    if (arr.size() != remap.size())
+        return;
+    std::vector<glm::vec3> out(new_count, glm::vec3(0.0f));
+    for (uint32_t old = 0; old < static_cast<uint32_t>(remap.size()); ++old) {
+        const uint32_t n = remap[old];
+        if (n >= new_count)
+            continue;
+        out[n] = arr[old];
+    }
+    arr.swap(out);
+}
+
+void remap_packed(std::vector<glm::vec3>& packed, uint32_t target_count,
+                  uint32_t old_count, uint32_t new_count,
+                  const std::vector<uint32_t>& remap) {
+    if (packed.size() != static_cast<size_t>(target_count) * old_count)
+        return;
+    std::vector<glm::vec3> out(static_cast<size_t>(target_count) * new_count,
+                               glm::vec3(0.0f));
+    for (uint32_t t = 0; t < target_count; ++t) {
+        for (uint32_t old = 0; old < old_count; ++old) {
+            const uint32_t n = remap[old];
+            if (n >= new_count)
+                continue;
+            out[static_cast<size_t>(t) * new_count + n] =
+                packed[static_cast<size_t>(t) * old_count + old];
+        }
+    }
+    packed.swap(out);
+}
+
 } // namespace
+
+bool pack_morph_weld_bytes(const tinygltf::Model& model,
+                           const tinygltf::Primitive& primitive,
+                           size_t vertex_count, std::vector<uint8_t>& extra,
+                           size_t& extra_stride) {
+    extra.clear();
+    extra_stride = 0;
+    if (primitive.targets.empty() || vertex_count == 0)
+        return false;
+
+    const uint32_t tcount = static_cast<uint32_t>(primitive.targets.size());
+    std::vector<std::vector<glm::vec3>> pos(tcount);
+    std::vector<std::vector<glm::vec3>> nrm(tcount);
+    bool any_n = false;
+    for (uint32_t t = 0; t < tcount; ++t) {
+        const auto& tgt = primitive.targets[t];
+        auto tp = tgt.find("POSITION");
+        if (tp == tgt.end() ||
+            !read_vec3_accessor(model, tp->second, pos[t]) ||
+            pos[t].size() != vertex_count) {
+            pos[t].assign(vertex_count, glm::vec3(0.0f));
+        }
+        auto tn = tgt.find("NORMAL");
+        if (tn != tgt.end() && read_vec3_accessor(model, tn->second, nrm[t]) &&
+            nrm[t].size() == vertex_count) {
+            any_n = true;
+        } else {
+            nrm[t].assign(vertex_count, glm::vec3(0.0f));
+        }
+    }
+
+    extra_stride =
+        sizeof(glm::vec3) * tcount * (any_n ? 2u : 1u);
+    extra.assign(vertex_count * extra_stride, 0);
+    for (size_t v = 0; v < vertex_count; ++v) {
+        uint8_t* dst = extra.data() + v * extra_stride;
+        for (uint32_t t = 0; t < tcount; ++t) {
+            std::memcpy(dst, &pos[t][v], sizeof(glm::vec3));
+            dst += sizeof(glm::vec3);
+        }
+        if (any_n) {
+            for (uint32_t t = 0; t < tcount; ++t) {
+                std::memcpy(dst, &nrm[t][v], sizeof(glm::vec3));
+                dst += sizeof(glm::vec3);
+            }
+        }
+    }
+    return true;
+}
 
 void MorphSystem::clear() {
     instances_.clear();
@@ -137,6 +219,35 @@ uint32_t MorphSystem::load_from_gltf(const tinygltf::Model& model,
 
     LOG_INFO("[Morph] Loaded " << loaded << " morph primitive(s)");
     return loaded;
+}
+
+void MorphSystem::apply_optimize_remap(gfx::MeshManager& meshes) {
+    for (MorphInstance& inst : instances_) {
+        gfx::MeshData* mesh = meshes.cpu_mesh(inst.mesh_primitive_index);
+        if (!mesh || mesh->vertex_remap.empty())
+            continue;
+        const uint32_t old_count = static_cast<uint32_t>(mesh->vertex_remap.size());
+        const uint32_t new_count = static_cast<uint32_t>(mesh->vertices.size());
+        if (inst.vertex_count != old_count) {
+            LOG_ERROR("[Morph] optimize remap size mismatch mesh="
+                      << inst.mesh_primitive_index << " morph_verts="
+                      << inst.vertex_count << " remap=" << old_count);
+            mesh->vertex_remap.clear();
+            continue;
+        }
+        remap_vec3(inst.base_positions, mesh->vertex_remap, new_count);
+        if (!inst.base_normals.empty())
+            remap_vec3(inst.base_normals, mesh->vertex_remap, new_count);
+        remap_packed(inst.target_positions, inst.target_count, old_count,
+                     new_count, mesh->vertex_remap);
+        if (!inst.target_normals.empty()) {
+            remap_packed(inst.target_normals, inst.target_count, old_count,
+                         new_count, mesh->vertex_remap);
+        }
+        inst.vertex_count = new_count;
+        inst.dirty = true;
+        mesh->vertex_remap.clear();
+    }
 }
 
 void MorphSystem::bind_nodes(const tinygltf::Model& model) {

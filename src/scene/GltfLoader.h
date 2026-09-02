@@ -29,7 +29,8 @@ class GltfLoader {
                           const tinygltf::Model &model,
                           gfx::Renderer &renderer);
     static std::vector<gfx::MeshPrimitiveID>
-    extract_mesh_data(const tinygltf::Model &model, gfx::Renderer &renderer);
+    extract_mesh_data(const tinygltf::Model &model, gfx::Renderer &renderer,
+                      bool optimize_meshes = true);
     static glm::mat4 extract_node_transform(const tinygltf::Node &node);
     // Decomposed TRS for animation (matrix nodes best-effort decompose).
     static LocalTrs extract_node_trs(const tinygltf::Node &node);

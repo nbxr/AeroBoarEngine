@@ -82,7 +82,7 @@ Desktop foundation is solid. The engine loads glTF scenes (multi-material, hiera
   - Split-sum specular in `pbr.frag` when IBL is ready
   Spot packing complete (pos + emission dir + cos cones). Dynamic lights via per-frame upload + `Engine::set_light` / `refresh_lights_from_transforms`. Optional HDR equirect IBL (`environmentHdr` in configuration.json). **Directional shadows** (`ShadowMap`, one map, PCF). Still deferred: **TCF / clustered many-lights** (investigate for Quest — `lighting-implementation.md` §4), CSM / spot atlas.
 - **GPU frustum (always) + optional conservative Hi-Z** (`occlusionCull`, default **false**; **off on Adreno**). RG min/max pyramid — `visibility-lod-plan.md`.
-- **Distance LOD (design):** **CascadeBake** / `CascadeOven` — meshlets → octahedral impostors → static skybox bake — `cascadebake-plan.md`. **Not implemented.**
+- **Load-time meshoptimizer:** weld + vertex-cache + overdraw + vertex-fetch + **meshlets** (64/126). GPU **meshlet cone/frustum cull** after instance cull (`cull_meshlets.comp`, indexed MDI count). Skin/morph whole-mesh. Config `"optimizeMeshes"` / `"meshletCull"` (default true). Impostors / skybox still **not implemented**.
 - **GPU frustum + same-frame Hi-Z + opaque/transparent shade (landed)**:
   - Frame order (compute **outside** render passes): **one** frustum cull when Hi-Z is off; with Hi-Z: frustum → depth prepass → HZB → frustum+HZB shade cull. **WBOIT transparents are GPU-emitted** (CPU sort only if WBOIT init failed).
   - `gfx::GpuCulling`: packed `worlds[]` SSBO (one mat4 per transform); GpuCullItem is 64 B (no model). Instance + indirect buffers are **GpuOnly** (unmapped) when WBOIT is on — Adreno/UMA, no staging copy. Transparent instance half allocated only if the scene has blend/transmission.
@@ -144,6 +144,7 @@ Desktop foundation is solid. The engine loads glTF scenes (multi-material, hiera
 - [done] Tracy client in CMake (`AERO_TRACY` / `src/core/Profiler.h`); not instrumented yet
 - [done] Overlay text (`HudTextPass`, Screen + View); frame-stats HUD (busy/wait, EMA, auto units, F4 toggle). Tracy zones / VR HUD later.
 - [done] Directional shadow map (`gfx::ShadowMap`, light-space ortho, shared-eye). CSM / cubes / spots later.
+- [done] Load-time meshoptimizer (weld / cache / overdraw / fetch) + meshlets (64/126) + GPU cone/frustum cull. Skin/morph whole-mesh fallback.
 - [done] Reverted post-sample foot plant / hips Y clamp (was splitting body vs legs). Next: author in-place / scaled hip translations, or IK.
 - [done] Engine + Blender addons generalized: no scene-name hardcoding; `CameraRig` defaults human-scale; extras/KHR data-driven
 - **Next immediate:** locomotion polish (hysteresis / jump clips) or VR path. Tracy zones when we start measuring.

@@ -43,6 +43,17 @@ When making lasting decisions, update the documentation above rather than tool-p
 
 ## 3. Build & Development
 
+Windows (Visual Studio **2026**):
+
+```bash
+cmake --preset windows-vs2026
+cmake --build --preset windows-debug
+```
+
+Needs **CMake 4.2+** (`Visual Studio 18 2026` generator). A bare `cmake -B build` with older CMake picks NMake and fails (`CMAKE_CXX_COMPILER not set`). `CMakePresets.json` is the supported path; `build/Aero_Boar_Engine.sln` opens in VS. Restart the terminal after a CMake upgrade so PATH updates.
+
+Linux / single-config:
+
 ```bash
 cmake -B build -S . -DCMAKE_BUILD_TYPE=Debug
 cmake --build build -j$(nproc)

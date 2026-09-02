@@ -1,0 +1,162 @@
+#version 450
+
+// After instance frustum/Hi-Z: expand visible instances into per-meshlet draws.
+// Skinned / morph batches have meshlet_count == 0 → one instanced whole-mesh draw.
+// No mesh shaders: each visible meshlet is vkCmdDrawIndexedIndirectCount.
+layout(local_size_x = 64, local_size_y = 1) in;
+
+struct BatchMeta {
+    uint base;
+    uint capacity;
+    uint index_count;
+    uint first_index;
+    int  vertex_offset;
+    uint meshlet_offset;
+    uint meshlet_count;
+    uint flags;
+};
+
+struct DrawInstance {
+    mat4  model;
+    uvec4 meta;
+};
+
+struct Meshlet {
+    uint first_index;
+    uint index_count;
+    uint pad0;
+    uint pad1;
+    vec4 cone_apex_cutoff;
+    vec4 cone_axis_radius;
+    vec4 sphere_center;
+};
+
+layout(set = 0, binding = 0, std140) uniform CullGlobals {
+    vec4  planes[6];
+    uint  item_count;
+    uint  batch_count;
+    uint  hzb_enabled;
+    uint  hzb_mips;
+    mat4  hzb_view_proj;
+    vec4  hzb_info;
+    uint  emit_filter;
+    uint  instance_base_offset;
+    uint  pad1;
+    uint  pad2;
+} globals;
+
+layout(set = 0, binding = 2, std430) readonly buffer OutInstances {
+    DrawInstance out_instances[];
+};
+
+layout(set = 0, binding = 3, std430) readonly buffer BatchCounts {
+    uint batch_counts[];
+};
+
+layout(set = 0, binding = 4, std430) readonly buffer BatchMetas {
+    BatchMeta batches[];
+};
+
+layout(set = 0, binding = 8, std430) readonly buffer Meshlets {
+    Meshlet meshlets[];
+};
+
+layout(set = 0, binding = 9, std430) writeonly buffer MeshletCmds {
+    uint cmds[];
+};
+
+layout(set = 0, binding = 10, std430) buffer DrawCount {
+    uint draw_count;
+};
+
+layout(push_constant) uniform PC {
+    vec4 camera_world; // xyz
+    uint max_draws;
+    uint cone_enable;
+    uint _p0;
+    uint _p1;
+} pc;
+
+bool frustum_sphere(vec3 c, float r) {
+    r += max(r * 0.01, 1e-4);
+    for (int i = 0; i < 6; ++i) {
+        if (dot(globals.planes[i].xyz, c) + globals.planes[i].w < -r)
+            return false;
+    }
+    return true;
+}
+
+bool cone_backfacing(mat4 model, vec3 apex, vec3 axis, float cutoff, vec3 cam_w) {
+    if (pc.cone_enable == 0u || cutoff >= 0.999)
+        return false;
+    float det = determinant(mat3(model));
+    if (abs(det) < 1e-8)
+        return false;
+    vec3 axis_w = normalize(mat3(model) * axis);
+    if (det < 0.0)
+        axis_w = -axis_w;
+    vec3 apex_w = (model * vec4(apex, 1.0)).xyz;
+    vec3 v = apex_w - cam_w;
+    float len2 = dot(v, v);
+    if (len2 < 1e-10)
+        return false;
+    return dot(v * inversesqrt(len2), axis_w) >= cutoff;
+}
+
+void emit_draw(uint index_count, uint instance_count, uint first_index,
+               int vertex_offset, uint first_instance) {
+    uint out_i = atomicAdd(draw_count, 1u);
+    if (out_i >= pc.max_draws)
+        return;
+    uint o = out_i * 5u;
+    cmds[o + 0u] = index_count;
+    cmds[o + 1u] = instance_count;
+    cmds[o + 2u] = first_index;
+    cmds[o + 3u] = uint(vertex_offset);
+    cmds[o + 4u] = first_instance;
+}
+
+void main() {
+    uint batch = gl_GlobalInvocationID.y;
+    uint mx = gl_GlobalInvocationID.x;
+    if (batch >= globals.batch_count)
+        return;
+
+    BatchMeta b = batches[batch];
+    uint visible = min(batch_counts[batch], b.capacity);
+    if (visible == 0u)
+        return;
+
+    uint inst_base = globals.instance_base_offset + b.base;
+
+    if (b.meshlet_count == 0u) {
+        if (mx != 0u)
+            return;
+        emit_draw(b.index_count, visible, b.first_index, b.vertex_offset, inst_base);
+        return;
+    }
+    if (mx >= b.meshlet_count)
+        return;
+
+    Meshlet m = meshlets[b.meshlet_offset + mx];
+    if (m.index_count < 3u)
+        return;
+
+    vec3 cam = pc.camera_world.xyz;
+    for (uint slot = 0u; slot < visible; ++slot) {
+        DrawInstance di = out_instances[inst_base + slot];
+        float sx = length(di.model[0].xyz);
+        float sy = length(di.model[1].xyz);
+        float sz = length(di.model[2].xyz);
+        float scale = max(max(sx, sy), sz);
+        vec3 center = (di.model * vec4(m.sphere_center.xyz, 1.0)).xyz;
+        float radius = m.cone_axis_radius.w * scale;
+        if (!frustum_sphere(center, radius))
+            continue;
+        if (cone_backfacing(di.model, m.cone_apex_cutoff.xyz, m.cone_axis_radius.xyz,
+                            m.cone_apex_cutoff.w, cam))
+            continue;
+        emit_draw(m.index_count, 1u, b.first_index + m.first_index, b.vertex_offset,
+                  inst_base + slot);
+    }
+}

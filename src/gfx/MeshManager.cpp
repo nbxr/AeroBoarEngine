@@ -189,6 +189,20 @@ uint32_t MeshManager::get_primitive_count() const {
     return static_cast<uint32_t>(mesh_ssbo_cache_.size());
 }
 
+const MeshData* MeshManager::cpu_mesh(uint32_t index) const {
+    std::shared_lock lock(mesh_mutex_);
+    if (index >= mesh_cache_.size())
+        return nullptr;
+    return &mesh_cache_[index];
+}
+
+MeshData* MeshManager::cpu_mesh(uint32_t index) {
+    std::scoped_lock lock(mesh_mutex_);
+    if (index >= mesh_cache_.size())
+        return nullptr;
+    return &mesh_cache_[index];
+}
+
 uint32_t MeshManager::get_primitive_vertex_offset(uint32_t index) const {
     if (index >= mesh_ssbo_cache_.size())
         return 0;

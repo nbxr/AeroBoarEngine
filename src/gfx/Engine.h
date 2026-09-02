@@ -84,6 +84,7 @@ class Engine {
     // Adreno/Quest builds force off (GMEM). Config: "occlusionCull": true.
     bool occlusion_cull_enabled_ = false;
     void configure_occlusion_cull();
+    void configure_meshlet_cull();
 
     // Both FIF slots must see light/SH changes. Camera is written every frame.
     uint32_t lights_upload_mask_ = (1u << Renderer::MAX_FRAMES_IN_FLIGHT) - 1u;

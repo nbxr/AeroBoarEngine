@@ -113,6 +113,9 @@ struct FrameSnapshot {
     uint32_t vis = 0;
     uint32_t total = 0;
     bool hzb = false;
+    uint32_t ml_vis = 0;
+    uint32_t ml_total = 0;
+    bool meshlet = false;
 };
 
 class FrameStats {
@@ -161,6 +164,11 @@ class FrameStats {
         snapshot_.vis = vis;
         snapshot_.total = total;
         snapshot_.hzb = hzb;
+    }
+    void set_meshlet_cull(uint32_t vis, uint32_t total, bool active) {
+        snapshot_.ml_vis = vis;
+        snapshot_.ml_total = total;
+        snapshot_.meshlet = active;
     }
 
     [[nodiscard]] const FrameSnapshot& snapshot() const { return snapshot_; }

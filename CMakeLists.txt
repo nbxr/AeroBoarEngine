@@ -1,5 +1,19 @@
 cmake_minimum_required(VERSION 3.5...3.22)
 
+# Bare `cmake -B build` on Windows with an old CMake (no VS 2026 generator)
+# picks NMake and then fails with "CMAKE_CXX_COMPILER not set". Force a
+# clear error before project().
+if(WIN32 AND CMAKE_GENERATOR MATCHES "NMake Makefiles|Unix Makefiles|MinGW Makefiles")
+    message(FATAL_ERROR
+        "Windows builds need the Visual Studio generator, not ${CMAKE_GENERATOR}.\n"
+        "CMake 4.2+ is required for Visual Studio 2026.\n\n"
+        "  cmake -B build -S . -G \"Visual Studio 18 2026\" -A x64\n"
+        "  cmake --build build --config Debug -j 8\n\n"
+        "If `cmake --version` is older than 4.2, use the CMake shipped with VS 2026\n"
+        "(CommonExtensions\\Microsoft\\CMake\\CMake\\bin\\cmake.exe) or install Kitware CMake 4.2+.\n"
+        "Or: cmake --preset windows-vs2026")
+endif()
+
 project(Aero_Boar_Engine)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -15,7 +29,7 @@ if(CMAKE_SIZEOF_VOID_P EQUAL 4)
         "This engine requires a 64-bit toolchain (x86_64 or ARM64).\n"
         "Current compiler: ${CMAKE_CXX_COMPILER}\n\n"
         "On Windows:\n"
-        "  - Preferred: cmake -G \"Visual Studio 17 2022\" -A x64\n"
+        "  - Preferred: cmake -G \"Visual Studio 18 2026\" -A x64\n"
         "  - For 64-bit MinGW: use x86_64-w64-mingw32-gcc/g++ (not the i686 'mingw32' one)\n"
         "Delete your build/ directory and reconfigure with a 64-bit compiler.")
 endif()
@@ -66,6 +80,7 @@ set(SHADER_FILES
     wboit_composite.frag
     cull_frustum.comp
     build_indirect.comp
+    cull_meshlets.comp
     hzb_copy.comp
     hzb_reduce.comp
     skin_palette.comp
@@ -247,14 +262,25 @@ FetchContent_Declare(
     GIT_TAG v0.14.1
 )
 
+# 9. meshoptimizer (load-time weld / vertex cache / overdraw / fetch).
+#    Meshlets / CascadeBake come later — visibility-lod-plan.md, cascadebake-plan.md.
+set(MESHOPT_BUILD_DEMO OFF CACHE BOOL "" FORCE)
+set(MESHOPT_BUILD_GLTFPACK OFF CACHE BOOL "" FORCE)
+set(MESHOPT_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(MESHOPT_INSTALL OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    meshoptimizer
+    GIT_REPOSITORY https://github.com/zeux/meshoptimizer.git
+    GIT_TAG v1.2
+)
+
 # Enable updating dependencies
 set(FETCHCONTENT_QUIET OFF)
 
 # Fetch and make dependencies available
-FetchContent_MakeAvailable(VulkanMemoryAllocator vk-bootstrap tinygltf glfw glm nlohmann_json JoltPhysics tracy)
+FetchContent_MakeAvailable(VulkanMemoryAllocator vk-bootstrap tinygltf glfw glm nlohmann_json JoltPhysics tracy meshoptimizer)
 
 # Quest / Adreno: skip extra-pass Hi-Z (GMEM). Desktop can enable via config.
-# Planned meshlets: meshoptimizer (zeux/meshoptimizer) — see visibility-lod-plan.md
 option(AERO_TARGET_ADRENO
     "Adreno/Quest target: force occlusionCull off (no extra depth prepass)"
     OFF)
@@ -328,6 +354,7 @@ add_executable(Aero_Boar_Engine
     src/gfx/ShaderLoader.cpp
     src/gfx/MaterialManager.cpp
     src/gfx/MeshManager.cpp
+    src/gfx/MeshOptimizer.cpp
     src/gfx/TextureManager.cpp
     src/gfx/IblEnvironment.cpp
     src/gfx/GpuCulling.cpp
@@ -362,6 +389,7 @@ target_link_libraries(Aero_Boar_Engine PRIVATE
     glm::glm
     Jolt
     TracyClient
+    meshoptimizer
 )
 
 if(AERO_TRACY)
@@ -376,6 +404,14 @@ if(TARGET TracyClient)
         target_compile_options(TracyClient PRIVATE /W0)
     else()
         target_compile_options(TracyClient PRIVATE -w)
+    endif()
+endif()
+
+if(TARGET meshoptimizer)
+    if(MSVC)
+        target_compile_options(meshoptimizer PRIVATE /W0)
+    else()
+        target_compile_options(meshoptimizer PRIVATE -w)
     endif()
 endif()
 

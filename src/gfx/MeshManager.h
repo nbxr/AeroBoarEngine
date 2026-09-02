@@ -33,6 +33,10 @@ class MeshManager {
     void clear_all_caches();
 
     [[nodiscard]] uint32_t get_primitive_count() const;
+    // CPU cache size (valid before update_buffers fills the GPU SSBO cache).
+    [[nodiscard]] uint32_t cpu_mesh_count() const { return mesh_count_; }
+    [[nodiscard]] const MeshData* cpu_mesh(uint32_t index) const;
+    MeshData* cpu_mesh(uint32_t index);
     [[nodiscard]] uint64_t get_total_vertex_count() const { return vertex_count_; }
     [[nodiscard]] uint64_t get_total_index_count() const { return index_count_; }
     [[nodiscard]] uint32_t get_primitive_vertex_offset(uint32_t index) const;

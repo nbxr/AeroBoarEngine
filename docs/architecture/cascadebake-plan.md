@@ -64,11 +64,16 @@ This model aligns with Blender rigid-body types and the Khronos `KHR_physics_rig
 
 ## Pipeline Stages
 
-### 1. Meshlet Generation (Near)
-- Use **meshoptimizer** (`meshopt_buildMeshlets` preferred, or `meshopt_buildMeshletsScan` for speed).
-- Typical limits: 64 vertices / 124–126 triangles.
-- Generated at load time (or on demand) via the job system.
-- Output stored for use by mesh shaders or regular rendering path.
+### 0. Indexed optimize (landed)
+- At glTF load: `meshopt_generateVertexRemap` (morph deltas as extra weld streams) → `optimizeVertexCache` → `optimizeOverdraw` → `optimizeVertexFetch`.
+- Config `"optimizeMeshes"` (default true).
+
+### 1. Meshlet Generation + cull (landed, near)
+- `meshopt_buildMeshlets` (64 verts / 126 tris, cone_weight 0.5) at glTF load. Index buffer rewritten as concatenated global-index ranges.
+- GPU: instance frustum/Hi-Z first, then `cull_meshlets.comp` cone + sphere-frustum → `vkCmdDrawIndexedIndirectCount`.
+- Skin / morph: whole-mesh draw (bind-pose cones are wrong under deformation).
+- No mesh shaders. Config `"meshletCull"` (default true).
+- Job system still later.
 
 ### 2. Impostor Generation (Mid)
 - Preferred: **Octahedral** (or hemi-octahedral) impostors.

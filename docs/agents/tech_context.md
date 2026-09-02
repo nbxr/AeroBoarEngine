@@ -17,7 +17,7 @@
 - **Physics (runtime)**: Jolt Physics v5.3.0 (`physics::PhysicsWorld`, FetchContent target `Jolt`)
 - **Profiler (optional)**: Tracy v0.14.1 (`TracyClient`, FetchContent). CMake `-DAERO_TRACY=ON` sets `TRACY_ENABLE` + on-demand. Header `src/core/Profiler.h`. **Not instrumented yet** (no CPU zones / `FrameMark` / Vulkan GPU context). GUI is the GitHub release binary, not built by this project.
 - **HUD / overlay text**: `gfx::HudTextPass` — 8×8 atlas, alpha-blended quads. `HudSpace::Screen` (pixels, top-left) for desktop overlay; `HudSpace::View` (meters on a camera-space plane) for a later head-locked VR HUD. Drawn after WBOIT on the swapchain (1×, load color → present). Not bindless. `shaders/hud_text.{vert,frag}`.
-- **Frame stats**: `core::FrameStats` (`src/core/FrameStats.h`) CPU RAII scopes (`CpuStage`) + `gfx::GpuTimestamps` query pool (`src/gfx/GpuTimestamps.{h,cpp}`, `GpuStage`). Overlay (F4) shows wall FPS, **busy vs gpu-wait**, EMA (α=0.1) + min/max, auto ns/µs/ms. CPU rows are the previous frame (`n-1`); GPU timestamps are one FIF slot old (`n-2`). Timestamps are written at compute / vertex / color-attachment (depth+HZB ends BOTTOM_OF_PIPE). Stored values are still milliseconds. Extend by adding a `GpuStage` and `gpu_times.scope(cmd, fi, stage)`. Unused GPU stages stay `--`. **Not logged** to `aero_boar.log`. Tracy zones are separate (`Profiler.h`, not on yet).
+- **Frame stats**: `core::FrameStats` (`src/core/FrameStats.h`) CPU RAII scopes (`CpuStage`) + `gfx::GpuTimestamps` query pool (`src/gfx/GpuTimestamps.{h,cpp}`, `GpuStage`). Overlay (F4) shows wall FPS, **busy vs gpu-wait**, EMA (α=0.1) + min/max, auto ns/µs/ms, **vis** (instances) and **ml** (meshlet cone/frustum: drawn/tested). CPU rows are the previous frame (`n-1`); GPU timestamps are one FIF slot old (`n-2`). Timestamps are written at compute / vertex / color-attachment (depth+HZB ends BOTTOM_OF_PIPE). Stored values are still milliseconds. Extend by adding a `GpuStage` and `gpu_times.scope(cmd, fi, stage)`. Unused GPU stages stay `--`. Instance/meshlet cull **lines** also go to `aero_boar.log` on change. Tracy zones are separate (`Profiler.h`, not on yet).
 - **Physics (planned asset authoring)**: Khronos glTF extensions — see § Physics assets below
 - **glTF extension matrix**: `docs/architecture/gltf-extensions.md` (supported vs backlog; AnimationPointerUVs, materials, physics)
 - **VR chess product plan**: `docs/architecture/vr-chess-physics-plan.md`
@@ -88,6 +88,8 @@ Until then, prefer keeping `glslc` and avoiding a mid-feature toolchain swap.
 #### Current path (desktop, VR-ready shape)
 
 **Same-frame occlusion** — **optional** (`occlusionCull`, default **false**). Adreno/Quest (`AERO_TARGET_ADRENO`) **forces off**. When on: RG min/max pyramid, conservative AABB query (fully on-screen + in front of near). See `docs/architecture/visibility-lod-plan.md`.
+
+**Load-time meshoptimizer (landed):** indexed weld / vertex cache / overdraw / vertex fetch + meshlets (64/126) at glTF load (`gfx::MeshOptimizer`, FetchContent `meshoptimizer` v1.2). GPU meshlet cone+frustum after instance cull (`cull_meshlets.comp`). `"optimizeMeshes"` / `"meshletCull"` in configuration.json (default true). Morph extras participate in weld equality; skin/morph skip meshlet cone cull.
 
 **Distance LOD (planned):** **CascadeBake** (`CascadeOven`) — meshoptimizer meshlets → octahedral impostors → static-only skybox bake; job-system background work. Classification from animation + KHR rigid-body motion. See `docs/architecture/cascadebake-plan.md`.
 

@@ -9,6 +9,8 @@
     "margin": 2.0
   },
   "occlusionCull": true,
+  "optimizeMeshes": true,
+  "meshletCull": true,
   "shadows": {
     "enabled": true,
     "resolution": 2048,

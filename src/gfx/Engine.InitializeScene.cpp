@@ -134,8 +134,11 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     }
 
     // get meshes using lookup to store material ID on MeshData
+    bool optimize_meshes = true;
+    if (root.contains("optimizeMeshes"))
+        optimize_meshes = config.find<bool>("optimizeMeshes");
     std::vector<MeshPrimitiveID> mesh_lookup =
-        scene::GltfLoader::extract_mesh_data(model, renderer);
+        scene::GltfLoader::extract_mesh_data(model, renderer, optimize_meshes);
 
     // Extract KHR_lights_punctual lights (world transforms applied after traversal).
     renderer.lights = scene::GltfLoader::extract_light_data(model);
@@ -375,6 +378,8 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
 
         auto& morphs = renderer.scene_manager.morphs();
         morphs.load_from_gltf(model, mesh_ids);
+        if (optimize_meshes)
+            morphs.apply_optimize_remap(renderer.mesh_manager);
         morphs.bind_nodes(model);
     }
 

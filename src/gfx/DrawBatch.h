@@ -24,6 +24,8 @@ struct MeshDrawInfo {
     uint32_t index_count = 0;
     uint32_t index_offset = 0;
     int32_t  vertex_offset = 0;
+    uint32_t meshlet_offset = 0;
+    uint32_t meshlet_count = 0; // 0 = whole-mesh fallback
     std::vector<uint32_t> render_mesh_ids; // SceneManager RenderMesh indices
 };
 

@@ -19,7 +19,9 @@ Progressive **distance LOD** (meshlets → impostors → skybox) is **`docs/arch
 | GPU **frustum** cull + multi-draw indirect | **On** (always) |
 | Same-frame **Hi-Z occlusion** | **Optional.** Config **`occlusionCull`** (default **`false`**). Extra depth prepass + RG min/max pyramid. Conservative query when on. |
 | **Adreno / Quest** | CMake **`AERO_TARGET_ADRENO`** (also auto on `ANDROID`) **forces occlusion off** — extra geometry prepass is GMEM-hostile. |
-| Meshlets / CascadeBake / impostors / skybox bake | **Not implemented** — `cascadebake-plan.md` |
+| Load-time **meshoptimizer** (weld / vertex cache / overdraw / fetch) | **On** (config `"optimizeMeshes"`, default **true**). Same indexed MDI path. Morph targets remapped. |
+| **Meshlets** + GPU cone/frustum cull | **On** (config `"meshletCull"`, default **true**). 64/126 clusters; indexed `DrawIndexedIndirectCount`. Skin/morph stay whole-mesh. **Shadow pass:** instance light-frustum only (whole mesh) so off-camera casters still fill the map. No mesh shaders. |
+| CascadeBake impostors / skybox bake | **Not implemented** — `cascadebake-plan.md` |
 
 Desktop: set `"occlusionCull": true` in `configuration.json` to try conservative Hi-Z. Frustum-only is the reliable default.
 
@@ -49,7 +51,7 @@ When `occlusionCull` is true and **not** an Adreno build:
 
 Near / mid / far representations, automatic static-vs-dynamic classification, `CascadeOven`, and the job system live in **`cascadebake-plan.md`**.
 
-Meshlets use **[meshoptimizer](https://github.com/zeux/meshoptimizer)** (`meshopt_buildMeshlets`). Do not invent a custom builder.
+Indexed meshes are optimized at glTF load with **[meshoptimizer](https://github.com/zeux/meshoptimizer)** (`generateVertexRemap` → `optimizeVertexCache` → `optimizeOverdraw` → `optimizeVertexFetch` → `buildMeshlets` 64/126). GPU meshlet cone + frustum cull emits extra indexed indirect draws (`cull_meshlets.comp`). Skin / morph skip cone cull (bind-pose bounds). Do not invent a custom builder.
 
 **Cluster / Nanite-like** raster (tiny-cluster software raster, DAG cuts) is a later *near* enhancement **after** meshlets exist. It does **not** replace octahedral impostors or skybox bake for mid/far city.
 
@@ -60,6 +62,8 @@ Meshlets use **[meshoptimizer](https://github.com/zeux/meshoptimizer)** (`meshop
 | Knob | Meaning |
 |------|---------|
 | `"occlusionCull": false` | Runtime (desktop). `true` enables conservative same-frame Hi-Z. |
+| `"optimizeMeshes": true` | Runtime. `false` skips load-time meshoptimizer (weld/cache/overdraw/fetch). |
+| `"meshletCull": true` | Runtime. GPU cone+frustum per meshlet after instance cull. `false` = whole-mesh MDI. |
 | `AERO_TARGET_ADRENO=ON` | CMake; forces occlusion off. Set for Quest/Android. |
 
 Frustum pad is **relative** (1% of AABB, min 0.1 mm) — no +5 cm world slop.
@@ -69,7 +73,7 @@ Frustum pad is **relative** (1% of AABB, min 0.1 mm) — no +5 cm world slop.
 ## 5. Suggested order of work
 
 1. **Now:** frustum default; optional conservative Hi-Z on desktop.  
-2. **Next (CascadeBake):** meshoptimizer meshlets + GPU meshlet/cone cull — `cascadebake-plan.md`.  
+2. **Next (CascadeBake):** impostors → skybox bake via `CascadeOven`. Meshlets + GPU cone cull are in.
 3. **Then:** impostors → skybox bake via `CascadeOven` + job system.  
 4. **Later:** cluster DAG / tiny-cluster software raster (near field only).  
 5. **Quest:** never ship extra-pass Hi-Z as the primary vis path; fold vis into GMEM.

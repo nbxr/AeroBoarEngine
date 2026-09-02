@@ -833,12 +833,7 @@ void TransparentPass::record_wboit(VkCommandBuffer cmd, Renderer& renderer,
         vkCmdPushConstants(cmd, vk.pipeline_layout,
                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                            sizeof(PbrPush), &push);
-        const uint32_t batches = renderer.gpu_culling.batch_count();
-        auto& indirect =
-            renderer.gpu_culling.indirect_cmds(frame_index, CullPass::Transparent);
-        if (batches > 0)
-            vkCmdDrawIndexedIndirect(cmd, indirect.buffer, 0, batches,
-                                     sizeof(VkDrawIndexedIndirectCommand));
+        renderer.gpu_culling.cmd_draw_indexed(cmd, frame_index, CullPass::Transparent);
     } else {
         const uint32_t base = renderer.gpu_culling.instance_slot_count();
         record_sorted_draws(cmd, renderer, gather_pipeline_, view_proj, base);

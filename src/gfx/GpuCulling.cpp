@@ -1,5 +1,6 @@
 #include "gfx/GpuCulling.h"
 #include "gfx/BufferUtils.h"
+#include "gfx/MeshData.h"
 #include "gfx/ShaderLoader.h"
 #include "scene/SceneManager.h"
 #include "core/AABB.h"
@@ -94,6 +95,8 @@ void GpuCulling::destroy(VkDevice device, VmaAllocator allocator) {
         vkDestroyPipeline(device, cull_pipeline_, nullptr);
     if (build_pipeline_ != VK_NULL_HANDLE)
         vkDestroyPipeline(device, build_pipeline_, nullptr);
+    if (meshlet_pipeline_ != VK_NULL_HANDLE)
+        vkDestroyPipeline(device, meshlet_pipeline_, nullptr);
     if (pipeline_layout_ != VK_NULL_HANDLE)
         vkDestroyPipelineLayout(device, pipeline_layout_, nullptr);
     if (set_layout_ != VK_NULL_HANDLE)
@@ -103,6 +106,7 @@ void GpuCulling::destroy(VkDevice device, VmaAllocator allocator) {
 
     cull_pipeline_ = VK_NULL_HANDLE;
     build_pipeline_ = VK_NULL_HANDLE;
+    meshlet_pipeline_ = VK_NULL_HANDLE;
     pipeline_layout_ = VK_NULL_HANDLE;
     set_layout_ = VK_NULL_HANDLE;
     pool_ = VK_NULL_HANDLE;
@@ -113,6 +117,7 @@ void GpuCulling::destroy(VkDevice device, VmaAllocator allocator) {
 
 void GpuCulling::clear_scene(VkDevice device, VmaAllocator allocator) {
     BufferUtils::destroy_buffer(device, allocator, batch_metas_);
+    BufferUtils::destroy_buffer(device, allocator, meshlets_);
     for (uint32_t i = 0; i < kMaxFrames; ++i) {
         BufferUtils::destroy_buffer(device, allocator, cull_items_[i]);
         BufferUtils::destroy_buffer(device, allocator, worlds_[i]);
@@ -121,22 +126,28 @@ void GpuCulling::clear_scene(VkDevice device, VmaAllocator allocator) {
             BufferUtils::destroy_buffer(device, allocator, cull_globals_[i][p]);
             BufferUtils::destroy_buffer(device, allocator, batch_counts_[i][p]);
             BufferUtils::destroy_buffer(device, allocator, indirect_cmds_[i][p]);
+            BufferUtils::destroy_buffer(device, allocator, meshlet_cmds_[i][p]);
+            BufferUtils::destroy_buffer(device, allocator, meshlet_draw_count_[i][p]);
         }
     }
     item_transform_indices_.clear();
     cpu_items_.clear();
+    cpu_metas_.clear();
     item_count_ = 0;
     transparent_item_count_ = 0;
     batch_count_ = 0;
     instance_slot_count_ = 0;
     world_count_ = 0;
+    max_meshlet_draws_ = 0;
+    max_meshlets_per_batch_ = 0;
     has_transparent_half_ = false;
+    meshlet_draw_ = {};
     ready_ = false;
 }
 
 bool GpuCulling::create_descriptors(VkDevice device) {
-    VkDescriptorSetLayoutBinding b[8]{};
-    for (uint32_t i = 0; i < 8; ++i) {
+    VkDescriptorSetLayoutBinding b[11]{};
+    for (uint32_t i = 0; i < 11; ++i) {
         b[i].binding = i;
         b[i].descriptorCount = 1;
         b[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
@@ -149,10 +160,13 @@ bool GpuCulling::create_descriptors(VkDevice device) {
     b[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;      // indirect cmds
     b[6].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; // HZB
     b[7].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;      // worlds[]
+    b[8].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;      // meshlets
+    b[9].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;      // meshlet cmds
+    b[10].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;     // meshlet draw count
 
     VkDescriptorSetLayoutCreateInfo lci{};
     lci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    lci.bindingCount = 8;
+    lci.bindingCount = 11;
     lci.pBindings = b;
     if (vkCreateDescriptorSetLayout(device, &lci, nullptr, &set_layout_) != VK_SUCCESS)
         return false;
@@ -160,7 +174,7 @@ bool GpuCulling::create_descriptors(VkDevice device) {
     const uint32_t set_count = kMaxFrames * kCullPassCount;
     VkDescriptorPoolSize sizes[] = {
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, set_count},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, set_count * 6},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, set_count * 9},
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, set_count},
     };
     VkDescriptorPoolCreateInfo pci{};
@@ -186,19 +200,30 @@ bool GpuCulling::create_descriptors(VkDevice device) {
 }
 
 bool GpuCulling::create_pipelines(VkDevice device) {
+    VkPushConstantRange pcr{};
+    pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    pcr.offset = 0;
+    pcr.size = sizeof(MeshletCullPush);
+
     VkPipelineLayoutCreateInfo plci{};
     plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     plci.setLayoutCount = 1;
     plci.pSetLayouts = &set_layout_;
+    plci.pushConstantRangeCount = 1;
+    plci.pPushConstantRanges = &pcr;
     if (vkCreatePipelineLayout(device, &plci, nullptr, &pipeline_layout_) != VK_SUCCESS)
         return false;
 
     VkShaderModule cull_mod = load_module(device, "shaders/cull_frustum.comp.spv");
     VkShaderModule build_mod = load_module(device, "shaders/build_indirect.comp.spv");
-    if (cull_mod == VK_NULL_HANDLE || build_mod == VK_NULL_HANDLE) {
-        LOG_ERROR("[GpuCulling] Failed to load compute SPIR-V (cull_frustum / build_indirect)");
+    VkShaderModule meshlet_mod = load_module(device, "shaders/cull_meshlets.comp.spv");
+    if (cull_mod == VK_NULL_HANDLE || build_mod == VK_NULL_HANDLE ||
+        meshlet_mod == VK_NULL_HANDLE) {
+        LOG_ERROR("[GpuCulling] Failed to load compute SPIR-V "
+                  "(cull_frustum / build_indirect / cull_meshlets)");
         if (cull_mod) vkDestroyShaderModule(device, cull_mod, nullptr);
         if (build_mod) vkDestroyShaderModule(device, build_mod, nullptr);
+        if (meshlet_mod) vkDestroyShaderModule(device, meshlet_mod, nullptr);
         return false;
     }
 
@@ -216,9 +241,12 @@ bool GpuCulling::create_pipelines(VkDevice device) {
                VK_SUCCESS;
     };
 
-    bool ok = make_pipe(cull_mod, &cull_pipeline_) && make_pipe(build_mod, &build_pipeline_);
+    bool ok = make_pipe(cull_mod, &cull_pipeline_) &&
+              make_pipe(build_mod, &build_pipeline_) &&
+              make_pipe(meshlet_mod, &meshlet_pipeline_);
     vkDestroyShaderModule(device, cull_mod, nullptr);
     vkDestroyShaderModule(device, build_mod, nullptr);
+    vkDestroyShaderModule(device, meshlet_mod, nullptr);
     return ok;
 }
 
@@ -226,7 +254,8 @@ bool GpuCulling::build_scene(VkDevice device, VmaAllocator allocator,
                              const std::vector<MeshDrawInfo>& mesh_draw_infos,
                              const scene::SceneManager& scene,
                              const MaterialManager* materials,
-                             bool gpu_only_instances) {
+                             bool gpu_only_instances,
+                             const std::vector<MeshletDesc>* meshlets) {
     clear_scene(device, allocator);
 
     batch_count_ = static_cast<uint32_t>(mesh_draw_infos.size());
@@ -238,6 +267,8 @@ bool GpuCulling::build_scene(VkDevice device, VmaAllocator allocator,
     std::vector<GpuBatchMeta> metas(batch_count_);
     cpu_items_.clear();
     item_transform_indices_.clear();
+    max_meshlet_draws_ = 0;
+    max_meshlets_per_batch_ = 0;
 
     uint32_t running_base = 0;
     for (uint32_t b = 0; b < batch_count_; ++b) {
@@ -248,6 +279,13 @@ bool GpuCulling::build_scene(VkDevice device, VmaAllocator allocator,
         metas[b].index_count = info.index_count;
         metas[b].first_index = info.index_offset;
         metas[b].vertex_offset = info.vertex_offset;
+        metas[b].meshlet_offset = info.meshlet_offset;
+        metas[b].meshlet_count = info.meshlet_count;
+        max_meshlets_per_batch_ =
+            std::max(max_meshlets_per_batch_, info.meshlet_count);
+        const uint32_t per_instance =
+            (info.meshlet_count > 0) ? info.meshlet_count : 1u;
+        max_meshlet_draws_ += per_instance * cap;
 
         for (uint32_t rm_id : info.render_mesh_ids) {
             const auto& rm = scene.get_render_mesh(rm_id);
@@ -315,12 +353,33 @@ bool GpuCulling::build_scene(VkDevice device, VmaAllocator allocator,
     const VkDeviceSize cmds_bytes =
         std::max<VkDeviceSize>(sizeof(uint32_t) * 5,
                                batch_count_ * 5 * sizeof(uint32_t));
+    const uint32_t meshlet_n =
+        (meshlets && !meshlets->empty()) ? static_cast<uint32_t>(meshlets->size())
+                                         : 1u;
+    const VkDeviceSize meshlets_bytes = std::max<VkDeviceSize>(
+        sizeof(MeshletDesc),
+        static_cast<VkDeviceSize>(meshlet_n) * sizeof(MeshletDesc));
+    const uint32_t ml_draws = std::max(1u, max_meshlet_draws_);
+    const VkDeviceSize ml_cmds_bytes =
+        static_cast<VkDeviceSize>(ml_draws) * 5u * sizeof(uint32_t);
 
     if (!BufferUtils::initialize_buffer(device, allocator, metas_bytes, batch_metas_)) {
         LOG_ERROR("[GpuCulling] Failed to create batch meta buffer");
         return false;
     }
     memcpy(batch_metas_.mapped_data, metas.data(), metas.size() * sizeof(GpuBatchMeta));
+    cpu_metas_ = metas;
+
+    if (!BufferUtils::initialize_buffer(device, allocator, meshlets_bytes, meshlets_)) {
+        LOG_ERROR("[GpuCulling] Failed to create meshlet buffer");
+        return false;
+    }
+    if (meshlets && !meshlets->empty()) {
+        memcpy(meshlets_.mapped_data, meshlets->data(),
+               meshlets->size() * sizeof(MeshletDesc));
+    } else {
+        memset(meshlets_.mapped_data, 0, static_cast<size_t>(meshlets_bytes));
+    }
 
     for (uint32_t f = 0; f < kMaxFrames; ++f) {
         if (!BufferUtils::initialize_buffer(device, allocator, items_bytes,
@@ -359,7 +418,16 @@ bool GpuCulling::build_scene(VkDevice device, VmaAllocator allocator,
                 !BufferUtils::initialize_buffer(
                     device, allocator, cmds_bytes, indirect_cmds_[f][p],
                     VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
-                    BufferUtils::BufferResidency::GpuOnly)) {
+                    BufferUtils::BufferResidency::GpuOnly) ||
+                !BufferUtils::initialize_buffer(
+                    device, allocator, ml_cmds_bytes, meshlet_cmds_[f][p],
+                    VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+                    BufferUtils::BufferResidency::GpuOnly) ||
+                !BufferUtils::initialize_buffer(
+                    device, allocator, sizeof(uint32_t), meshlet_draw_count_[f][p],
+                    VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+                        VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                    BufferUtils::BufferResidency::HostWrite)) {
                 LOG_ERROR("[GpuCulling] Failed to create per-frame cull pass buffers");
                 return false;
             }
@@ -378,8 +446,13 @@ bool GpuCulling::build_scene(VkDevice device, VmaAllocator allocator,
             hzb_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
             VkDescriptorBufferInfo worlds_info{worlds_[f].buffer, 0, worlds_bytes};
+            VkDescriptorBufferInfo meshlets_info{meshlets_.buffer, 0, meshlets_bytes};
+            VkDescriptorBufferInfo ml_cmds_info{meshlet_cmds_[f][p].buffer, 0,
+                                                ml_cmds_bytes};
+            VkDescriptorBufferInfo ml_count_info{meshlet_draw_count_[f][p].buffer, 0,
+                                                 sizeof(uint32_t)};
 
-            VkWriteDescriptorSet writes[8]{};
+            VkWriteDescriptorSet writes[11]{};
             for (uint32_t i = 0; i < 6; ++i) {
                 writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
                 writes[i].dstSet = sets_[f][p];
@@ -402,7 +475,25 @@ bool GpuCulling::build_scene(VkDevice device, VmaAllocator allocator,
             writes[7].descriptorCount = 1;
             writes[7].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             writes[7].pBufferInfo = &worlds_info;
-            vkUpdateDescriptorSets(device, 8, writes, 0, nullptr);
+            writes[8].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[8].dstSet = sets_[f][p];
+            writes[8].dstBinding = 8;
+            writes[8].descriptorCount = 1;
+            writes[8].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            writes[8].pBufferInfo = &meshlets_info;
+            writes[9].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[9].dstSet = sets_[f][p];
+            writes[9].dstBinding = 9;
+            writes[9].descriptorCount = 1;
+            writes[9].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            writes[9].pBufferInfo = &ml_cmds_info;
+            writes[10].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[10].dstSet = sets_[f][p];
+            writes[10].dstBinding = 10;
+            writes[10].descriptorCount = 1;
+            writes[10].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            writes[10].pBufferInfo = &ml_count_info;
+            vkUpdateDescriptorSets(device, 11, writes, 0, nullptr);
         }
     }
 
@@ -410,7 +501,8 @@ bool GpuCulling::build_scene(VkDevice device, VmaAllocator allocator,
     LOG_INFO("[GpuCulling] Ready: " << item_count_ << " items, " << batch_count_
              << " batches, " << instance_slot_count_ << " instance slots"
              << (has_transparent_half_ ? " + transparent half" : "")
-             << ", worlds=" << world_count_);
+             << ", worlds=" << world_count_ << ", meshletCull="
+             << (meshlet_cull_ ? "on" : "off") << " maxDraws=" << max_meshlet_draws_);
     return true;
 }
 
@@ -459,7 +551,8 @@ void GpuCulling::bind_hzb(uint32_t frame_index, VkImageView hzb_view,
 void GpuCulling::record(VkCommandBuffer cmd, uint32_t frame_index,
                         const glm::mat4& view_proj, bool enable_hzb, uint32_t hzb_width,
                         uint32_t hzb_height, uint32_t hzb_mips, float hzb_depth_bias,
-                        CullEmitFilter emit_filter) {
+                        CullEmitFilter emit_filter, const glm::vec3& camera_world,
+                        bool cone_cull, bool expand_meshlets) {
     if (!ready_ || frame_index >= kMaxFrames)
         return;
 
@@ -564,11 +657,47 @@ void GpuCulling::record(VkCommandBuffer cmd, uint32_t frame_index,
                          VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &cull_barrier, 0,
                          nullptr, 0, nullptr);
 
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, build_pipeline_);
-    // same descriptor set
-    const uint32_t bgroups = (batch_count_ + 63u) / 64u;
-    if (bgroups > 0)
-        vkCmdDispatch(cmd, bgroups, 1, 1);
+    const bool use_meshlets = expand_meshlets && meshlet_cull_ &&
+                              max_meshlet_draws_ > 0 &&
+                              meshlet_pipeline_ != VK_NULL_HANDLE &&
+                              meshlet_cmds_[frame_index][pass].buffer != VK_NULL_HANDLE;
+    meshlet_draw_[frame_index][pass] = use_meshlets;
+
+    if (use_meshlets) {
+        VkMemoryBarrier to_fill_ml{};
+        to_fill_ml.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        to_fill_ml.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        to_fill_ml.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &to_fill_ml, 0,
+                             nullptr, 0, nullptr);
+        vkCmdFillBuffer(cmd, meshlet_draw_count_[frame_index][pass].buffer, 0,
+                        sizeof(uint32_t), 0);
+        VkMemoryBarrier fill_ml{};
+        fill_ml.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        fill_ml.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        fill_ml.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT |
+                                      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &fill_ml, 0,
+                             nullptr, 0, nullptr);
+
+        MeshletCullPush pc{};
+        pc.camera_world = glm::vec4(camera_world, 0.0f);
+        pc.max_draws = max_meshlet_draws_;
+        pc.cone_enable = cone_cull ? 1u : 0u;
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, meshlet_pipeline_);
+        vkCmdPushConstants(cmd, pipeline_layout_, VK_SHADER_STAGE_COMPUTE_BIT, 0,
+                           sizeof(MeshletCullPush), &pc);
+        const uint32_t mx = std::max(1u, max_meshlets_per_batch_);
+        const uint32_t groups_x = (mx + 63u) / 64u;
+        vkCmdDispatch(cmd, groups_x, batch_count_, 1);
+    } else {
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, build_pipeline_);
+        const uint32_t bgroups = (batch_count_ + 63u) / 64u;
+        if (bgroups > 0)
+            vkCmdDispatch(cmd, bgroups, 1, 1);
+    }
 
     VkMemoryBarrier to_draw{};
     to_draw.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
@@ -579,6 +708,78 @@ void GpuCulling::record(VkCommandBuffer cmd, uint32_t frame_index,
                          VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT |
                              VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
                          0, 1, &to_draw, 0, nullptr, 0, nullptr);
+}
+
+void GpuCulling::cmd_draw_indexed(VkCommandBuffer cmd, uint32_t frame_index,
+                                  CullPass pass) const {
+    if (!ready_ || frame_index >= kMaxFrames)
+        return;
+    const uint32_t pi = static_cast<uint32_t>(pass);
+    if (pi >= kCullPassCount)
+        return;
+    if (pass == CullPass::Transparent && !has_transparent_half_)
+        return;
+
+    if (meshlet_draw_[frame_index][pi] &&
+        meshlet_cmds_[frame_index][pi].buffer != VK_NULL_HANDLE &&
+        meshlet_draw_count_[frame_index][pi].buffer != VK_NULL_HANDLE) {
+        vkCmdDrawIndexedIndirectCount(cmd, meshlet_cmds_[frame_index][pi].buffer, 0,
+                                      meshlet_draw_count_[frame_index][pi].buffer, 0,
+                                      max_meshlet_draws_,
+                                      sizeof(VkDrawIndexedIndirectCommand));
+        return;
+    }
+    if (batch_count_ == 0)
+        return;
+    vkCmdDrawIndexedIndirect(cmd, indirect_cmds_[frame_index][pi].buffer, 0,
+                             batch_count_, sizeof(VkDrawIndexedIndirectCommand));
+}
+
+GpuCulling::MeshletStats GpuCulling::read_meshlet_stats(uint32_t frame_index) const {
+    MeshletStats out{};
+    if (!ready_ || frame_index >= kMaxFrames || !meshlet_cull_ ||
+        max_meshlet_draws_ == 0)
+        return out;
+
+    const uint32_t pass_n = has_transparent_half_ ? kCullPassCount : 1u;
+    bool any = false;
+    uint32_t fallback_draws = 0;
+    uint32_t tested = 0;
+    uint32_t drawn = 0;
+
+    for (uint32_t p = 0; p < pass_n; ++p) {
+        if (!meshlet_draw_[frame_index][p])
+            continue;
+        any = true;
+        if (meshlet_draw_count_[frame_index][p].mapped_data) {
+            drawn += *static_cast<const uint32_t*>(
+                meshlet_draw_count_[frame_index][p].mapped_data);
+        }
+        if (!batch_counts_[frame_index][p].mapped_data)
+            continue;
+        const auto* counts = static_cast<const uint32_t*>(
+            batch_counts_[frame_index][p].mapped_data);
+        const uint32_t n = std::min(batch_count_, static_cast<uint32_t>(cpu_metas_.size()));
+        for (uint32_t i = 0; i < n; ++i) {
+            const uint32_t vis = std::min(counts[i], cpu_metas_[i].capacity);
+            if (vis == 0)
+                continue;
+            if (cpu_metas_[i].meshlet_count == 0) {
+                ++fallback_draws;
+            } else {
+                tested += vis * cpu_metas_[i].meshlet_count;
+            }
+        }
+    }
+    if (!any)
+        return out;
+
+    out.active = true;
+    out.tested = tested;
+    out.drawn = (drawn > fallback_draws) ? (drawn - fallback_draws) : 0u;
+    if (out.drawn > out.tested)
+        out.drawn = out.tested;
+    return out;
 }
 
 uint32_t GpuCulling::read_visible_count(uint32_t frame_index) const {

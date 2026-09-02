@@ -2,17 +2,26 @@
 
 #include "gfx/MeshManager.h"
 #include "gfx/Vertex.h"
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 #include <glm/glm.hpp>
 
 namespace tinygltf {
 class Model;
+struct Primitive;
 }
 
 namespace scene {
 
 constexpr uint32_t kInvalidMorph = ~0u;
+
+// Per-vertex extra bytes for meshopt weld so morph deltas stay unique.
+// Returns false if targets are missing or vertex counts mismatch.
+bool pack_morph_weld_bytes(const tinygltf::Model& model,
+                           const tinygltf::Primitive& primitive,
+                           size_t vertex_count, std::vector<uint8_t>& extra,
+                           size_t& extra_stride);
 
 // One skinned morph mesh instance (typically one glTF mesh / node).
 // CPU-blends POSITION (+ NORMAL when present) and patches MeshManager vertices.
@@ -42,6 +51,9 @@ class MorphSystem {
     // Returns number of morph instances.
     uint32_t load_from_gltf(const tinygltf::Model& model,
                             const std::vector<uint32_t>& mesh_lookup);
+
+    // Apply MeshData.vertex_remap so blend-shape arrays match optimized verts.
+    void apply_optimize_remap(gfx::MeshManager& meshes);
 
     // Associate morph instances with glTF nodes that reference their mesh.
     void bind_nodes(const tinygltf::Model& model);

@@ -39,7 +39,12 @@ bool ShadowMap::create_image(VkDevice device, VmaAllocator allocator, VkFormat f
 
     VmaAllocationCreateInfo alloc{};
     alloc.usage = VMA_MEMORY_USAGE_GPU_ONLY;
-    alloc.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+    // 1x1 dummy is 64 KiB after alignment; dedicated allocs under ~1 MiB trip
+    // BestPractices-vkBindImageMemory-small-dedicated-allocation.
+    const VkDeviceSize approx_bytes =
+        static_cast<VkDeviceSize>(w) * static_cast<VkDeviceSize>(h) * 4u;
+    if (approx_bytes >= (1u << 20))
+        alloc.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
     if (vmaCreateImage(allocator, &info, &alloc, &out.handle, &out.allocation,
                        &out.info) != VK_SUCCESS) {
         LOG_ERROR("[Shadow] image create failed");
