@@ -213,6 +213,7 @@ int AeroBoar::fly() {
         // channels are masked so clips cannot overwrite FpsMove.
         {
             auto sim = engine.frame_stats.scope(core::CpuStage::Simulate);
+            AERO_ZONE_NAMED("sim.logic");
             auto& tw = engine.renderer.scene_manager.transforms();
             const ecs::Entity ap = engine.ecs_world.active_player();
             // Any live player body is a character controller (WASD + 1st/3rd
@@ -264,6 +265,7 @@ int AeroBoar::fly() {
             cpu_frame.disarm();
             engine.render();
         }
+        FrameMark;
 
         if (engine.renderer.vk.device_lost) {
             if (!engine.try_recover_gpu()) {

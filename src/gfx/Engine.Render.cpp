@@ -9,6 +9,7 @@
 #include "gfx/PbrPush.h"
 #include "core/Log.h"
 #include "core/FrameStats.h"
+#include "core/Profiler.h"
 
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_RADIANS
@@ -319,6 +320,12 @@ void gfx::Engine::render() {
                                  << (hzb ? " [hzb=on]" : " [hzb=off]"));
                     }
                     renderer.last_visible_instances = visible;
+                    TracyPlot("cull.vis", static_cast<int64_t>(visible));
+                    TracyPlot("cull.total", static_cast<int64_t>(total));
+                    if (ml.active) {
+                        TracyPlot("meshlet.drawn", static_cast<int64_t>(ml.drawn));
+                        TracyPlot("meshlet.tested", static_cast<int64_t>(ml.tested));
+                    }
                     if (ml.active && ml.tested > 0) {
                         const uint32_t ml_culled =
                             (ml.tested > ml.drawn) ? (ml.tested - ml.drawn) : 0u;
@@ -667,6 +674,7 @@ void gfx::Engine::render() {
                              nullptr, 1, &to_present);
     }
 
+    gpu_times.tracy_collect(frame.command_buffer);
     if (vkEndCommandBuffer(frame.command_buffer) != VK_SUCCESS) {
         LOG_ERROR("Failed to end command buffer");
         return;

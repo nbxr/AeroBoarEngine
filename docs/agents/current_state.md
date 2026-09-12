@@ -60,7 +60,7 @@ Desktop foundation is solid. The engine loads glTF scenes (multi-material, hiera
 - **Physics:** knock-over + `worldScale` + KHR + kill floor + debug draw. Current tabletop test: ABeautifulGameGame at `worldScale: 10`
 - **Extension matrix:** `docs/architecture/gltf-extensions.md`
 - **Blender addons:** `tools/blender/src/ecs_components_editor/` (extras UI; human-scale / small-asset presets); `tools/blender/src/animation_transfer/` (copy clips between matching armatures, scale location to dest size)
-- **Tracy:** FetchContent `v0.14.1`, `TracyClient` linked; enable with `cmake -DAERO_TRACY=ON`. Hook header `src/core/Profiler.h`. No ZoneScoped/FrameMark/Vulkan context yet.
+- **Tracy:** FetchContent `v0.14.1`. `-DAERO_TRACY=ON` enables CPU zones (`CpuScope` + load), `FrameMark`, cull/meshlet plots, and a Vulkan GPU context on `GpuTimestamps`. GUI v0.14.1 port 8086.
 - **HUD / frame stats:** `gfx::HudTextPass` overlay (Screen + View). **F4** toggles it (off = no overlay pass). Shows wall FPS + **busy vs wait**, EMA avg + min/max, auto ns/us/ms, `cpu n-1` / `gpu n-2` lag, cull vis. GPU timestamps use compute/vertex/color stages (not TOP/BOTTOM). Unused stages `--`. Not written to `aero_boar.log`. Code: `src/core/FrameStats.h`, `src/gfx/GpuTimestamps.{h,cpp}`. Add a GPU pass: new `GpuStage` + `gpu_times.scope(...)`. VR HUD later uses `HudSpace::View`.
 - **Future tooling:** `glslc` → **glslang** when Quest/Android work starts
 
@@ -142,6 +142,7 @@ Desktop foundation is solid. The engine loads glTF scenes (multi-material, hiera
 - [done] Skinned KHR mesh colliders → per-bone kinematic hulls that follow joint animation
 - [done] GPU reset resilience: recover from DEVICE_LOST/SURFACE_LOST; FIFO present when RDP / DWM composition is off; instance WSI retry (`windowing_extensions_not_present`)
 - [done] Tracy client in CMake (`AERO_TRACY` / `src/core/Profiler.h`); not instrumented yet
+- [done] Tracy instrumentation: FrameMark, CPU stage zones, load zones, Vulkan GPU zones, cull plots
 - [done] Overlay text (`HudTextPass`, Screen + View); frame-stats HUD (busy/wait, EMA, auto units, F4 toggle). Tracy zones / VR HUD later.
 - [done] Directional shadow map (`gfx::ShadowMap`, light-space ortho, shared-eye). CSM / cubes / spots later.
 - [done] Shadow Phase 1: camera-frustum volume extruded toward the light, clipped to scene AABB; PCF skip when NdotL≤0 / off-map.
@@ -149,7 +150,7 @@ Desktop foundation is solid. The engine loads glTF scenes (multi-material, hiera
 - [done] Load-time meshoptimizer (weld / cache / overdraw / fetch) + meshlets (64/126) + GPU cone/frustum cull. Skin/morph whole-mesh fallback.
 - [done] Reverted post-sample foot plant / hips Y clamp (was splitting body vs legs). Next: author in-place / scaled hip translations, or IK.
 - [done] Engine + Blender addons generalized: no scene-name hardcoding; `CameraRig` defaults human-scale; extras/KHR data-driven
-- **Next immediate:** locomotion polish or VR path. Tracy zones when we start measuring. Shadow far-cascade cache later.
+- **Next immediate:** locomotion polish or VR path. Shadow far-cascade cache later.
 - **Investigate (lighting / Quest):** Tiled Clustered Forward (**TCF**) instead of looping all lights in the forward shader — `lighting-implementation.md` §4. Do not start this until scoped; Adreno TBDR / GMEM constraints apply.
 - **Then:** ECS Phase 4 events/timers or Jolt sensors; GameObject→Entity render migration
 - **When cameras are cleaned up:** reopen captured look-rail (`desktop-inputs.md`); do not spend an input-only pass before that

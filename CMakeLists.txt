@@ -250,9 +250,10 @@ FetchContent_Declare(
     SOURCE_SUBDIR Build
 )
 
-# 8. Tracy profiler client (instrumentation later). GUI is not built here —
-#    use the matching GitHub release binary. Default OFF = no runtime cost.
-option(AERO_TRACY "Enable Tracy profiler client (CPU; GPU/Vulkan zones later)" OFF)
+# 8. Tracy profiler client. GUI is the GitHub release binary (v0.14.1), not
+#    built here. Default OFF = no runtime cost. Engine must also get
+#    TRACY_ENABLE or ZoneScoped / FrameMark in our TUs are no-ops.
+option(AERO_TRACY "Enable Tracy profiler client (CPU zones + Vulkan GPU context)" OFF)
 set(TRACY_ENABLE ${AERO_TRACY} CACHE BOOL "Tracy: enable profiling in TracyClient" FORCE)
 set(TRACY_ON_DEMAND ON CACHE BOOL "Tracy: connect when the GUI attaches" FORCE)
 set(TRACY_STATIC ON CACHE BOOL "" FORCE)
@@ -393,8 +394,11 @@ target_link_libraries(Aero_Boar_Engine PRIVATE
 )
 
 if(AERO_TRACY)
-    target_compile_definitions(Aero_Boar_Engine PRIVATE AERO_TRACY=1)
-    message(STATUS "AERO_TRACY: ON (TRACY_ENABLE, on-demand). Open Tracy v0.14.1 GUI to capture.")
+    target_compile_definitions(Aero_Boar_Engine PRIVATE
+        AERO_TRACY=1
+        TRACY_ENABLE
+        TRACY_ON_DEMAND)
+    message(STATUS "AERO_TRACY: ON (CPU zones + FrameMark + Vulkan GPU). Tracy GUI v0.14.1 port 8086.")
 else()
     message(STATUS "AERO_TRACY: OFF (TracyClient linked as no-op). cmake -DAERO_TRACY=ON to enable.")
 endif()

@@ -192,6 +192,8 @@ bool gfx::Engine::init_vulkan() {
     if (!gpu_times.create(renderer.vk.device.device, renderer.vk.physical_device)) {
         LOG_INFO("[Init] GPU timestamps unavailable — HUD gpu lines will show --");
     }
+    gpu_times.init_tracy(renderer.vk.physical_device, renderer.vk.device.device,
+                         renderer.vk.graphics_queue, renderer.vk.generic_command_pool);
 
     // Initialize framebuffers
     if (!init_framebuffers())

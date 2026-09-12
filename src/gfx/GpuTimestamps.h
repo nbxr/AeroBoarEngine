@@ -17,6 +17,10 @@ class GpuTimestamps {
     static constexpr uint32_t kQueriesPerFrame = kStageCount * 2u;
 
     bool create(VkDevice device, VkPhysicalDevice phys);
+    // Tracy Vulkan context (no-op unless TRACY_ENABLE). Safe if create() failed.
+    void init_tracy(VkPhysicalDevice phys, VkDevice device, VkQueue queue,
+                    VkCommandPool pool);
+    void tracy_collect(VkCommandBuffer cmd);
     void destroy(VkDevice device);
 
     // Call after the FIF fence succeeded (previous submit finished).

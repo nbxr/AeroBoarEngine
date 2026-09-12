@@ -7,6 +7,7 @@
 #include "core/Configuration.h"
 #include "core/Frustum.h"
 #include "core/Log.h"
+#include "core/Profiler.h"
 #include <vulkan/vulkan.h>
 #include "scene/GltfLoader.h"
 #include "scene/SceneManager.h"
@@ -27,6 +28,7 @@
 #include <glm/gtc/quaternion.hpp>  // for mat3_cast in pointing debug
 
 bool gfx::Engine::load_default_scene() {
+    AERO_ZONE_NAMED("load.scene");
     const auto &config = core::Configuration::get_instance();
     if (!config.is_loaded()) {
         std::cerr << "Configuration has not been loaded" << std::endl;
@@ -44,6 +46,7 @@ bool gfx::Engine::load_default_scene() {
 }
 
 bool gfx::Engine::load_scene(const std::string &scene_name) {
+    AERO_ZONE_NAMED("load.scene");
     mark_lights_dirty();
     const auto &config = core::Configuration::get_instance();
     if (!config.is_loaded()) {

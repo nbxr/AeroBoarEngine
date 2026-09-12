@@ -5,6 +5,7 @@
 #include "scene/GltfLoader.h"
 #include "core/Handle.h"
 #include "core/Log.h"
+#include "core/Profiler.h"
 #include "gfx/MeshData.h"
 #include "gfx/MeshOptimizer.h"
 #include "scene/Morph.h"
@@ -543,6 +544,7 @@ std::vector<gfx::MeshPrimitiveID>
 scene::GltfLoader::extract_mesh_data(const tinygltf::Model &model,
                                     gfx::Renderer &renderer,
                                     bool optimize_meshes) {
+    AERO_ZONE_NAMED("load.meshes");
 
     std::vector<gfx::MeshPrimitiveID> meshes{};
     meshes.reserve(model.meshes.size() *

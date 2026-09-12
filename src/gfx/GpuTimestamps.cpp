@@ -1,7 +1,36 @@
 #include "gfx/GpuTimestamps.h"
 #include "core/Log.h"
+#include "core/Profiler.h"
+
+#ifdef TRACY_ENABLE
+#include <memory>
+#include <tracy/TracyVulkan.hpp>
+#endif
 
 namespace gfx {
+namespace {
+#ifdef TRACY_ENABLE
+tracy::VkCtx* g_tracy_vk = nullptr;
+std::unique_ptr<tracy::VkCtxScope> g_tracy_gpu_zone[GpuTimestamps::kStageCount];
+
+const tracy::SourceLocationData* tracy_gpu_loc(core::GpuStage s) {
+    static const tracy::SourceLocationData k[] = {
+        {"gpu.skin", "GpuTimestamps", "", 0, 0x26A69A},
+        {"gpu.shadow", "GpuTimestamps", "", 0, 0x5C6BC0},
+        {"gpu.cull", "GpuTimestamps", "", 0, 0x7E57C2},
+        {"gpu.depth", "GpuTimestamps", "", 0, 0x78909C},
+        {"gpu.opaque", "GpuTimestamps", "", 0, 0x43A047},
+        {"gpu.trans", "GpuTimestamps", "", 0, 0x00897B},
+        {"gpu.overlay", "GpuTimestamps", "", 0, 0xF9A825},
+    };
+    const int i = static_cast<int>(s);
+    if (i < 0 || i >= static_cast<int>(core::GpuStage::Count))
+        return &k[0];
+    return &k[i];
+}
+#endif
+} // namespace
+
 
 bool GpuTimestamps::create(VkDevice device, VkPhysicalDevice phys) {
     destroy(device);
@@ -30,6 +59,14 @@ bool GpuTimestamps::create(VkDevice device, VkPhysicalDevice phys) {
 }
 
 void GpuTimestamps::destroy(VkDevice device) {
+#ifdef TRACY_ENABLE
+    for (auto& z : g_tracy_gpu_zone)
+        z.reset();
+    if (g_tracy_vk) {
+        TracyVkDestroy(g_tracy_vk);
+        g_tracy_vk = nullptr;
+    }
+#endif
     if (pool_ != VK_NULL_HANDLE && device != VK_NULL_HANDLE) {
         vkDestroyQueryPool(device, pool_, nullptr);
         pool_ = VK_NULL_HANDLE;
@@ -37,6 +74,45 @@ void GpuTimestamps::destroy(VkDevice device) {
     period_ns_ = 0.0f;
     wrote_ = {};
     primed_ = {};
+}
+
+void GpuTimestamps::init_tracy(VkPhysicalDevice phys, VkDevice device, VkQueue queue,
+                               VkCommandPool pool) {
+#ifdef TRACY_ENABLE
+    if (g_tracy_vk || device == VK_NULL_HANDLE || queue == VK_NULL_HANDLE ||
+        pool == VK_NULL_HANDLE)
+        return;
+    VkCommandBufferAllocateInfo alloc{};
+    alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    alloc.commandPool = pool;
+    alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    alloc.commandBufferCount = 1;
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    if (vkAllocateCommandBuffers(device, &alloc, &cmd) != VK_SUCCESS || !cmd)
+        return;
+    g_tracy_vk = TracyVkContext(phys, device, queue, cmd);
+    vkFreeCommandBuffers(device, pool, 1, &cmd);
+    if (g_tracy_vk) {
+        TracyVkContextName(g_tracy_vk, "AeroBoar", 8);
+        LOG_INFO("[Tracy] Vulkan GPU context ready");
+    } else {
+        LOG_INFO("[Tracy] Vulkan GPU context failed");
+    }
+#else
+    (void)phys;
+    (void)device;
+    (void)queue;
+    (void)pool;
+#endif
+}
+
+void GpuTimestamps::tracy_collect(VkCommandBuffer cmd) {
+#ifdef TRACY_ENABLE
+    if (g_tracy_vk && cmd != VK_NULL_HANDLE)
+        TracyVkCollect(g_tracy_vk, cmd);
+#else
+    (void)cmd;
+#endif
 }
 
 void GpuTimestamps::collect(VkDevice device, uint32_t frame, core::FrameStats& stats) {
@@ -129,6 +205,14 @@ VkPipelineStageFlagBits timestamp_end_stage(core::GpuStage stage) {
 
 void GpuTimestamps::write_begin(VkCommandBuffer cmd, uint32_t frame,
                                 core::GpuStage stage) {
+#ifdef TRACY_ENABLE
+    if (g_tracy_vk && cmd != VK_NULL_HANDLE) {
+        const uint32_t si = static_cast<uint32_t>(stage);
+        if (si < kStageCount)
+            g_tracy_gpu_zone[si] = std::make_unique<tracy::VkCtxScope>(
+                g_tracy_vk, tracy_gpu_loc(stage), cmd, true);
+    }
+#endif
     if (!pool_ || frame >= kMaxFrames)
         return;
     vkCmdWriteTimestamp(cmd, timestamp_begin_stage(stage), pool_,
@@ -137,6 +221,11 @@ void GpuTimestamps::write_begin(VkCommandBuffer cmd, uint32_t frame,
 
 void GpuTimestamps::write_end(VkCommandBuffer cmd, uint32_t frame,
                               core::GpuStage stage) {
+#ifdef TRACY_ENABLE
+    const uint32_t si = static_cast<uint32_t>(stage);
+    if (si < kStageCount)
+        g_tracy_gpu_zone[si].reset();
+#endif
     if (!pool_ || frame >= kMaxFrames)
         return;
     vkCmdWriteTimestamp(cmd, timestamp_end_stage(stage), pool_,

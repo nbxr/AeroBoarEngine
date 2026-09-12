@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/Profiler.h"
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
@@ -176,12 +177,29 @@ class FrameStats {
     class CpuScope {
       public:
         CpuScope(FrameStats& stats, CpuStage stage)
-            : stats_(&stats), stage_(stage), t0_(Clock::now()) {}
+            : stats_(&stats), stage_(stage), t0_(Clock::now()) {
+#ifdef TRACY_ENABLE
+            tracy_ctx_ = ___tracy_emit_zone_begin(tracy_cpu_loc(stage), 1);
+            tracy_on_ = true;
+#endif
+        }
         CpuScope(CpuScope&& o) noexcept
-            : stats_(o.stats_), stage_(o.stage_), t0_(o.t0_) {
+            : stats_(o.stats_), stage_(o.stage_), t0_(o.t0_)
+#ifdef TRACY_ENABLE
+              ,
+              tracy_ctx_(o.tracy_ctx_), tracy_on_(o.tracy_on_)
+#endif
+        {
             o.stats_ = nullptr;
+#ifdef TRACY_ENABLE
+            o.tracy_on_ = false;
+#endif
         }
         ~CpuScope() {
+#ifdef TRACY_ENABLE
+            if (tracy_on_)
+                ___tracy_emit_zone_end(tracy_ctx_);
+#endif
             if (stats_)
                 stats_->cpu_ms_[static_cast<int>(stage_)] += ms_since(t0_);
         }
@@ -190,6 +208,25 @@ class FrameStats {
         CpuScope& operator=(CpuScope&&) = delete;
 
       private:
+#ifdef TRACY_ENABLE
+        static const ___tracy_source_location_data* tracy_cpu_loc(CpuStage s) {
+            static const ___tracy_source_location_data k[] = {
+                {"cpu.input", "CpuScope", "", 0, 0x42A5F5},
+                {"cpu.simulate", "CpuScope", "", 0, 0x66BB6A},
+                {"cpu.physics", "CpuScope", "", 0, 0xFFA726},
+                {"cpu.gpu-wait", "CpuScope", "", 0, 0xEF5350},
+                {"cpu.uploads", "CpuScope", "", 0, 0xAB47BC},
+                {"cpu.record", "CpuScope", "", 0, 0x26C6DA},
+                {"cpu.present", "CpuScope", "", 0, 0x8D6E63},
+            };
+            const int i = static_cast<int>(s);
+            if (i < 0 || i >= static_cast<int>(CpuStage::Count))
+                return &k[0];
+            return &k[i];
+        }
+        TracyCZoneCtx tracy_ctx_{};
+        bool tracy_on_ = false;
+#endif
         FrameStats* stats_ = nullptr;
         CpuStage stage_{};
         std::chrono::high_resolution_clock::time_point t0_{};
