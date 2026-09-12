@@ -41,8 +41,9 @@ layout(set = 0, binding = 0, std140) uniform CullGlobals {
     vec4  hzb_info;
     uint  emit_filter;
     uint  instance_base_offset;
-    uint  pad1;
+    uint  extra_plane_count;
     uint  pad2;
+    vec4  extra_planes[8];
 } globals;
 
 layout(set = 0, binding = 2, std430) readonly buffer OutInstances {

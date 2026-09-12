@@ -17,6 +17,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdio>
 #include <vector>
 
@@ -401,7 +402,7 @@ void gfx::Engine::render() {
         } else {
             renderer.transparent.clear_items();
         }
-        write_frame_lighting(renderer.current_frame);
+        write_frame_lighting(renderer.current_frame, &viewProj);
     }
 
     can_hzb = occlusion_cull_enabled_ && can_cull &&
@@ -443,20 +444,47 @@ void gfx::Engine::render() {
                            vk.shadow_pipeline != VK_NULL_HANDLE && can_cull;
     if (do_shadow) {
         auto shadow = gpu_times.scope(frame.command_buffer, fi, core::GpuStage::Shadow);
-        // Whole-mesh casters: meshlet cone/frustum is camera-oriented and
-        // drops clusters that still fill the shadow map (off-screen, backfaces).
-        renderer.gpu_culling.record(frame.command_buffer, fi,
-                                    renderer.shadow_map.last_view_proj, false, 0, 0, 0,
-                                    0.003f, gfx::CullEmitFilter::OpaqueDepth,
-                                    camera.get_position(), /*cone_cull=*/false,
-                                    /*expand_meshlets=*/false);
-        renderer.shadow_map.begin(frame.command_buffer);
+        glm::vec3 full_corners[8];
+        const bool have_corners =
+            gfx::ShadowMap::frustum_corners(viewProj, full_corners);
+        const glm::vec4 splits = renderer.shadow_map.last_splits;
+        const float npl = std::max(camera.near_plane, 0.01f);
+        const float s0 = splits.x > 0.0f ? splits.x : npl + (camera.far_plane - npl) / 3.0f;
+        const float s1 = splits.y > 0.0f ? splits.y : npl + 2.0f * (camera.far_plane - npl) / 3.0f;
+        const float fpl = splits.z > s1 ? splits.z : std::max(camera.far_plane, s1 + 1.0f);
+        const float edges[4] = {npl, s0, s1, fpl};
+        auto t_of = [&](float d) {
+            const float f = std::max(edges[3], npl + 1.0f);
+            return std::clamp((d - npl) / (f - npl), 0.0f, 1.0f);
+        };
+
+        renderer.shadow_map.prepare(frame.command_buffer);
         const VkExtent2D shadow_extent{renderer.shadow_map.resolution(),
                                        renderer.shadow_map.resolution()};
-        record_indirect_draws(frame.command_buffer, renderer, vk.shadow_pipeline,
-                              renderer.shadow_map.last_view_proj, gfx::CullPass::Opaque,
-                              shadow_extent);
-        renderer.shadow_map.end(frame.command_buffer);
+        const uint32_t ncas = std::max(1u, renderer.shadow_map.last_cascade_count);
+        for (uint32_t c = 0; c < ncas && c < gfx::kShadowCascades; ++c) {
+            glm::vec4 sil[gfx::kShadowSilhouettePlanes];
+            uint32_t nsil = 0;
+            if (have_corners) {
+                glm::vec3 slice[8];
+                gfx::ShadowMap::slice_frustum_corners(full_corners, 0.0f,
+                                                      t_of(edges[c + 1]), slice);
+                nsil = gfx::ShadowMap::silhouette_planes(
+                    slice, renderer.shadow_map.last_to_light, sil,
+                    gfx::kShadowSilhouettePlanes);
+            }
+            // Whole-mesh casters + silhouette extra planes (Aaltonen receiver cull).
+            renderer.gpu_culling.record(
+                frame.command_buffer, fi, renderer.shadow_map.last_view_proj[c], false, 0,
+                0, 0, 0.003f, gfx::CullEmitFilter::OpaqueDepth, camera.get_position(),
+                /*cone_cull=*/false, /*expand_meshlets=*/false, sil, nsil);
+            renderer.shadow_map.begin(frame.command_buffer, c);
+            record_indirect_draws(frame.command_buffer, renderer, vk.shadow_pipeline,
+                                  renderer.shadow_map.last_view_proj[c],
+                                  gfx::CullPass::Opaque, shadow_extent);
+            renderer.shadow_map.end(frame.command_buffer);
+        }
+        renderer.shadow_map.finish(frame.command_buffer);
 
         VkMemoryBarrier inst{};
         inst.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;

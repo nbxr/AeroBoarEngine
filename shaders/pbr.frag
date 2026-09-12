@@ -44,7 +44,7 @@ layout(set = 0, binding = 2) readonly buffer Materials {
 layout(set = 0, binding = 7) uniform samplerCube prefilteredEnv;
 layout(set = 0, binding = 8) uniform sampler2D brdfLut;
 
-layout(set = 0, binding = 10) uniform sampler2DShadow shadowMap;
+layout(set = 0, binding = 10) uniform sampler2DArrayShadow shadowMap;
 // Bindless textures — must be highest binding (VARIABLE_DESCRIPTOR_COUNT).
 layout(set = 0, binding = 11) uniform sampler2D bindlessTextures[];
 
@@ -83,8 +83,10 @@ layout(set = 0, binding = 0) uniform FrameConstants {
     uvec4 lightMeta;        // x = lightCount
     vec4  shCoefficients[9];
     uvec4 iblIndices;       // x = specularEnvMapIndex, y = brdfLutIndex
-    mat4  shadowViewProj;
+    mat4  shadowViewProj[3];
+    vec4  shadowSplits;     // xy = split distances (view m), z = cascade count
     vec4  shadowParams;     // x=texel UV, y=enabled, z=light index, w=bias
+    vec4  cameraForward;    // xyz
 } globals;
 
 // Single SSBO + runtime array (std430). Matches gfx::GpuLight (64 bytes).
@@ -166,17 +168,16 @@ vec3 getNormalFromMap(vec3 N, vec3 T, vec3 B, vec2 uv, uint normalTexIdx, float 
 // Reverse-Z directional map: COMPARE_OP_GREATER_OR_EQUAL.
 // 8-tap Vogel PCF (~1.25 texels): anti-aliases the silhouette without a fat penumbra.
 // LINEAR compare still does a 2x2 filter per tap. Cheap enough for stereo later.
-float sample_shadow(vec3 worldPos) {
-    if (globals.shadowParams.y < 0.5)
-        return 1.0;
-    vec4 sc = globals.shadowViewProj * vec4(worldPos, 1.0);
+float sample_cascade_map(vec3 worldPos, uint cascade) {
+    vec4 sc = globals.shadowViewProj[cascade] * vec4(worldPos, 1.0);
     sc.xyz /= max(sc.w, 1e-6);
     vec2 uv = sc.xy * 0.5 + 0.5;
-    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)
-        return 1.0;
+    // Keep a 2% UV margin so PCF taps at the edge don't miss and light up.
+    if (uv.x < 0.02 || uv.x > 0.98 || uv.y < 0.02 || uv.y > 0.98 ||
+        sc.z < 0.0 || sc.z > 1.0)
+        return -1.0;
     float z = sc.z + globals.shadowParams.w;
     float t = max(globals.shadowParams.x, 1e-6) * 1.25;
-    // Vogel disk (golden-angle). Fixed offsets, uniform across the wave.
     const vec2 kOff[8] = vec2[](
         vec2( 0.1250,  0.0000),
         vec2(-0.1585,  0.1970),
@@ -189,8 +190,48 @@ float sample_shadow(vec3 worldPos) {
     );
     float s = 0.0;
     for (int i = 0; i < 8; ++i)
-        s += texture(shadowMap, vec3(uv + kOff[i] * t, z));
+        s += texture(shadowMap, vec4(uv + kOff[i] * t, float(cascade), z));
     return s * 0.125;
+}
+
+float sample_shadow(vec3 worldPos, float NdotL) {
+    if (globals.shadowParams.y < 0.5 || NdotL <= 0.0)
+        return 1.0;
+    vec3 fwd = globals.cameraForward.xyz;
+    float vz = max(dot(worldPos - globals.cameraPosition.xyz, fwd), 0.0);
+    float split0 = globals.shadowSplits.x;
+    float split1 = globals.shadowSplits.y;
+    uint ncas = uint(globals.shadowSplits.w + 0.5);
+    if (ncas < 2u) {
+        float s = sample_cascade_map(worldPos, 0u);
+        return s >= 0.0 ? s : 1.0;
+    }
+
+    uint c0 = 2u;
+    if (vz < split0)
+        c0 = 0u;
+    else if (vz < split1)
+        c0 = 1u;
+    uint c1 = min(c0 + 1u, 2u);
+    float a = sample_cascade_map(worldPos, c0);
+    float b = sample_cascade_map(worldPos, c1);
+    float hi = split0;
+    if (c0 == 1u)
+        hi = split1;
+    float band = max(hi * 0.18, 0.35);
+    float t = 0.0;
+    if (c0 < 2u)
+        t = clamp((vz - (hi - band)) / max(band, 1e-3), 0.0, 1.0);
+
+    if (a < 0.0 && b < 0.0) {
+        float c = sample_cascade_map(worldPos, 2u);
+        return c >= 0.0 ? c : 1.0;
+    }
+    if (a < 0.0)
+        return b;
+    if (b < 0.0)
+        return a;
+    return mix(a, b, t);
 }
 
 void main() {
@@ -321,7 +362,7 @@ void main() {
         float lightScale = intensity * attenuation * exposure;
         if (globals.shadowParams.y > 0.5 &&
             i == uint(globals.shadowParams.z + 0.5))
-            lightScale *= sample_shadow(inWorldPos);
+            lightScale *= sample_shadow(inWorldPos, NdotL);
 
         color += (diff + spec) * lightColor * lightScale;
 

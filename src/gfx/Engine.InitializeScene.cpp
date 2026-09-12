@@ -23,6 +23,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>  // for mat3_cast in pointing debug
 
 bool gfx::Engine::load_default_scene() {
@@ -641,7 +642,8 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     return true;
 }
 
-void gfx::Engine::write_frame_lighting(uint32_t frame_index) {
+void gfx::Engine::write_frame_lighting(uint32_t frame_index,
+                                       const glm::mat4* view_proj) {
     if (frame_index >= Renderer::MAX_FRAMES_IN_FLIGHT)
         return;
 
@@ -686,6 +688,7 @@ void gfx::Engine::write_frame_lighting(uint32_t frame_index) {
 
     constants->cameraPosition =
         glm::vec4(camera.get_position(), constants->cameraPosition.w);
+    constants->cameraForward = glm::vec4(camera.get_forward(), 0.0f);
 
     bool shadow_on = renderer.shadow_map.enabled && renderer.shadow_map.is_ready();
     uint32_t shadow_idx = 0;
@@ -710,24 +713,69 @@ void gfx::Engine::write_frame_lighting(uint32_t frame_index) {
         if (n == 0)
             consider(renderer.globalLight);
     }
+    for (uint32_t i = 0; i < gfx::kShadowCascades; ++i)
+        constants->shadowViewProj[i] = glm::mat4(1.0f);
+    constants->shadowSplits = glm::vec4(0.0f);
     if (shadow_on) {
-        core::AABB bounds = renderer.scene_manager.get_scene_aabb();
-        if (!bounds.is_valid()) {
+        core::AABB scene = renderer.scene_manager.get_scene_aabb();
+        if (!scene.is_valid()) {
             const glm::vec3 c = renderer.scene_center;
-            bounds.min = c - glm::vec3(1.0f);
-            bounds.max = c + glm::vec3(1.0f);
+            scene.min = c - glm::vec3(1.0f);
+            scene.max = c + glm::vec3(1.0f);
         }
-        constants->shadowViewProj =
-            renderer.shadow_map.fit_view_proj(to_light, bounds.min, bounds.max);
+        glm::vec3 full[8];
+        bool have_frustum = view_proj && gfx::ShadowMap::frustum_corners(*view_proj, full);
+        const float npl = std::max(camera.near_plane, 0.01f);
+        float fpl = std::max(camera.far_plane, npl + 1.0f);
+        const glm::vec3 sext = glm::max(scene.extents(), glm::vec3(1.0f));
+        fpl = std::min(fpl, glm::length(sext) + npl);
+        constexpr float kLambda = 0.7f;
+        auto split_at = [&](float p) {
+            const float uni = npl + (fpl - npl) * p;
+            const float logv = npl * std::pow(fpl / npl, p);
+            return glm::mix(uni, logv, kLambda);
+        };
+        // Nested ranges (0..s0, 0..s1, 0..fpl). Disjoint slices drop near casters
+        // from farther maps, which cuts umbras at the split (hard line).
+        float s0 = split_at(1.0f / 3.0f);
+        float s1 = split_at(2.0f / 3.0f);
+        s0 = std::max(s0, std::min(12.0f, 0.12f * fpl));
+        s1 = std::max(s1, s0 * 2.0f);
+        const float edges[4] = {npl, s0, s1, fpl};
+        auto t_of = [&](float d) {
+            return std::clamp((d - npl) / std::max(fpl - npl, 1e-3f), 0.0f, 1.0f);
+        };
+
+        uint32_t active = 0;
+        for (uint32_t c = 0; c < gfx::kShadowCascades; ++c) {
+            core::AABB bounds = scene;
+            if (have_frustum) {
+                const float d1 = edges[c + 1];
+                glm::vec3 slice[8];
+                gfx::ShadowMap::slice_frustum_corners(full, 0.0f, t_of(d1), slice);
+                bounds = gfx::ShadowMap::caster_bounds_from_corners(
+                    slice, to_light, scene.min, scene.max);
+                if (!bounds.is_valid())
+                    bounds = scene;
+            }
+            constants->shadowViewProj[c] =
+                renderer.shadow_map.fit_view_proj(to_light, bounds.min, bounds.max);
+            renderer.shadow_map.last_view_proj[c] = constants->shadowViewProj[c];
+            ++active;
+        }
+        constants->shadowSplits =
+            glm::vec4(s0, s1, fpl, static_cast<float>(active));
         constants->shadowParams =
             glm::vec4(renderer.shadow_map.texel_uv(), 1.0f,
                       static_cast<float>(shadow_idx), renderer.shadow_map.bias);
-        renderer.shadow_map.last_view_proj = constants->shadowViewProj;
+        renderer.shadow_map.last_splits = constants->shadowSplits;
+        renderer.shadow_map.last_to_light = to_light;
+        renderer.shadow_map.last_cascade_count = active;
         renderer.shadow_map.last_on = true;
     } else {
-        constants->shadowViewProj = glm::mat4(1.0f);
         constants->shadowParams = glm::vec4(0.0f);
         renderer.shadow_map.last_on = false;
+        renderer.shadow_map.last_cascade_count = 0;
     }
 }
 

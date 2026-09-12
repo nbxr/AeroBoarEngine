@@ -29,6 +29,13 @@ struct AABB {
         return max - min;
     }
 
+    void expand(const AABB& other) {
+        if (!other.is_valid())
+            return;
+        expand(other.min);
+        expand(other.max);
+    }
+
     // Expand this AABB to include the given point
     void expand(const glm::vec3& point) {
         min.x = std::min(min.x, point.x);

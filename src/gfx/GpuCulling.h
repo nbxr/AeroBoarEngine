@@ -65,8 +65,9 @@ struct GpuCullGlobals {
     // One SSBO for both passes so graphics binding 1 never flips mid-command-buffer
     // (UPDATE_AFTER_BIND would otherwise make both draws see the last write).
     uint32_t instance_base_offset = 0;
-    uint32_t pad1 = 0;
+    uint32_t extra_plane_count = 0;
     uint32_t pad2 = 0;
+    glm::vec4 extra_planes[8]{};
 };
 
 // Cull list filter for GpuCulling::record
@@ -83,8 +84,8 @@ enum class CullPass : uint32_t {
 };
 static constexpr uint32_t kCullPassCount = 2;
 
-// std140: planes 96 + 4 uints 16 + mat4 64 + vec4 16 + 4 uints 16 = 208
-static_assert(sizeof(GpuCullGlobals) == 208, "GpuCullGlobals std140 size");
+// std140: 208 + extra_planes[8] 128 = 336
+static_assert(sizeof(GpuCullGlobals) == 336, "GpuCullGlobals std140 size");
 
 // Fixed-region GPU frustum + Hi-Z occlusion cull + indirect command build.
 class GpuCulling {
@@ -122,7 +123,8 @@ class GpuCulling {
                 uint32_t hzb_mips = 0, float hzb_depth_bias = 0.003f,
                 CullEmitFilter emit_filter = CullEmitFilter::All,
                 const glm::vec3& camera_world = glm::vec3(0.0f),
-                bool cone_cull = true, bool expand_meshlets = true);
+                bool cone_cull = true, bool expand_meshlets = true,
+                const glm::vec4* extra_planes = nullptr, uint32_t extra_plane_count = 0);
 
     void set_meshlet_cull(bool on) { meshlet_cull_ = on; }
     [[nodiscard]] bool meshlet_cull() const {

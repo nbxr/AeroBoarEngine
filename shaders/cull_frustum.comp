@@ -30,8 +30,9 @@ layout(set = 0, binding = 0, std140) uniform CullGlobals {
     uint  emit_filter; // 0=all, 1=opaque depth writers, 2=transparent only
     // Offset into combined out_instances (0 = opaque half, N = transparent half)
     uint  instance_base_offset;
-    uint  pad1;
+    uint  extra_plane_count;
     uint  pad2;
+    vec4  extra_planes[8];
 } globals;
 
 layout(set = 0, binding = 1, std430) readonly buffer CullItems {
@@ -67,6 +68,17 @@ bool frustum_intersects_aabb(vec3 wmin, vec3 wmax) {
     for (int i = 0; i < 6; ++i) {
         vec3 n = globals.planes[i].xyz;
         float d = globals.planes[i].w;
+        vec3 p = vec3(
+            n.x >= 0.0 ? wmax.x : wmin.x,
+            n.y >= 0.0 ? wmax.y : wmin.y,
+            n.z >= 0.0 ? wmax.z : wmin.z);
+        if (dot(n, p) + d < -0.02)
+            return false;
+    }
+    uint nextra = min(globals.extra_plane_count, 8u);
+    for (uint i = 0u; i < nextra; ++i) {
+        vec3 n = globals.extra_planes[i].xyz;
+        float d = globals.extra_planes[i].w;
         vec3 p = vec3(
             n.x >= 0.0 ? wmax.x : wmin.x,
             n.y >= 0.0 ? wmax.y : wmin.y,

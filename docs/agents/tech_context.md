@@ -163,7 +163,7 @@ The single bindless descriptor set (allocated once, UPDATE_AFTER_BIND) uses thes
 
 | Binding | Type                          | Count  | Purpose / Consumers                  | Notes |
 |---------|-------------------------------|--------|--------------------------------------|-------|
-| 0       | UNIFORM_BUFFER                | 1      | `FrameConstants` — camera + exposure, lightCount, SH, IBL, **shadow VP**. std140-safe (vec4/mat4). | `gfx::FrameConstants` (272 B); double-buffered |
+| 0       | UNIFORM_BUFFER                | 1      | `FrameConstants` — camera + exposure, lightCount, SH, IBL, **CSM VPs**. std140-safe (vec4/mat4). | `gfx::FrameConstants`; double-buffered |
 | 1       | STORAGE_BUFFER                | 1      | `DrawInstanceGPU[]` for instancing (model + material index) | Per-frame GPU cull output; multi-draw uses `firstInstance` = batch base (Vulkan `gl_InstanceIndex` already includes base) |
 | 2       | STORAGE_BUFFER                | 1      | Materials (PBR + maps + multi-UV/transform); single packed SSBO, runtime array in shader. `gfx::Material` is **256 bytes** / align 16 (std430). | `gfx::MaterialManager` |
 | 3       | STORAGE_BUFFER                | 1      | MeshPrimitiveSSBO metadata (v/i offsets) | `gfx::MeshManager` |
@@ -173,7 +173,7 @@ The single bindless descriptor set (allocated once, UPDATE_AFTER_BIND) uses thes
 | 7       | COMBINED_IMAGE_SAMPLER        | 1      | Prefiltered specular env cubemap | `gfx::IblEnvironment` |
 | 8       | COMBINED_IMAGE_SAMPLER        | 1      | BRDF integration LUT (2D) | `gfx::IblEnvironment` |
 | 9       | STORAGE_BUFFER                | 1      | Joint palettes (skin) | `SkinSystem` |
-| 10      | COMBINED_IMAGE_SAMPLER        | 1      | Directional shadow map (`sampler2DShadow`) | `gfx::ShadowMap`; compare, reverse-Z |
+| 10      | COMBINED_IMAGE_SAMPLER        | 1      | Directional CSM (`sampler2DArrayShadow`) | `gfx::ShadowMap` 3 layers; silhouette extra planes; reverse-Z |
 | 11      | COMBINED_IMAGE_SAMPLER        | 10000 (variable) | Bindless textures | `gfx::TextureManager`; **must** be last binding |
 
 These are written once at scene load (after `update_buffers` + `toggle` + `bind_descriptor`). Shaders will access via the indices stored in the instance/material data.

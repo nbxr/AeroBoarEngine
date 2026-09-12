@@ -137,7 +137,8 @@ class Engine {
     void bind_frame_lighting_to_all_sets();
 
     // Write active lights + constants into the mapped buffers for one frame slot.
-    void write_frame_lighting(uint32_t frame_index);
+    void write_frame_lighting(uint32_t frame_index,
+                              const glm::mat4* view_proj = nullptr);
 
     bool init_pipeline_layout();
     bool init_graphics_pipeline();

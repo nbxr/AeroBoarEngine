@@ -69,7 +69,7 @@ Baked at engine init:
 ## 3. Known limitations (current)
 
 - Fixed light count (`MAX_LIGHTS = 8`); shade loops every light. No tiled/clustered many-lights yet.
-- Shadows: **one directional** light-space map (`gfx::ShadowMap`), sampled in forward PBR. No point cubes, spot atlas, or CSM yet.
+- Shadows: directional **CSM** (`ShadowMap` 2D array) + **silhouette-plane receiver culling** (Seb Aaltonen / DOTS-style). No point cubes or spot atlas yet.
 - Lights live as a flat list on `Renderer`, not yet first-class GameObject components.
 - HDR bake is CPU-side at init (not runtime hot-swap without re-init).
 
@@ -79,21 +79,57 @@ Baked at engine init:
 
 1. **Investigate Tiled Clustered Forward (TCF) for mobile / Quest lighting** (not started).  
    Today `pbr.frag` loops up to `MAX_LIGHTS` (8) per pixel. TCF (tiled + clustered / Forward+ style light lists: 2D tiles × depth bins, compute cull, shade only local lights) is the candidate to raise light counts without a fat G-buffer. **Why it matters on Adreno 740:** TBDR wants lighting in the same tile/subpass; extra deferred attachments and full-screen DRAM round-trips are expensive. Any TCF design must stay GMEM-friendly (compute light lists outside the shade RP, small per-tile lists, no extra stored G-buffer). Scope before implementing: binning resolution, reverse-Z Z-bins, stereo/multiview, transparents/WBOIT, and whether 8 lights is enough until VR chess needs more.  
-2. Shadow phase 2: CSM (cyclops / union frustum for stereo — never per-eye maps), spot atlas, optional contact hardening  
+2. **Directional shadows** — camera fit + silhouette caster cull + 3 cascades (see §4.1). Spot atlas later. No contact hardening / PCSS until profiled.  
 3. Runtime IBL hot-reload / higher-res prefilter when needed  
 
 ---
 
-## 4.1 Directional shadows (MVP, landed)
+## 4.1 Directional shadows
 
-Light-space ortho map around the scene AABB (framing sphere), texel-snapped. **One map for the whole frame** — VR later samples it from both eyes.
+Light-space reverse-Z ortho, texel-snapped. **Shared by both eyes later** (cyclops / union frustum — never per-eye maps).
 
-- First enabled directional (KHR or `globalLight`) casts. Other lights unshadowed. IBL unshadowed. Blend/transmission do not **cast** (same discard as Hi-Z).
-- Frame: skin → light-frustum GPU cull (opaque) → shadow depth RP → camera cull (overwrites instances) → shade.
-- Bindings: `10` `sampler2DShadow`, textures moved to `11`. `FrameConstants.shadowViewProj` + `shadowParams` (texel, enabled, light index, bias).
-- Reverse-Z render (`GREATER`); sample compare `GREATER_OR_EQUAL`; clamp-to-border 0 (far). **8-tap Vogel PCF** (~1.25 texels) for silhouette AA; map fitted to scene AABB.
+- First enabled directional (KHR or `globalLight`) casts. Other lights unshadowed. IBL unshadowed. Blend/transmission do not **cast**.
+- Frame per cascade: GPU instance cull (opaque, **whole-mesh**) → depth into array layer → then camera cull overwrites instances for shade.
+- Binding 10: `sampler2DArrayShadow`. `FrameConstants`: `shadowViewProj[3]`, `shadowSplits`, `shadowParams`, `cameraForward`.
+- Compare `GREATER_OR_EQUAL`; clamp-to-border 0. **8-tap Vogel PCF**. Skip when `NdotL <= 0` or sample off-map.
 - Config: `"shadows": { "enabled", "resolution" (2048 desktop / 1024 Adreno cap), "bias" }`.
-- Do **not** add a full-screen shadow mask pass (GMEM).  
+- Do **not** add a full-screen shadow mask pass (GMEM).
+
+### Phase 1 (landed) — camera-fitted map
+
+Do **not** fit to the whole scene AABB.
+
+1. World corners of the **padded camera frustum** (or cascade slice).
+2. **Extrude toward the light**, clip to scene AABB.
+3. `fit_view_proj` → ortho **rectangle** (the map). GPU cull uses those 6 planes so casters outside the map are dropped.
+
+### Phase 1b (landed) — silhouette receiver culling (Aaltonen)
+
+The ortho rectangle still contains casters that cannot hit any **receiver**. Seb Aaltonen / Unity DOTS:
+
+1. Cascade (or full camera) **cut-pyramid** = receiver volume.
+2. Drop front faces; 2D convex hull of the 8 corners as seen along `to_light`.
+3. Each hull edge + light direction → extra clip plane (`GpuCulling` `extra_planes[8]`).
+4. Shadow `cull_frustum` tests instance AABBs against ortho **and** these planes.
+
+Looking along the light (degenerate hull): extra count = 0, ortho-only fallback.
+
+### Phase 2 (landed) — three cascades
+
+Same fit + silhouette **per camera-depth split**.
+
+| | Desktop | Quest cap |
+|--|---------|-----------|
+| Cascades | 3 | 3 |
+| Size | `texture2DArray`, config resolution (Adreno cap 1024) | same cap |
+| Splits | practical λ = 0.7, view-space distance along camera forward | same |
+| Stereo later | one cyclops / union frustum | same |
+
+Cascades are **nested** (0..s0, 0..s1, 0..far) so a near caster (Barbarian) still rasterizes into farther maps; disjoint slices cut umbras at the split. `pbr.frag` picks by view-depth and **blends** in an 18% band. Silhouette planes use the same nested pyramid.
+
+### Phase 3 (later)
+
+Static far-cascade cache (CascadeBake). Four cascades / PCSS / SDSM / extra mask: not until profiled. 
 
 ---
 

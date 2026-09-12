@@ -29,7 +29,7 @@ Update this file when adding loader, material, or animation support.
 | Core animations (`translation` / `rotation` / `scale`) | **Yes** | `AnimationSystem` |
 | Core morph weights path (`weights`) | **Yes** | CPU morph — `MorphSystem` |
 | Core skins (`JOINTS_0` / `WEIGHTS_0`, IBM) | **Yes** | `SkinSystem` + VS skin |
-| `KHR_lights_punctual` | **Partial** | Load + world xform + shade; **one directional shadow map** (no point cubes / spot atlas yet) |
+| `KHR_lights_punctual` | **Partial** | Load + world xform + shade; **directional CSM** (3 cascades, silhouette caster cull — `lighting-implementation.md` §4.1). No point cubes / spot atlas yet |
 | `alphaMode` OPAQUE / MASK / BLEND | **Yes (MVP)** | Dual pipelines: opaque depth-write on; BLEND/transmission depth-write off. No transparent sort |
 | Non-indexed primitives | **Yes** | Synthetic indices (e.g. Fox) |
 | Missing NORMAL / TEXCOORD | **Yes** | Defaults + optional face normals |

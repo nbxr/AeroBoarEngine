@@ -368,7 +368,8 @@ void gfx::Engine::configure_shadows(uint32_t& out_resolution) {
     out_resolution = std::min(out_resolution, 1024u);
 #endif
     LOG_INFO("[Shadow] enabled=" << renderer.shadow_map.enabled
-             << " res=" << out_resolution << " bias=" << renderer.shadow_map.bias);
+             << " res=" << out_resolution << "x3 CSM bias="
+             << renderer.shadow_map.bias);
 }
 
 void gfx::Engine::configure_occlusion_cull() {

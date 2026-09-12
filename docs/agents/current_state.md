@@ -80,7 +80,7 @@ Desktop foundation is solid. The engine loads glTF scenes (multi-material, hiera
   - Prefiltered GGX cubemap (32², ~4 mips) → binding 7 `samplerCube`
   - BRDF integration LUT (128²) → binding 8 `sampler2D`
   - Split-sum specular in `pbr.frag` when IBL is ready
-  Spot packing complete (pos + emission dir + cos cones). Dynamic lights via per-frame upload + `Engine::set_light` / `refresh_lights_from_transforms`. Optional HDR equirect IBL (`environmentHdr` in configuration.json). **Directional shadows** (`ShadowMap`, one map, PCF). Still deferred: **TCF / clustered many-lights** (investigate for Quest — `lighting-implementation.md` §4), CSM / spot atlas.
+  Spot packing complete (pos + emission dir + cos cones). Dynamic lights via per-frame upload + `Engine::set_light` / `refresh_lights_from_transforms`. Optional HDR equirect IBL (`environmentHdr` in configuration.json). **Directional shadows** (`ShadowMap` 2D array, 3 cascades, PCF, camera-fitted volume + **silhouette-plane receiver culling**). Still deferred: TCF / clustered many-lights (investigate), spot atlas.
 - **GPU frustum (always) + optional conservative Hi-Z** (`occlusionCull`, default **false**; **off on Adreno**). RG min/max pyramid — `visibility-lod-plan.md`.
 - **Load-time meshoptimizer:** weld + vertex-cache + overdraw + vertex-fetch + **meshlets** (64/126). GPU **meshlet cone/frustum cull** after instance cull (`cull_meshlets.comp`, indexed MDI count). Skin/morph whole-mesh. Config `"optimizeMeshes"` / `"meshletCull"` (default true). Impostors / skybox still **not implemented**.
 - **GPU frustum + same-frame Hi-Z + opaque/transparent shade (landed)**:
@@ -144,10 +144,12 @@ Desktop foundation is solid. The engine loads glTF scenes (multi-material, hiera
 - [done] Tracy client in CMake (`AERO_TRACY` / `src/core/Profiler.h`); not instrumented yet
 - [done] Overlay text (`HudTextPass`, Screen + View); frame-stats HUD (busy/wait, EMA, auto units, F4 toggle). Tracy zones / VR HUD later.
 - [done] Directional shadow map (`gfx::ShadowMap`, light-space ortho, shared-eye). CSM / cubes / spots later.
+- [done] Shadow Phase 1: camera-frustum volume extruded toward the light, clipped to scene AABB; PCF skip when NdotL≤0 / off-map.
+- [done] Shadow silhouette receiver culling (extra light-aligned clip planes) + 3-cascade `texture2DArray` (`lighting-implementation.md` §4.1).
 - [done] Load-time meshoptimizer (weld / cache / overdraw / fetch) + meshlets (64/126) + GPU cone/frustum cull. Skin/morph whole-mesh fallback.
 - [done] Reverted post-sample foot plant / hips Y clamp (was splitting body vs legs). Next: author in-place / scaled hip translations, or IK.
 - [done] Engine + Blender addons generalized: no scene-name hardcoding; `CameraRig` defaults human-scale; extras/KHR data-driven
-- **Next immediate:** locomotion polish (hysteresis / jump clips) or VR path. Tracy zones when we start measuring.
+- **Next immediate:** locomotion polish or VR path. Tracy zones when we start measuring. Shadow far-cascade cache later.
 - **Investigate (lighting / Quest):** Tiled Clustered Forward (**TCF**) instead of looping all lights in the forward shader — `lighting-implementation.md` §4. Do not start this until scoped; Adreno TBDR / GMEM constraints apply.
 - **Then:** ECS Phase 4 events/timers or Jolt sensors; GameObject→Entity render migration
 - **When cameras are cleaned up:** reopen captured look-rail (`desktop-inputs.md`); do not spend an input-only pass before that

@@ -552,7 +552,8 @@ void GpuCulling::record(VkCommandBuffer cmd, uint32_t frame_index,
                         const glm::mat4& view_proj, bool enable_hzb, uint32_t hzb_width,
                         uint32_t hzb_height, uint32_t hzb_mips, float hzb_depth_bias,
                         CullEmitFilter emit_filter, const glm::vec3& camera_world,
-                        bool cone_cull, bool expand_meshlets) {
+                        bool cone_cull, bool expand_meshlets,
+                        const glm::vec4* extra_planes, uint32_t extra_plane_count) {
     if (!ready_ || frame_index >= kMaxFrames)
         return;
 
@@ -600,7 +601,13 @@ void GpuCulling::record(VkCommandBuffer cmd, uint32_t frame_index,
     g.hzb_info = glm::vec4(float(hzb_width), float(hzb_height), bias, 0.0f);
     g.emit_filter = static_cast<uint32_t>(emit_filter);
     g.instance_base_offset = inst_offset;
-    g.pad1 = g.pad2 = 0;
+    g.extra_plane_count = 0;
+    g.pad2 = 0;
+    if (extra_planes && extra_plane_count > 0) {
+        g.extra_plane_count = std::min(extra_plane_count, 8u);
+        for (uint32_t i = 0; i < g.extra_plane_count; ++i)
+            g.extra_planes[i] = extra_planes[i];
+    }
     memcpy(cull_globals_[frame_index][pass].mapped_data, &g, sizeof(g));
 
     // Host write of globals → compute/transfer.
