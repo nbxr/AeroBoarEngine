@@ -281,6 +281,56 @@ set(FETCHCONTENT_QUIET OFF)
 # Fetch and make dependencies available
 FetchContent_MakeAvailable(VulkanMemoryAllocator vk-bootstrap tinygltf glfw glm nlohmann_json JoltPhysics tracy meshoptimizer)
 
+# 10. Zstandard. Built once as an optimized static lib (/O2, no /RTC1)
+# even for the engine's Debug config. Debug /Od inflate of the decoded
+# RGBA payload is too slow for the scene-load budget. The engine links
+# this one library in every configuration.
+include(ExternalProject)
+set(AERO_ZSTD_INSTALL "${CMAKE_BINARY_DIR}/aero-zstd")
+if(MSVC)
+    set(AERO_ZSTD_RELEASE_C "/MDd /O2 /Ob2 /DNDEBUG")
+    set(AERO_ZSTD_RELEASE_CXX "/MDd /O2 /Ob2 /DNDEBUG")
+    set(AERO_ZSTD_LIB "${AERO_ZSTD_INSTALL}/lib/zstd_static.lib")
+else()
+    set(AERO_ZSTD_RELEASE_C "-O3 -DNDEBUG -fPIC")
+    set(AERO_ZSTD_RELEASE_CXX "-O3 -DNDEBUG -fPIC")
+    set(AERO_ZSTD_LIB "${AERO_ZSTD_INSTALL}/lib/libzstd.a")
+endif()
+ExternalProject_Add(aero_zstd_build
+    GIT_REPOSITORY https://github.com/facebook/zstd.git
+    GIT_TAG v1.5.7
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR build/cmake
+    INSTALL_DIR "${AERO_ZSTD_INSTALL}"
+    UPDATE_COMMAND ""
+    CMAKE_ARGS
+        -DCMAKE_INSTALL_PREFIX=${AERO_ZSTD_INSTALL}
+        -DCMAKE_BUILD_TYPE=Release
+        "-DCMAKE_C_FLAGS_RELEASE=${AERO_ZSTD_RELEASE_C}"
+        "-DCMAKE_CXX_FLAGS_RELEASE=${AERO_ZSTD_RELEASE_CXX}"
+        -DZSTD_BUILD_SHARED=OFF
+        -DZSTD_BUILD_STATIC=ON
+        -DZSTD_BUILD_PROGRAMS=OFF
+        -DZSTD_BUILD_TESTS=OFF
+        -DZSTD_BUILD_CONTRIB=OFF
+        -DZSTD_LEGACY_SUPPORT=OFF
+        -DZSTD_MULTITHREAD_SUPPORT=OFF
+    BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --config Release --target libzstd_static
+    INSTALL_COMMAND ${CMAKE_COMMAND} --install <BINARY_DIR> --config Release
+    BUILD_BYPRODUCTS "${AERO_ZSTD_LIB}"
+)
+file(MAKE_DIRECTORY "${AERO_ZSTD_INSTALL}/include")
+add_library(aero_zstd STATIC IMPORTED GLOBAL)
+add_dependencies(aero_zstd aero_zstd_build)
+set_target_properties(aero_zstd PROPERTIES
+    IMPORTED_LOCATION "${AERO_ZSTD_LIB}"
+    IMPORTED_LOCATION_DEBUG "${AERO_ZSTD_LIB}"
+    IMPORTED_LOCATION_RELEASE "${AERO_ZSTD_LIB}"
+    IMPORTED_LOCATION_RELWITHDEBINFO "${AERO_ZSTD_LIB}"
+    IMPORTED_LOCATION_MINSIZEREL "${AERO_ZSTD_LIB}"
+    INTERFACE_INCLUDE_DIRECTORIES "${AERO_ZSTD_INSTALL}/include"
+)
+
 # Quest / Adreno: skip extra-pass Hi-Z (GMEM). Desktop can enable via config.
 option(AERO_TARGET_ADRENO
     "Adreno/Quest target: force occlusionCull off (no extra depth prepass)"
@@ -335,11 +385,13 @@ add_executable(Aero_Boar_Engine
     src/gfx/Engine.InitializePasses.cpp
     src/gfx/Engine.InitializePipeline.cpp
     src/gfx/Engine.InitializeScene.cpp
+    src/gfx/Engine.NativeScene.cpp
     src/gfx/Engine.Physics.cpp
     src/gfx/Engine.Render.cpp
     src/gfx/DebugLinePass.cpp
     src/gfx/HudTextPass.cpp
     src/gfx/ShadowMap.cpp
+    src/gfx/ShadowCasterVolume.cpp
     src/gfx/GpuTimestamps.cpp
     src/gfx/TransparentPass.cpp
     src/physics/PhysicsWorld.cpp
@@ -347,6 +399,7 @@ add_executable(Aero_Boar_Engine
     src/scene/Morph.cpp
     src/scene/Skin.cpp
     src/scene/GltfLoader.cpp
+    src/scene/NativeScene.cpp
     src/scene/SceneManager.cpp
     src/scene/TransformManager.cpp
     src/scene/Camera.cpp
@@ -365,7 +418,7 @@ add_executable(Aero_Boar_Engine
 # Make sure configuration + (optionally) shaders are available during build.
 # The copy_configuration target has proper DEPENDS on the source json,
 # so editing only the .json will cause the copy step to run.
-add_dependencies(Aero_Boar_Engine copy_configuration)
+add_dependencies(Aero_Boar_Engine copy_configuration aero_zstd_build)
 if(GLSLC_AVAILABLE)
     add_dependencies(Aero_Boar_Engine compile_shaders)
 endif()
@@ -391,6 +444,7 @@ target_link_libraries(Aero_Boar_Engine PRIVATE
     Jolt
     TracyClient
     meshoptimizer
+    aero_zstd
 )
 
 if(AERO_TRACY)

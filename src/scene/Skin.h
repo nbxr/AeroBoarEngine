@@ -40,6 +40,10 @@ class SkinSystem {
     uint32_t load_from_gltf(const tinygltf::Model& model,
                             const std::vector<uint32_t>& gltf_node_to_transform);
 
+    // Replace CPU skins and recompute palette offsets. Preserves empty slots
+    // so node.skin indices stay aligned. Does not create GPU buffers.
+    void install(std::vector<Skin> skins);
+
     // Record mesh node transform for inv(meshWorld) skinning (first writer wins).
     void set_mesh_transform(uint32_t skin_index, uint32_t mesh_transform_index);
 

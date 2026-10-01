@@ -55,7 +55,7 @@ void gfx::Engine::poll_display_composition() {
         dwm_composition_known_ = true;
         dwm_composition_on_ = on;
         if (!on) {
-            LOG_INFO("[Vulkan] DWM composition is OFF (typical on RDP). "
+            LOG_VERBOSE("[Vulkan] DWM composition is OFF (typical on RDP). "
                      "Preferring FIFO present.");
         }
         return;
@@ -63,7 +63,7 @@ void gfx::Engine::poll_display_composition() {
     if (on == dwm_composition_on_)
         return;
     dwm_composition_on_ = on;
-    LOG_INFO("[Vulkan] DWM composition " << (on ? "restored" : "disabled")
+    LOG_VERBOSE("[Vulkan] DWM composition " << (on ? "restored" : "disabled")
              << " — recreating swapchain");
     if (!renderer.vk.device_lost)
         recreate_swapchain();

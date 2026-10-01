@@ -31,7 +31,8 @@ bool SceneManager::initialize(VkDevice device, VmaAllocator allocator,
 
 uint32_t SceneManager::create_game_object(uint32_t root_transform_index,
                                           uint32_t gltf_node_index,
-                                          uint32_t skin_index) {
+                                          uint32_t skin_index,
+                                          std::string name) {
     std::scoped_lock lock(instance_mutex_);
     if (!transforms_.is_alive(root_transform_index))
         return ~0u;
@@ -42,6 +43,7 @@ uint32_t SceneManager::create_game_object(uint32_t root_transform_index,
     go.first_render_mesh = ~0u;
     go.render_mesh_count = 0;
     go.gltf_node_index = gltf_node_index;
+    go.name = std::move(name);
 
     const uint32_t id = static_cast<uint32_t>(game_objects_.size());
     game_objects_.push_back(go);

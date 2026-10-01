@@ -60,7 +60,7 @@ void gfx::Engine::configure_kill_floor() {
     }
 
     if (!kill_floor_enabled_) {
-        LOG_INFO("[Physics] kill floor disabled");
+        LOG_VERBOSE("[Physics] kill floor disabled");
         return;
     }
 
@@ -73,7 +73,7 @@ void gfx::Engine::configure_kill_floor() {
         kill_floor_y_ = center.y - radius - margin;
     }
 
-    LOG_INFO("[Physics] kill floor ON at y=" << kill_floor_y_
+    LOG_VERBOSE("[Physics] kill floor ON at y=" << kill_floor_y_
              << (have_explicit_y ? " (config)" : " (auto scene bounds + margin)")
              << " margin=" << margin);
 }
@@ -115,7 +115,7 @@ void gfx::Engine::process_kill_floor() {
 
     if (killed > 0) {
         xforms.propagate_if_dirty();
-        LOG_INFO("[Physics] kill floor removed " << killed
+        LOG_VERBOSE("[Physics] kill floor removed " << killed
                  << " dynamic body(ies) (y < " << kill_floor_y_ << ")");
     }
 }
@@ -150,6 +150,7 @@ bool gfx::Engine::rebuild_draw_batches() {
         info.vertex_offset = static_cast<int32_t>(
             renderer.mesh_manager.get_primitive_vertex_offset(mesh_idx));
         info.render_mesh_ids = std::move(by_mesh[mesh_idx]);
+        info.index16 = renderer.mesh_manager.primitive_index16(mesh_idx);
         const MeshData* md = renderer.mesh_manager.cpu_mesh(mesh_idx);
         if (md && md->allow_meshlet_cull && !md->meshlets.empty()) {
             info.meshlet_offset = static_cast<uint32_t>(scene_meshlets.size());
@@ -194,7 +195,7 @@ bool gfx::Engine::rebuild_draw_batches() {
         (1u << Renderer::MAX_FRAMES_IN_FLIGHT) - 1u;
     renderer.uploaded_world_serial = {};
 
-    LOG_INFO("[Draw] GPU cull ready: " << n_rm << " renderMeshes / "
+    LOG_VERBOSE("[Draw] GPU cull ready: " << n_rm << " renderMeshes / "
              << renderer.scene_manager.game_object_count() << " gameObjects / "
              << renderer.mesh_draw_infos.size() << " batches");
     return true;
@@ -866,7 +867,7 @@ bool gfx::Engine::spawn_scene_physics(const tinygltf::Model& model) {
                         body = physics.create_convex_hull(hull);
                         if (motion == physics::MotionType::Kinematic &&
                             (player_xforms.count(xform) || under_player(xform))) {
-                            LOG_INFO("[Physics] player hull node="
+                            LOG_VERBOSE("[Physics] player hull node="
                                      << ni << " worldScale=(" << scl.x << ", "
                                      << scl.y << ", " << scl.z << ") pts="
                                      << hull.points.size());
@@ -891,10 +892,10 @@ bool gfx::Engine::spawn_scene_physics(const tinygltf::Model& model) {
     const uint32_t n_bone = spawn_accumulated_bone_hulls(physics, xforms, bone_hulls);
     n_kinematic += n_bone;
     if (n_bone > 0) {
-        LOG_INFO("[Physics] skinned bone hulls=" << n_bone << " (kinematic, follow joints)");
+        LOG_VERBOSE("[Physics] skinned bone hulls=" << n_bone << " (kinematic, follow joints)");
     }
 
-    LOG_INFO("[Physics] KHR_physics_rigid_bodies: static=" << n_static
+    LOG_VERBOSE("[Physics] KHR_physics_rigid_bodies: static=" << n_static
              << " dynamic=" << n_dynamic << " kinematic=" << n_kinematic
              << " failed=" << n_fail
              << " total_bodies=" << physics.body_count()

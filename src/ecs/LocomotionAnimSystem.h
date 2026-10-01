@@ -1,5 +1,8 @@
 #pragma once
 
+#include <string>
+#include <vector>
+
 namespace tinygltf {
 class Model;
 }
@@ -17,6 +20,8 @@ class World;
 // so gameplay owns XZ. Do not edit hips/feet after sampling (breaks the clip).
 void bind_player_animation_masks(World& world, scene::SceneManager& scene,
                                  const tinygltf::Model& model);
+void bind_player_animation_masks(World& world, scene::SceneManager& scene,
+                                 const std::vector<std::string>& node_names);
 
 // Resolve clip names → indices and play idle (call once after clips load).
 void locomotion_anim_bind_clips(World& world, scene::AnimationSystem& anims);

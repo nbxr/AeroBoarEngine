@@ -162,7 +162,7 @@ bool DebugLinePass::create(VkDevice device, VmaAllocator allocator,
         return false;
     }
 
-    LOG_INFO("[DebugLine] physics debug line pipeline ready");
+    LOG_VERBOSE("[DebugLine] physics debug line pipeline ready");
     return true;
 }
 

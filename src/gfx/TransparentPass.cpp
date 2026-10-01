@@ -124,7 +124,7 @@ bool TransparentPass::create(VkDevice device, VmaAllocator allocator,
         return false;
 
     ready_ = true;
-    LOG_INFO("[Transparent] CPU sort + weighted blended OIT ready");
+    LOG_VERBOSE("[Transparent] CPU sort + weighted blended OIT ready");
     return true;
 }
 
@@ -700,6 +700,7 @@ void TransparentPass::collect_and_sort(const scene::SceneManager& scene,
         d.index_offset = meshes.get_primitive_index_offset(rm.mesh_index);
         d.vertex_offset =
             static_cast<int32_t>(meshes.get_primitive_vertex_offset(rm.mesh_index));
+        d.index16 = meshes.primitive_index16(rm.mesh_index);
         if (d.index_count == 0)
             continue;
         items_.push_back(d);
@@ -747,8 +748,6 @@ void TransparentPass::record_sorted_draws(VkCommandBuffer cmd, Renderer& rendere
     scissor.extent = vk.swap_chain_extent;
     vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-    auto& index_buf = renderer.mesh_manager.get_render_index_buffer();
-    vkCmdBindIndexBuffer(cmd, index_buf.buffer, 0, VK_INDEX_TYPE_UINT32);
     auto& vertex_buf = renderer.mesh_manager.get_render_vertex_buffer();
     VkDeviceSize vbo_off = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &vertex_buf.buffer, &vbo_off);
@@ -761,8 +760,20 @@ void TransparentPass::record_sorted_draws(VkCommandBuffer cmd, Renderer& rendere
 
     const uint32_t cap = renderer.gpu_culling.instance_slot_count();
     const uint32_t n = std::min(static_cast<uint32_t>(items_.size()), cap);
+    int bound = -1;
     for (uint32_t i = 0; i < n; ++i) {
         const auto& d = items_[i];
+        const int want = d.index16 ? 1 : 0;
+        if (want != bound) {
+            if (d.index16) {
+                auto& ib = renderer.mesh_manager.get_render_index16_buffer();
+                vkCmdBindIndexBuffer(cmd, ib.buffer, 0, VK_INDEX_TYPE_UINT16);
+            } else {
+                auto& ib = renderer.mesh_manager.get_render_index_buffer();
+                vkCmdBindIndexBuffer(cmd, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
+            }
+            bound = want;
+        }
         vkCmdDrawIndexed(cmd, d.index_count, 1, d.index_offset, d.vertex_offset,
                          instance_base + i);
     }
@@ -823,8 +834,6 @@ void TransparentPass::record_wboit(VkCommandBuffer cmd, Renderer& renderer,
         VkRect2D sc{};
         sc.extent = vk.swap_chain_extent;
         vkCmdSetScissor(cmd, 0, 1, &sc);
-        auto& index_buf = renderer.mesh_manager.get_render_index_buffer();
-        vkCmdBindIndexBuffer(cmd, index_buf.buffer, 0, VK_INDEX_TYPE_UINT32);
         auto& vertex_buf = renderer.mesh_manager.get_render_vertex_buffer();
         VkDeviceSize vbo_off = 0;
         vkCmdBindVertexBuffers(cmd, 0, 1, &vertex_buf.buffer, &vbo_off);
@@ -833,7 +842,18 @@ void TransparentPass::record_wboit(VkCommandBuffer cmd, Renderer& renderer,
         vkCmdPushConstants(cmd, vk.pipeline_layout,
                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                            sizeof(PbrPush), &push);
-        renderer.gpu_culling.cmd_draw_indexed(cmd, frame_index, CullPass::Transparent);
+        auto& ib16 = renderer.mesh_manager.get_render_index16_buffer();
+        if (ib16.buffer != VK_NULL_HANDLE) {
+            vkCmdBindIndexBuffer(cmd, ib16.buffer, 0, VK_INDEX_TYPE_UINT16);
+            renderer.gpu_culling.cmd_draw_indexed(cmd, frame_index,
+                                                  CullPass::Transparent, true);
+        }
+        auto& ib32 = renderer.mesh_manager.get_render_index_buffer();
+        if (ib32.buffer != VK_NULL_HANDLE) {
+            vkCmdBindIndexBuffer(cmd, ib32.buffer, 0, VK_INDEX_TYPE_UINT32);
+            renderer.gpu_culling.cmd_draw_indexed(cmd, frame_index,
+                                                  CullPass::Transparent, false);
+        }
     } else {
         const uint32_t base = renderer.gpu_culling.instance_slot_count();
         record_sorted_draws(cmd, renderer, gather_pipeline_, view_proj, base);

@@ -4,7 +4,9 @@
 #define GLM_FORCE_RADIANS
 
 #include "core/AABB.h"
+#include "gfx/AllocatedBuffer.h"
 #include "gfx/AllocatedImage.h"
+#include "gfx/ShadowCasterVolume.h"
 #include <cstdint>
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
@@ -13,7 +15,10 @@
 namespace gfx {
 
 static constexpr uint32_t kShadowCascades = 3;
-static constexpr uint32_t kShadowSilhouettePlanes = 8;
+// Must match pbr.frag sample_shadow blend band (receivers near a split sample
+// both maps, so adjacent cut pyramids overlap by this fraction of the split).
+static constexpr float kShadowSplitBlend = 0.18f;
+static constexpr float kShadowSplitBlendMin = 0.35f;
 
 // Directional CSM (texture2D array). Written then sampled in the same command
 // buffer (not per-FIF, not per-eye). VR later: both eyes sample this.
@@ -31,26 +36,34 @@ class ShadowMap {
                                           const glm::vec3& aabb_min,
                                           const glm::vec3& aabb_max) const;
 
-    static bool frustum_corners(const glm::mat4& view_proj, glm::vec3 out[8]);
-    static void slice_frustum_corners(const glm::vec3 full[8], float t0, float t1,
-                                      glm::vec3 out[8]);
-    [[nodiscard]] static core::AABB caster_bounds_from_corners(
-        const glm::vec3 corners[8], const glm::vec3& to_light,
-        const glm::vec3& scene_min, const glm::vec3& scene_max);
-    // Light-aligned clip planes from receiver-pyramid silhouette (Aaltonen).
-    // Returns 0 if the hull is degenerate (looking along the light).
-    static uint32_t silhouette_planes(const glm::vec3 corners[8],
-                                      const glm::vec3& to_light, glm::vec4* out,
-                                      uint32_t max_out);
+    // Light-space AABB of the receiver pyramid extruded toward the light
+    // (caster volume). `to_light` = NdotL. Epsilon snap only.
+    [[nodiscard]] glm::mat4 fit_view_proj_from_corners(
+        const glm::vec3& to_light, const glm::vec3 corners[8],
+        const glm::vec3& scene_min, const glm::vec3& scene_max) const;
 
-    [[nodiscard]] static core::AABB camera_caster_bounds(
-        const glm::mat4& view_proj, const glm::vec3& to_light,
-        const glm::vec3& scene_min, const glm::vec3& scene_max);
+    static bool frustum_corners(const glm::mat4& view_proj, glm::vec3 out[8]);
 
     void prepare(VkCommandBuffer cmd, bool from_undefined = false);
     void begin(VkCommandBuffer cmd, uint32_t cascade);
     void end(VkCommandBuffer cmd);
     void finish(VkCommandBuffer cmd);
+
+    // After finish(): copy one depth texel (cascade layer) for CPU read after fence.
+    void copy_texel(VkCommandBuffer cmd, uint32_t layer, uint32_t x, uint32_t y,
+                    uint32_t buffer_offset = 0);
+    void copy_patch(VkCommandBuffer cmd, uint32_t layer, uint32_t x, uint32_t y,
+                    uint32_t n);
+    void copy_layer(VkCommandBuffer cmd, uint32_t layer);
+    [[nodiscard]] float read_copied_texel() const;
+    void read_copied_3x3(float out[9], uint32_t float_offset = 0) const;
+    void read_patch_minmax(uint32_t n, float& mn, float& mx, uint32_t& n_hi,
+                           float hi_lo) const;
+    void read_patch_minmax(uint32_t n, float& mn, float& mx, uint32_t& n_hi,
+                           float hi_lo, uint32_t* argmax_x, uint32_t* argmax_y) const;
+    [[nodiscard]] const float* texel_readback_data() const {
+        return static_cast<const float*>(texel_readback_.mapped_data);
+    }
 
     [[nodiscard]] bool is_ready() const { return framebuffer_[0] != VK_NULL_HANDLE; }
     [[nodiscard]] uint32_t resolution() const { return resolution_; }
@@ -62,9 +75,14 @@ class ShadowMap {
 
     bool enabled = true;
     bool last_on = false;
+    bool silhouette = true;
+    bool depth_bias_enable = true;
     float bias = 0.002f;
     glm::mat4 last_view_proj[kShadowCascades]{
         glm::mat4(1.0f), glm::mat4(1.0f), glm::mat4(1.0f)};
+    glm::mat4 last_receiver_vp[kShadowCascades]{
+        glm::mat4(1.0f), glm::mat4(1.0f), glm::mat4(1.0f)};
+    CasterVolume last_caster[kShadowCascades]{};
     glm::vec4 last_splits{0.0f};
     glm::vec3 last_to_light{0.0f, 1.0f, 0.0f};
     uint32_t last_cascade_count = kShadowCascades;
@@ -75,10 +93,15 @@ class ShadowMap {
                       VkImageViewType view_type, bool sampled) const;
     bool one_shot_clear(VkDevice device, VkQueue queue, VkCommandPool pool);
 
+    bool ensure_texel_buffer(VkDeviceSize bytes);
+
     uint32_t resolution_ = 0;
     VkFormat format_ = VK_FORMAT_UNDEFINED;
+    VkDevice texel_device_ = VK_NULL_HANDLE;
     AllocatedImage image_{};
     AllocatedImage dummy_{};
+    AllocatedBuffer texel_readback_{};
+    VmaAllocator texel_allocator_ = VK_NULL_HANDLE;
     VkImageView layer_view_[kShadowCascades]{};
     VkSampler sampler_ = VK_NULL_HANDLE;
     VkRenderPass render_pass_ = VK_NULL_HANDLE;

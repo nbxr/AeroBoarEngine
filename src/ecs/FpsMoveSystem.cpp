@@ -50,7 +50,7 @@ void init_from_camera_and_root(FpsMove& fps, const scene::Camera& camera,
         fps.jump_speed = std::max(2.0f, camera.movement_speed * 0.85f);
         fps.gravity = std::max(12.0f, fps.jump_speed * 4.0f);
     }
-    LOG_INFO("[FPS] init yaw=" << fps.yaw_deg << " pitch=" << fps.pitch_deg
+    LOG_VERBOSE("[FPS] init yaw=" << fps.yaw_deg << " pitch=" << fps.pitch_deg
              << " ground_y=" << fps.ground_y << " jump=" << fps.jump_speed
              << " walk=" << camera.movement_speed);
 }
@@ -110,7 +110,7 @@ void fps_move_system_update(World& world, const core::InputFrame& frame,
         init_from_camera_and_root(fps, camera, root);
         const glm::vec3 boom =
             rig ? rig->boom_offset : glm::vec3(0.0f, 1.6f, 3.0f);
-        LOG_INFO("[FPS] controller entity=" << player << " xform=" << ti
+        LOG_VERBOSE("[FPS] controller entity=" << player << " xform=" << ti
                  << (third_person ? " third_person" : " first_person")
                  << " root=(" << root.x << ", " << root.y << ", " << root.z
                  << ") boom=(" << boom.x << ", " << boom.y << ", " << boom.z
@@ -134,8 +134,9 @@ void fps_move_system_update(World& world, const core::InputFrame& frame,
     }
 
     // Apply look before movement so W follows the *current* view.
-    camera.set_orientation(
-        orientation_from_yaw_pitch(fps.yaw_deg, fps.pitch_deg));
+    if (!camera.pose_locked)
+        camera.set_orientation(
+            orientation_from_yaw_pitch(fps.yaw_deg, fps.pitch_deg));
 
     // Horizontal basis from yaw (independent of boom look-at / shoulder offset).
     const glm::quat yaw_q =
@@ -246,6 +247,8 @@ void fps_move_system_update(World& world, const core::InputFrame& frame,
     transforms.propagate_if_dirty();
 
     // --- Camera ---
+    if (camera.pose_locked)
+        return;
     if (third_person) {
         glm::vec3 boom = rig->boom_offset;
         if (fps.crouching)

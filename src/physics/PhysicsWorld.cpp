@@ -13,6 +13,7 @@
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Body/BodyLock.h>
+#include <Jolt/Core/StreamWrapper.h>
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/PhysicsSettings.h>
@@ -25,6 +26,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdarg>
+#include <sstream>
 #include <thread>
 #include <vector>
 
@@ -41,7 +43,7 @@ void jolt_trace(const char* fmt, ...) {
     va_start(list, fmt);
     vsnprintf(buffer, sizeof(buffer), fmt, list);
     va_end(list);
-    LOG_INFO("[Jolt] " << buffer);
+    LOG_VERBOSE("[Jolt] " << buffer);
 }
 
 #ifdef JPH_ENABLE_ASSERTS
@@ -230,7 +232,7 @@ bool PhysicsWorld::initialize() {
     impl_->system.SetGravity(Vec3(0.0f, -9.81f, 0.0f));
 
     initialized_ = true;
-    LOG_INFO("[Physics] Jolt PhysicsSystem initialized (maxBodies="
+    LOG_VERBOSE("[Physics] Jolt PhysicsSystem initialized (maxBodies="
              << cMaxBodies << ")");
     return true;
 }
@@ -258,7 +260,7 @@ void PhysicsWorld::shutdown() {
         delete Factory::sInstance;
         Factory::sInstance = nullptr;
     }
-    LOG_INFO("[Physics] shutdown");
+    LOG_VERBOSE("[Physics] shutdown");
 }
 
 BodyHandle PhysicsWorld::add_body_with_shape(void* shape_ref,
@@ -394,7 +396,7 @@ BodyHandle PhysicsWorld::create_convex_hull(const ConvexHullDesc& desc) {
             thinned[static_cast<size_t>(i)] = bp;
         }
         src = &thinned;
-        LOG_INFO("[Physics] ConvexHull support-sampled " << desc.points.size()
+        LOG_VERBOSE("[Physics] ConvexHull support-sampled " << desc.points.size()
                  << " -> " << thinned.size() << " points");
     }
 
@@ -418,7 +420,7 @@ BodyHandle PhysicsWorld::create_convex_hull(const ConvexHullDesc& desc) {
         const glm::vec3 local_half = glm::max(
             glm::max(glm::abs(bmin), glm::abs(bmax)), glm::vec3(1e-3f));
         box.half_extents = local_half;
-        LOG_INFO("[Physics] ConvexHull fallback to origin-centered box half=("
+        LOG_VERBOSE("[Physics] ConvexHull fallback to origin-centered box half=("
                  << local_half.x << "," << local_half.y << "," << local_half.z
                  << ")");
         return create_box(box);
@@ -624,6 +626,103 @@ MotionType PhysicsWorld::get_motion_type(BodyHandle body) const {
     if (!impl_ || body >= impl_->bodies.size())
         return MotionType::Static;
     return impl_->bodies[body].motion;
+}
+
+uint32_t PhysicsWorld::jolt_binary_version() {
+    return JPH_VERSION_ID;
+}
+
+bool PhysicsWorld::export_cooked_bodies(std::vector<CookedBody>& out) {
+    out.clear();
+    if (!impl_)
+        return true;
+
+    const BodyLockInterface& lock_iface = impl_->system.GetBodyLockInterface();
+    for (const Impl::BodyRecord& rec : impl_->bodies) {
+        if (rec.id.IsInvalid()) {
+            LOG_ERROR("[Physics] native export hit an empty body slot");
+            return false;
+        }
+        BodyLockRead lock(lock_iface, rec.id);
+        if (!lock.Succeeded()) {
+            LOG_ERROR("[Physics] native export could not lock a body");
+            return false;
+        }
+        const Body& body = lock.GetBody();
+        const Shape* shape = body.GetShape();
+        if (!shape) {
+            LOG_ERROR("[Physics] native export body has no shape");
+            return false;
+        }
+
+        CookedBody cooked{};
+        const RVec3 p = body.GetPosition();
+        cooked.pose.position =
+            glm::vec3(static_cast<float>(p.GetX()), static_cast<float>(p.GetY()),
+                      static_cast<float>(p.GetZ()));
+        const Quat r = body.GetRotation();
+        cooked.pose.rotation.x = r.GetX();
+        cooked.pose.rotation.y = r.GetY();
+        cooked.pose.rotation.z = r.GetZ();
+        cooked.pose.rotation.w = r.GetW();
+        cooked.pose.motion = rec.motion;
+        cooked.pose.friction = body.GetFriction();
+        cooked.pose.restitution = body.GetRestitution();
+        cooked.pose.transform_index = rec.transform_index;
+        cooked.pose.mass = 0.0f;
+        if (rec.motion == MotionType::Dynamic) {
+            const float inv = body.GetMotionProperties()->GetInverseMassUnchecked();
+            if (inv > 1.0e-12f)
+                cooked.pose.mass = 1.0f / inv;
+        }
+
+        std::stringstream ss(std::ios::out | std::ios::binary);
+        StreamOutWrapper stream(ss);
+        Shape::ShapeToIDMap shape_ids;
+        Shape::MaterialToIDMap material_ids;
+        shape->SaveWithChildren(stream, shape_ids, material_ids);
+        if (stream.IsFailed() || ss.fail()) {
+            LOG_ERROR("[Physics] native export SaveWithChildren failed");
+            return false;
+        }
+        const std::string bytes = ss.str();
+        cooked.shape_bytes.assign(bytes.begin(), bytes.end());
+        if (cooked.shape_bytes.empty()) {
+            LOG_ERROR("[Physics] native export wrote an empty shape");
+            return false;
+        }
+        out.push_back(std::move(cooked));
+    }
+    return true;
+}
+
+bool PhysicsWorld::import_cooked_bodies(const std::vector<CookedBody>& in) {
+    if (!initialized_ || !impl_)
+        return false;
+    for (const CookedBody& cooked : in) {
+        if (cooked.shape_bytes.empty()) {
+            LOG_ERROR("[Physics] native import empty shape");
+            return false;
+        }
+        const std::string bytes(
+            reinterpret_cast<const char*>(cooked.shape_bytes.data()),
+            cooked.shape_bytes.size());
+        std::stringstream ss(bytes, std::ios::in | std::ios::binary);
+        StreamInWrapper stream(ss);
+        Shape::IDToShapeMap shape_ids;
+        Shape::IDToMaterialMap material_ids;
+        Shape::ShapeResult result =
+            Shape::sRestoreWithChildren(stream, shape_ids, material_ids);
+        if (result.HasError()) {
+            LOG_ERROR("[Physics] native import shape failed: "
+                      << result.GetError().c_str());
+            return false;
+        }
+        ShapeRefC shape = result.Get();
+        if (add_body_with_shape(&shape, cooked.pose, "native") == kInvalidBody)
+            return false;
+    }
+    return true;
 }
 
 uint32_t PhysicsWorld::body_count() const {

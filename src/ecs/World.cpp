@@ -58,9 +58,22 @@ Entity World::spawn_default_desktop_player(const CameraRig& rig) {
     camera_rigs.get_or_emplace(e, rig);
     names.get_or_emplace(e, Name{"default_desktop_player"});
     resolve_active_player();
-    LOG_INFO("[ECS] Spawned default free-fly player entity=" << e
+    LOG_VERBOSE("[ECS] Spawned default free-fly player entity=" << e
              << " (active_player=" << active_player_ << ")");
     return e;
+}
+
+void World::restore_roster(uint32_t count, const std::vector<uint8_t>& alive) {
+    clear();
+    if (alive.size() != count)
+        return;
+    alive_.assign(count, false);
+    for (uint32_t i = 0; i < count; ++i) {
+        if (alive[i])
+            alive_[i] = true;
+        else
+            free_list_.push_back(i);
+    }
 }
 
 void World::clear() {

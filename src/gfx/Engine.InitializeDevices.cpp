@@ -54,7 +54,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vulkan_debug_callback(
             if (is_error_or_warn) {
                 LOG_ERROR(summary);
             } else {
-                LOG_INFO(summary);
+                LOG_VERBOSE(summary);
             }
         }
         return VK_FALSE;
@@ -68,7 +68,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vulkan_debug_callback(
         if (is_error_or_warn) {
             LOG_ERROR(summary);
         } else {
-            LOG_INFO(summary);
+            LOG_VERBOSE(summary);
         }
     }
 
@@ -80,7 +80,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vulkan_debug_callback(
     if (is_error_or_warn) {
         LOG_ERROR(full);
     } else {
-        LOG_INFO(full);
+        LOG_VERBOSE(full);
     }
 
     return VK_FALSE; // continue processing; do not suppress the call to driver
@@ -101,7 +101,7 @@ bool gfx::Engine::init_vk_instance(vkb::InstanceBuilder &builder) {
     if (system_info.is_layer_available("VK_LAYER_LUNARG_monitor")) {
         builder.enable_layer("VK_LAYER_LUNARG_monitor");
     } else {
-        std::cout << "Warning: VK_LAYER_LUNARG_monitor not found. FPS counter disabled.\n";
+        LOG_VERBOSE("[Vulkan] VK_LAYER_LUNARG_monitor not found — title FPS disabled");
     }
 
     // === Validation layer + advanced validation features ===
@@ -147,7 +147,7 @@ bool gfx::Engine::init_vk_instance(vkb::InstanceBuilder &builder) {
             // Uncomment for shader printf debugging during hard investigations:
             // builder.add_validation_feature_enable(VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT);
 
-            LOG_INFO("[Vulkan] Validation layer + Synchronization Validation enabled"
+            LOG_VERBOSE("[Vulkan] Validation layer + Synchronization Validation enabled"
                      << (renderer.vk.enable_gpu_assisted_validation ? " + GPU-Assisted Validation" : " (GPU-AV disabled)")
                      << ".  Validation output will also be written to aero_boar.log (flushed).");
         } else {
@@ -161,7 +161,7 @@ bool gfx::Engine::init_vk_instance(vkb::InstanceBuilder &builder) {
     {
         uint32_t glfw_ext_count = 0;
         const char** glfw_exts = glfwGetRequiredInstanceExtensions(&glfw_ext_count);
-        LOG_INFO("[Vulkan] glfwVulkanSupported="
+        LOG_VERBOSE("[Vulkan] glfwVulkanSupported="
                  << (glfwVulkanSupported() ? "yes" : "no")
                  << " glfwRequiredExts=" << glfw_ext_count);
         if (glfw_exts) {
@@ -190,7 +190,7 @@ bool gfx::Engine::init_vk_instance(vkb::InstanceBuilder &builder) {
         auto inst_ret = builder.build();
         if (inst_ret) {
             renderer.vk.instance = inst_ret.value();
-            LOG_INFO("[Vulkan] Instance created");
+            LOG_VERBOSE("[Vulkan] Instance created");
             return true;
         }
 
@@ -426,7 +426,7 @@ bool gfx::Engine::init_swapchain(vkb::Device &dev) {
         renderer.vk.swap_chain_images = images_res.value();
     renderer.vk.swap_chain_image_count = static_cast<uint32_t>(renderer.vk.swap_chain_image_views.size());
 
-    LOG_INFO("[Swapchain] Created with " << renderer.vk.swap_chain_image_count
+    LOG_VERBOSE("[Swapchain] Created with " << renderer.vk.swap_chain_image_count
              << " images (minImageCount request="
              << renderer.MAX_FRAMES_IN_FLIGHT + 1 << ")");
 

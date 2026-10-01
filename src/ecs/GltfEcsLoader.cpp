@@ -149,12 +149,12 @@ uint32_t apply_component_entry(World& world, Entity entity,
             rig.body_yaw_offset_deg +=
                 static_cast<float>(yit->second.GetNumberAsDouble());
         if (rig.third_person) {
-            LOG_INFO("[ECS] player third_person boom=("
+            LOG_VERBOSE("[ECS] player third_person boom=("
                      << rig.boom_offset.x << ", " << rig.boom_offset.y << ", "
                      << rig.boom_offset.z << ") yaw_offset="
                      << rig.body_yaw_offset_deg << " entity=" << entity);
         } else {
-            LOG_INFO("[ECS] player first_person entity=" << entity);
+            LOG_VERBOSE("[ECS] player first_person entity=" << entity);
         }
         return 1;
     }
@@ -207,13 +207,13 @@ uint32_t apply_component_entry(World& world, Entity entity,
         if (fit != obj.end() && fit->second.IsNumber())
             loco.fade = static_cast<float>(fit->second.GetNumberAsDouble());
         world.locomotion_anims.get_or_emplace(entity, loco);
-        LOG_INFO("[ECS] locomotion_anim idle='" << loco.idle_name << "' walk='"
+        LOG_VERBOSE("[ECS] locomotion_anim idle='" << loco.idle_name << "' walk='"
                  << loco.walk_name << "' run='" << loco.run_name
                  << "' fade=" << loco.fade);
         return 1;
     }
 
-    LOG_INFO("[ECS] Unknown ECS_Components_v1 type '" << type << "' (skipped)");
+    LOG_VERBOSE("[ECS] Unknown ECS_Components_v1 type '" << type << "' (skipped)");
     return 0;
 }
 
@@ -378,7 +378,7 @@ uint32_t populate_world_from_gltf(World& world, const tinygltf::Model& model,
         extras_hits += applied;
 
         if (const TransformLink* link = world.transform_links.try_get(e)) {
-            LOG_INFO("[ECS] extras node=" << ni << " '"
+            LOG_VERBOSE("[ECS] extras node=" << ni << " '"
                      << model.nodes[ni].name << "' entity=" << e
                      << " xform=" << link->transform_index
                      << " entries=" << applied);
@@ -391,7 +391,7 @@ uint32_t populate_world_from_gltf(World& world, const tinygltf::Model& model,
 
     world.resolve_active_player();
 
-    LOG_INFO("[ECS] populate_world_from_gltf: game_objects=" << go_count
+    LOG_VERBOSE("[ECS] populate_world_from_gltf: game_objects=" << go_count
              << " ecs_component_entries=" << extras_hits
              << " players=" << world.player_tags.size()
              << " active_player="

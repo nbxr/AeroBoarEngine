@@ -54,7 +54,7 @@ bool GpuTimestamps::create(VkDevice device, VkPhysicalDevice phys) {
     }
     wrote_ = {};
     primed_ = {};
-    LOG_INFO("[GpuTime] timestamp queries ready (period=" << period_ns_ << " ns)");
+    LOG_VERBOSE("[GpuTime] timestamp queries ready (period=" << period_ns_ << " ns)");
     return true;
 }
 
@@ -94,7 +94,7 @@ void GpuTimestamps::init_tracy(VkPhysicalDevice phys, VkDevice device, VkQueue q
     vkFreeCommandBuffers(device, pool, 1, &cmd);
     if (g_tracy_vk) {
         TracyVkContextName(g_tracy_vk, "AeroBoar", 8);
-        LOG_INFO("[Tracy] Vulkan GPU context ready");
+        LOG_VERBOSE("[Tracy] Vulkan GPU context ready");
     } else {
         LOG_INFO("[Tracy] Vulkan GPU context failed");
     }

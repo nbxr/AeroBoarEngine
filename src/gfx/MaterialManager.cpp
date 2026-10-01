@@ -106,6 +106,14 @@ void MaterialManager::shutdown() {
     allocator_ = VK_NULL_HANDLE;
 }
 
+void MaterialManager::clear_cpu() {
+    std::scoped_lock lock(material_mutex_);
+    cpu_materials_.clear();
+    while (!recycle_cache_.empty())
+        recycle_cache_.pop();
+    material_count_ = 0;
+}
+
 void MaterialManager::toggle_buffers() { buffers_.toggle(); }
 
 } // namespace gfx

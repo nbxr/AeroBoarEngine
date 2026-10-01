@@ -58,6 +58,16 @@ class MorphSystem {
     // Associate morph instances with glTF nodes that reference their mesh.
     void bind_nodes(const tinygltf::Model& model);
 
+    // Replace CPU morph state (already in optimized vertex order).
+    void install(std::vector<MorphInstance> instances,
+                 std::vector<uint32_t> node_to_morph);
+    [[nodiscard]] const MorphInstance& instance(uint32_t i) const {
+        return instances_[i];
+    }
+    [[nodiscard]] const std::vector<uint32_t>& node_to_morph() const {
+        return gltf_node_to_morph_;
+    }
+
     [[nodiscard]] uint32_t instance_count() const {
         return static_cast<uint32_t>(instances_.size());
     }

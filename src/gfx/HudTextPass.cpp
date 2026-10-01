@@ -545,7 +545,7 @@ bool HudTextPass::create(VkDevice device, VmaAllocator allocator, VkQueue graphi
         destroy(device, allocator);
         return false;
     }
-    LOG_INFO("[HudText] overlay text ready (8x8 atlas, Screen + View spaces)");
+    LOG_VERBOSE("[HudText] overlay text ready (8x8 atlas, Screen + View spaces)");
     return true;
 }
 

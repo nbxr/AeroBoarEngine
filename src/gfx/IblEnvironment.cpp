@@ -48,7 +48,7 @@ bool load_equirect_hdr(const char* path) {
     g_equirect.h = h;
     g_equirect.rgb.assign(data, data + size_t(w) * size_t(h) * 3u);
     stbi_image_free(data);
-    LOG_INFO("[IBL] Loaded HDR equirect " << w << "x" << h << " from " << path);
+    LOG_VERBOSE("[IBL] Loaded HDR equirect " << w << "x" << h << " from " << path);
     return true;
 }
 
@@ -325,7 +325,7 @@ bool IblEnvironment::initialize(VkDevice device, VmaAllocator allocator,
         ++mip_count;
     }
 
-    LOG_INFO("[IBL] Baking " << (used_hdr_equirect ? "HDR equirect" : "procedural")
+    LOG_VERBOSE("[IBL] Baking " << (used_hdr_equirect ? "HDR equirect" : "procedural")
              << " environment (cube " << kCubeSize << "^2, " << mip_count
              << " mips, BRDF " << kBrdfSize << "^2)...");
 
@@ -600,7 +600,7 @@ bool IblEnvironment::initialize(VkDevice device, VmaAllocator allocator,
     clear_equirect(); // free CPU HDR after bake
 
     ready = true;
-    LOG_INFO("[IBL] Ready (SH L0 rgb ≈ "
+    LOG_VERBOSE("[IBL] Ready (SH L0 rgb ≈ "
              << sh_coefficients[0].r << ", " << sh_coefficients[0].g << ", "
              << sh_coefficients[0].b << ")"
              << (used_hdr_equirect ? " [hdr]" : " [procedural]"));

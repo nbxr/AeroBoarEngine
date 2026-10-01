@@ -70,7 +70,7 @@ bool gfx::TextureManager::initialize(VkDevice device, VmaAllocator allocator,
     sampler_info.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
     if (vkCreateSampler(device, &sampler_info, nullptr, &sampler_handle) !=
         VK_SUCCESS) {
-        std::cerr << "[TextureManager] Failed to create main sampler, creating fallback.\n";
+        LOG_ERROR("[TextureManager] Failed to create main sampler, creating fallback.");
         // Create a minimal valid sampler so we never write VK_NULL_HANDLE into descriptors.
         VkSamplerCreateInfo fb{};
         fb.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -83,7 +83,7 @@ bool gfx::TextureManager::initialize(VkDevice device, VmaAllocator allocator,
         fb.minLod = 0.0f;
         fb.maxLod = 0.0f;
         if (vkCreateSampler(device, &fb, nullptr, &sampler_handle) != VK_SUCCESS) {
-            std::cerr << "[TextureManager] ERROR: even fallback sampler creation failed. Descriptors will be invalid.\n";
+            LOG_ERROR("[TextureManager] even fallback sampler creation failed. Descriptors will be invalid.");
         }
     }
 
@@ -361,6 +361,63 @@ void gfx::TextureManager::remove_texture(const gfx::TextureID texture_id) {
         uploaded_count--;
 }
 
+void gfx::TextureManager::copy_images_for_cache(std::vector<CachedImage>& out) const {
+    std::shared_lock lock(texture_mutex);
+    out.clear();
+    out.reserve(texture_cache.size());
+    for (const TextureInfo& info : texture_cache) {
+        CachedImage img{};
+        img.name = info.name;
+        img.width = info.width;
+        img.height = info.height;
+        img.srgb = (info.format == VK_FORMAT_R8G8B8A8_SRGB) ? 1u : 0u;
+        const size_t expect =
+            static_cast<size_t>(info.width) * static_cast<size_t>(info.height) * 4u;
+        if (!info.cpu_pixels.empty() && info.width > 0 && info.height > 0 &&
+            info.cpu_pixels.size() == expect) {
+            img.rgba = info.cpu_pixels;
+        } else if (!info.filepath.empty()) {
+            int w = 0;
+            int h = 0;
+            int c = 0;
+            uint8_t* px = stbi_load(info.filepath.c_str(), &w, &h, &c, 4);
+            if (px && w > 0 && h > 0) {
+                img.width = static_cast<uint32_t>(w);
+                img.height = static_cast<uint32_t>(h);
+                img.rgba.assign(px, px + static_cast<size_t>(w) * static_cast<size_t>(h) * 4u);
+            }
+            if (px)
+                stbi_image_free(px);
+        }
+        if (img.rgba.empty()) {
+            img.width = 1;
+            img.height = 1;
+            img.rgba = {255, 0, 255, 255};
+            if (img.name.empty())
+                img.name = "cache_magenta";
+        }
+        out.push_back(std::move(img));
+    }
+}
+
+bool gfx::TextureManager::clear_unuploaded() {
+    std::scoped_lock lock(texture_mutex);
+    if (uploaded_count != 0)
+        return false;
+    for (const TextureInfo& info : texture_cache) {
+        if (info.gpu_image.handle != VK_NULL_HANDLE ||
+            info.gpu_image.view != VK_NULL_HANDLE)
+            return false;
+    }
+    texture_cache.clear();
+    texture_lookup.clear();
+    pending_upload.clear();
+    pending_queue_transition.clear();
+    while (!recycle_cache.empty())
+        recycle_cache.pop();
+    return true;
+}
+
 void gfx::TextureManager::upload_textures() {
     std::scoped_lock lock(texture_mutex);
 
@@ -396,7 +453,7 @@ void gfx::TextureManager::upload_textures() {
 
         if (tex_info.width == 0 || tex_info.height == 0 || pixels.empty()) {
             // Should be extremely rare now (load_pixel_data has fallback).
-            std::cerr << "[TextureManager] Texture had invalid size after load; forcing 1x1 placeholder.\n";
+            LOG_ERROR("[TextureManager] Texture had invalid size after load; forcing 1x1 placeholder.");
             pixels = {255, 0, 255, 255};
             tex_info.width = 1;
             tex_info.height = 1;
@@ -432,7 +489,7 @@ void gfx::TextureManager::upload_textures() {
             allocator, &image_info, &alloc_info, &tex_info.gpu_image.handle,
             &tex_info.gpu_image.allocation, &tex_info.gpu_image.info);
         if (img_res != VK_SUCCESS) {
-            std::cerr << "[TextureManager] vmaCreateImage failed for a texture (will use broken view).\n";
+            LOG_ERROR("[TextureManager] vmaCreateImage failed for a texture (will use broken view).");
         }
 
         // 3. Create ImageView
@@ -448,7 +505,7 @@ void gfx::TextureManager::upload_textures() {
         VkResult view_res = vkCreateImageView(device, &view_info, nullptr,
                                               &tex_info.gpu_image.view);
         if (view_res != VK_SUCCESS || tex_info.gpu_image.view == VK_NULL_HANDLE) {
-            std::cerr << "[TextureManager] vkCreateImageView failed for a texture.\n";
+            LOG_ERROR("[TextureManager] vkCreateImageView failed for a texture.");
         }
 
         image_views_created++;
@@ -617,8 +674,8 @@ void gfx::TextureManager::bind_descriptor(uint32_t index, VkDescriptorSet target
     gfx::BufferUtils::update_descriptor(device, image_infos, target_set, index);
 
     if (real_count > 0) {
-        std::cerr << "[TextureManager] Bound " << real_count << " real textures + tail filled to "
-                  << write_count << " total slots for bindless array (binding " << index << ").\n";
+        LOG_VERBOSE("[TextureManager] Bound " << real_count << " real textures + tail filled to "
+                  << write_count << " total slots for bindless array (binding " << index << ")");
     }
 }
 
@@ -706,9 +763,9 @@ void gfx::TextureManager::load_pixel_data(std::vector<uint8_t> &pixels,
             stbi_image_free(file_pixels);
     }
 
-    std::cerr << "[TextureManager] Failed to load texture '"
+    LOG_ERROR("[TextureManager] Failed to load texture '"
               << (info.filepath.empty() ? info.name : info.filepath)
-              << "' (or invalid size). Using 1x1 placeholder.\n";
+              << "' (or invalid size). Using 1x1 placeholder.");
 
     pixels = {255, 0, 255, 255}; // RGBA magenta
     info.width = 1;

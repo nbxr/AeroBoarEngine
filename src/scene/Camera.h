@@ -119,6 +119,9 @@ public:
     // Default is false (normal behavior: mouse down = look down).
     bool invert_pitch = false;
 
+    // configuration.json cameraOverride: player boom / FpsMove must not move the eye.
+    bool pose_locked = false;
+
 private:
     CameraMode mode = CameraMode::Desktop;
     GLFWwindow* window = nullptr;

@@ -1,6 +1,7 @@
 #include "gfx/MeshManager.h"
 #include "gfx/BufferUtils.h"
 #include <algorithm>
+#include <cstdint>
 #include <cstring>
 #include <mutex>
 
@@ -40,8 +41,12 @@ bool MeshManager::initialize(VkDevice device, VmaAllocator allocator,
         device, allocator, vertex_size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
     const bool ok_idx = index_buffers_.initialize(
         device, allocator, index_size, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    const VkDeviceSize index16_size = std::max<VkDeviceSize>(
+        2u, (index_size / sizeof(Index)) * sizeof(uint16_t));
+    const bool ok_idx16 = index16_buffers_.initialize(
+        device, allocator, index16_size, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
 
-    return ok_ssbo && ok_vtx && ok_idx;
+    return ok_ssbo && ok_vtx && ok_idx && ok_idx16;
 }
 
 MeshPrimitiveID MeshManager::add_mesh(MeshData& mesh_data) {
@@ -59,31 +64,46 @@ void MeshManager::update_buffers() {
     mesh_ssbo_cache_.clear();
 
     uint32_t vertex_offset = 0;
-    uint32_t index_offset = 0;
+    uint32_t index32_offset = 0;
+    uint32_t index16_offset = 0;
 
     auto* vertex_dst =
         static_cast<Vertex*>(vertex_buffers_.upload().mapped_data);
-    auto* index_dst = static_cast<Index*>(index_buffers_.upload().mapped_data);
+    auto* index32_dst = static_cast<Index*>(index_buffers_.upload().mapped_data);
+    auto* index16_dst =
+        static_cast<uint16_t*>(index16_buffers_.upload().mapped_data);
 
     for (const auto& mesh : mesh_cache_) {
         MeshPrimitiveSSBO ssbo{};
         ssbo.vertex_offset = vertex_offset;
         ssbo.vertex_count = static_cast<uint32_t>(mesh.vertices.size());
-        ssbo.index_offset = index_offset;
         ssbo.index_count = static_cast<uint32_t>(mesh.indices.size());
+        const bool u16 = mesh.index16 && ssbo.vertex_count <= 65536u &&
+                         ssbo.vertex_count > 0;
+        if (u16) {
+            ssbo.index_offset = index16_offset;
+            if (index16_dst && !mesh.indices.empty()) {
+                for (uint32_t i = 0; i < ssbo.index_count; ++i)
+                    index16_dst[index16_offset + i] =
+                        static_cast<uint16_t>(mesh.indices[i]);
+            }
+            index16_offset += ssbo.index_count;
+        } else {
+            ssbo.index_offset = index32_offset;
+            if (index32_dst && !mesh.indices.empty()) {
+                std::memcpy(index32_dst + index32_offset, mesh.indices.data(),
+                            mesh.indices.size() * sizeof(Index));
+            }
+            index32_offset += ssbo.index_count;
+        }
         mesh_ssbo_cache_.push_back(ssbo);
 
         if (vertex_dst && !mesh.vertices.empty()) {
             std::memcpy(vertex_dst + vertex_offset, mesh.vertices.data(),
                         mesh.vertices.size() * sizeof(Vertex));
         }
-        if (index_dst && !mesh.indices.empty()) {
-            std::memcpy(index_dst + index_offset, mesh.indices.data(),
-                        mesh.indices.size() * sizeof(Index));
-        }
 
         vertex_offset += ssbo.vertex_count;
-        index_offset += ssbo.index_count;
     }
 
     if (!mesh_ssbo_cache_.empty()) {
@@ -93,7 +113,8 @@ void MeshManager::update_buffers() {
     }
 
     vertex_count_ = vertex_offset;
-    index_count_ = index_offset;
+    index_count_ = static_cast<uint64_t>(index32_offset) + index16_offset;
+    index16_count_ = index16_offset;
 }
 
 void MeshManager::bind_descriptor(uint32_t ssbo, uint32_t vertex, uint32_t index,
@@ -104,8 +125,11 @@ void MeshManager::bind_descriptor(uint32_t ssbo, uint32_t vertex, uint32_t index
     // Never pass range=0 (validation VUID-VkDescriptorBufferInfo-range-00341).
     const VkDeviceSize vbytes =
         std::max<VkDeviceSize>(sizeof(Vertex), vertex_count_ * sizeof(Vertex));
+    const uint64_t n32 = (index_count_ > index16_count_)
+                             ? (index_count_ - index16_count_)
+                             : 0ull;
     const VkDeviceSize ibytes =
-        std::max<VkDeviceSize>(sizeof(Index), index_count_ * sizeof(Index));
+        std::max<VkDeviceSize>(sizeof(Index), n32 * sizeof(Index));
     BufferUtils::update_descriptor(device_, vertex_buffers_.render(), target_set,
                                    vbytes, vertex);
     BufferUtils::update_descriptor(device_, index_buffers_.render(), target_set,
@@ -116,6 +140,7 @@ void MeshManager::shutdown() {
     std::scoped_lock lock(mesh_mutex_);
     vertex_buffers_.destroy(device_, allocator_);
     index_buffers_.destroy(device_, allocator_);
+    index16_buffers_.destroy(device_, allocator_);
     ssbo_buffers_.destroy(device_, allocator_);
 
     mesh_cache_.clear();
@@ -125,6 +150,7 @@ void MeshManager::shutdown() {
 
     mesh_count_ = 0;
     index_count_ = 0;
+    index16_count_ = 0;
     vertex_count_ = 0;
     device_ = VK_NULL_HANDLE;
     allocator_ = VK_NULL_HANDLE;
@@ -138,21 +164,28 @@ void MeshManager::clear_all_caches() {
         recycle_cache_.pop();
     mesh_count_ = 0;
     index_count_ = 0;
+    index16_count_ = 0;
     vertex_count_ = 0;
 }
 
 void MeshManager::toggle_buffers() {
     vertex_buffers_.toggle();
     index_buffers_.toggle();
+    index16_buffers_.toggle();
     ssbo_buffers_.toggle();
 }
 
 bool MeshManager::ensure_capacity() {
     uint64_t required_vertex_count = 0;
-    uint64_t required_index_count = 0;
+    uint64_t required_index32 = 0;
+    uint64_t required_index16 = 0;
     for (const auto& mesh : mesh_cache_) {
         required_vertex_count += mesh.vertices.size();
-        required_index_count += mesh.indices.size();
+        if (mesh.index16 && mesh.vertices.size() <= 65536u &&
+            !mesh.vertices.empty())
+            required_index16 += mesh.indices.size();
+        else
+            required_index32 += mesh.indices.size();
     }
 
     const uint32_t mesh_n = static_cast<uint32_t>(mesh_cache_.size());
@@ -172,15 +205,26 @@ bool MeshManager::ensure_capacity() {
         vertex_count_ > 0 ? vertex_buffers_.upload().mapped_data : nullptr,
         vertex_count_ * sizeof(Vertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
 
-    const VkDeviceSize idx_needed = required_index_count * sizeof(Index);
+    const VkDeviceSize idx_needed = required_index32 * sizeof(Index);
     const VkDeviceSize idx_pad =
         static_cast<VkDeviceSize>(growth_step_size_ > 0 ? growth_step_size_ * 1000
                                                         : 100000) *
         sizeof(Index);
     index_buffers_.ensure_byte_capacity(
         device_, allocator_, idx_needed, idx_pad,
-        index_count_ > 0 ? index_buffers_.upload().mapped_data : nullptr,
-        index_count_ * sizeof(Index), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+        required_index32 > 0 ? index_buffers_.upload().mapped_data : nullptr,
+        required_index32 * sizeof(Index), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+
+    const VkDeviceSize idx16_needed =
+        std::max<VkDeviceSize>(2u, required_index16 * sizeof(uint16_t));
+    const VkDeviceSize idx16_pad =
+        static_cast<VkDeviceSize>(growth_step_size_ > 0 ? growth_step_size_ * 1000
+                                                        : 100000) *
+        sizeof(uint16_t);
+    index16_buffers_.ensure_byte_capacity(
+        device_, allocator_, idx16_needed, idx16_pad,
+        index16_count_ > 0 ? index16_buffers_.upload().mapped_data : nullptr,
+        index16_count_ * sizeof(uint16_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
 
     return true;
 }
@@ -219,6 +263,14 @@ uint32_t MeshManager::get_primitive_index_count(uint32_t index) const {
     if (index >= mesh_ssbo_cache_.size())
         return 0;
     return mesh_ssbo_cache_[index].index_count;
+}
+
+bool MeshManager::primitive_index16(uint32_t index) const {
+    std::shared_lock lock(mesh_mutex_);
+    if (index >= mesh_cache_.size())
+        return false;
+    const auto& m = mesh_cache_[index];
+    return m.index16 && m.vertices.size() <= 65536u && !m.vertices.empty();
 }
 
 core::AABB MeshManager::get_primitive_local_aabb(uint32_t index) const {

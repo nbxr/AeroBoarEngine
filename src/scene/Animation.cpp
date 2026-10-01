@@ -121,6 +121,11 @@ void AnimationSystem::clear() {
     masks_.clear();
 }
 
+void AnimationSystem::install_clips(std::vector<AnimationClip> clips) {
+    clear();
+    clips_ = std::move(clips);
+}
+
 uint32_t AnimationSystem::load_from_gltf(
     const tinygltf::Model& model,
     const std::vector<uint32_t>& gltf_node_to_transform,
@@ -205,13 +210,13 @@ uint32_t AnimationSystem::load_from_gltf(
         }
 
         if (clip.channels.empty()) {
-            LOG_INFO("[Anim] Skipping empty clip '" << clip.name << "'");
+            LOG_VERBOSE("[Anim] Skipping empty clip '" << clip.name << "'");
             continue;
         }
         clips_.push_back(std::move(clip));
     }
 
-    LOG_INFO("[Anim] Loaded " << clips_.size() << " clip(s) from glTF ("
+    LOG_VERBOSE("[Anim] Loaded " << clips_.size() << " clip(s) from glTF ("
              << model.animations.size() << " in file)");
     return static_cast<uint32_t>(clips_.size());
 }
@@ -481,7 +486,7 @@ void AnimationSystem::play_all_looping() {
         p.playing = true;
         p.weight = 1.0f;
         players_.push_back(p);
-        LOG_INFO("[Anim] Playing clip '" << clips_[i].name << "' duration="
+        LOG_VERBOSE("[Anim] Playing clip '" << clips_[i].name << "' duration="
                  << clips_[i].duration << "s channels=" << clips_[i].channels.size());
     }
 }
@@ -498,7 +503,7 @@ bool AnimationSystem::play_exclusive(uint32_t clip_index, bool loop, float speed
     p.playing = true;
     p.weight = 1.0f;
     players_.push_back(p);
-    LOG_INFO("[Anim] Exclusive play '" << clips_[clip_index].name << "' duration="
+    LOG_VERBOSE("[Anim] Exclusive play '" << clips_[clip_index].name << "' duration="
              << clips_[clip_index].duration << "s channels="
              << clips_[clip_index].channels.size()
              << " (" << (clip_index + 1) << "/" << clips_.size() << ")");
@@ -548,7 +553,7 @@ bool AnimationSystem::crossfade(uint32_t clip_index, float fade_seconds, bool lo
     kept.push_back(in);
     players_.swap(kept);
 
-    LOG_INFO("[Anim] Crossfade -> '" << clips_[clip_index].name << "' fade="
+    LOG_VERBOSE("[Anim] Crossfade -> '" << clips_[clip_index].name << "' fade="
              << fade_seconds << "s (" << (clip_index + 1) << "/"
              << clips_.size() << ")");
     return true;

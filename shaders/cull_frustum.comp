@@ -31,8 +31,8 @@ layout(set = 0, binding = 0, std140) uniform CullGlobals {
     // Offset into combined out_instances (0 = opaque half, N = transparent half)
     uint  instance_base_offset;
     uint  extra_plane_count;
-    uint  pad2;
-    vec4  extra_planes[8];
+    uint  skip_frustum_cull;
+    vec4  extra_planes[16];
 } globals;
 
 layout(set = 0, binding = 1, std430) readonly buffer CullItems {
@@ -75,7 +75,16 @@ bool frustum_intersects_aabb(vec3 wmin, vec3 wmax) {
         if (dot(n, p) + d < -0.02)
             return false;
     }
-    uint nextra = min(globals.extra_plane_count, 8u);
+    return true;
+}
+
+bool extra_planes_intersect_aabb(vec3 wmin, vec3 wmax) {
+    vec3 ext = wmax - wmin;
+    vec3 pad = max(ext * 0.01, vec3(1e-4));
+    wmin -= pad;
+    wmax += pad;
+
+    uint nextra = min(globals.extra_plane_count, 16u);
     for (uint i = 0u; i < nextra; ++i) {
         vec3 n = globals.extra_planes[i].xyz;
         float d = globals.extra_planes[i].w;
@@ -185,7 +194,9 @@ void main() {
 
     vec3 wmin, wmax;
     transform_aabb(model, item.aabb_min.xyz, item.aabb_max.xyz, wmin, wmax);
-    if (!frustum_intersects_aabb(wmin, wmax))
+    if (globals.skip_frustum_cull == 0u && !frustum_intersects_aabb(wmin, wmax))
+        return;
+    if (!extra_planes_intersect_aabb(wmin, wmax))
         return;
     // Hi-Z was built from opaque-only depth; still test all shade candidates.
     if (hzb_occluded(wmin, wmax))

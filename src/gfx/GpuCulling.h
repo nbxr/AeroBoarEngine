@@ -6,6 +6,7 @@
 #include "gfx/MaterialManager.h"
 #include "gfx/MeshData.h"
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <glm/glm.hpp>
 #include <vector>
@@ -38,8 +39,9 @@ struct GpuBatchMeta {
     int32_t  vertex_offset = 0;
     uint32_t meshlet_offset = 0;
     uint32_t meshlet_count = 0; // 0 = whole-mesh fallback (skin/morph)
-    uint32_t flags = 0;
+    uint32_t flags = 0; // bit 0 = UINT16 index buffer
 };
+static constexpr uint32_t kBatchFlagIndex16 = 1u;
 static_assert(sizeof(GpuBatchMeta) == 32, "GpuBatchMeta size");
 
 struct MeshletCullPush {
@@ -50,6 +52,8 @@ struct MeshletCullPush {
     uint32_t pad1 = 0;
 };
 static_assert(sizeof(MeshletCullPush) == 32, "MeshletCullPush size");
+
+static constexpr uint32_t kMaxCullExtraPlanes = 16;
 
 struct GpuCullGlobals {
     glm::vec4 planes[6]{};
@@ -66,8 +70,8 @@ struct GpuCullGlobals {
     // (UPDATE_AFTER_BIND would otherwise make both draws see the last write).
     uint32_t instance_base_offset = 0;
     uint32_t extra_plane_count = 0;
-    uint32_t pad2 = 0;
-    glm::vec4 extra_planes[8]{};
+    uint32_t skip_frustum_cull = 0; // 1 = ignore planes[6]; extra_planes still apply
+    glm::vec4 extra_planes[kMaxCullExtraPlanes]{};
 };
 
 // Cull list filter for GpuCulling::record
@@ -84,8 +88,12 @@ enum class CullPass : uint32_t {
 };
 static constexpr uint32_t kCullPassCount = 2;
 
-// std140: 208 + extra_planes[8] 128 = 336
-static_assert(sizeof(GpuCullGlobals) == 336, "GpuCullGlobals std140 size");
+// std140: 208 + extra_planes[16] 256 = 464
+static_assert(sizeof(GpuCullGlobals) == 464, "GpuCullGlobals std140 size");
+static_assert(offsetof(GpuCullGlobals, skip_frustum_cull) == 204,
+              "skip_frustum_cull std140 offset");
+static_assert(offsetof(GpuCullGlobals, extra_planes) == 208,
+              "extra_planes std140 offset");
 
 // Fixed-region GPU frustum + Hi-Z occlusion cull + indirect command build.
 class GpuCulling {
@@ -124,7 +132,8 @@ class GpuCulling {
                 CullEmitFilter emit_filter = CullEmitFilter::All,
                 const glm::vec3& camera_world = glm::vec3(0.0f),
                 bool cone_cull = true, bool expand_meshlets = true,
-                const glm::vec4* extra_planes = nullptr, uint32_t extra_plane_count = 0);
+                const glm::vec4* extra_planes = nullptr, uint32_t extra_plane_count = 0,
+                bool skip_frustum_cull = false);
 
     void set_meshlet_cull(bool on) { meshlet_cull_ = on; }
     [[nodiscard]] bool meshlet_cull() const {
@@ -132,8 +141,9 @@ class GpuCulling {
     }
 
     // Instance MDI or meshlet DrawIndexedIndirectCount, matching the last record().
+    // index16: UINT16 IB bind. Call twice (u16 then u32) around BindIndexBuffer.
     void cmd_draw_indexed(VkCommandBuffer cmd, uint32_t frame_index,
-                          CullPass pass = CullPass::Opaque) const;
+                          CullPass pass, bool index16) const;
 
     [[nodiscard]] bool is_ready() const { return ready_; }
     [[nodiscard]] uint32_t batch_count() const { return batch_count_; }
@@ -170,6 +180,14 @@ class GpuCulling {
     };
     [[nodiscard]] MeshletStats read_meshlet_stats(uint32_t frame_index) const;
 
+    void copy_opaque_instances(VkCommandBuffer cmd, uint32_t frame_index);
+    [[nodiscard]] uint32_t count_copied_models_near(const glm::vec3& translation,
+                                                    float eps) const;
+    [[nodiscard]] bool lookup_transform(uint32_t transform_index, uint32_t& batch,
+                                        uint32_t& base, uint32_t& capacity) const;
+    [[nodiscard]] glm::vec3 world_translation(uint32_t frame_index,
+                                              uint32_t transform_index) const;
+
   private:
     static constexpr uint32_t kMaxFrames = 2;
 
@@ -201,13 +219,18 @@ class GpuCulling {
     std::array<AllocatedBuffer, kMaxFrames> cull_items_{};
     std::array<AllocatedBuffer, kMaxFrames> worlds_{};
     AllocatedBuffer batch_metas_{};
+    // GpuOnly + TRANSFER_DST: vkCmdUpdateBuffer per record() (not host memcpy).
     std::array<std::array<AllocatedBuffer, kCullPassCount>, kMaxFrames> cull_globals_{};
     std::array<std::array<AllocatedBuffer, kCullPassCount>, kMaxFrames> batch_counts_{};
     std::array<AllocatedBuffer, kMaxFrames> out_instances_{};
+    AllocatedBuffer inst_readback_{};
+    VmaAllocator inst_readback_alloc_ = VK_NULL_HANDLE;
     std::array<std::array<AllocatedBuffer, kCullPassCount>, kMaxFrames> indirect_cmds_{};
     AllocatedBuffer meshlets_{};
     std::array<std::array<AllocatedBuffer, kCullPassCount>, kMaxFrames> meshlet_cmds_{};
     std::array<std::array<AllocatedBuffer, kCullPassCount>, kMaxFrames> meshlet_draw_count_{};
+    std::array<std::array<AllocatedBuffer, kCullPassCount>, kMaxFrames> meshlet_cmds32_{};
+    std::array<std::array<AllocatedBuffer, kCullPassCount>, kMaxFrames> meshlet_draw_count32_{};
 
     // Parallel to cull items: TransformManager index per item (for update_models).
     std::vector<uint32_t> item_transform_indices_{};
@@ -218,6 +241,7 @@ class GpuCulling {
     uint32_t item_count_ = 0;
     uint32_t transparent_item_count_ = 0;
     uint32_t batch_count_ = 0;
+    uint32_t batch_u16_count_ = 0; // prefix after u16-first sort
     uint32_t instance_slot_count_ = 0; // one pass half size; transparent offset = this
     uint32_t world_count_ = 0;
     uint32_t max_meshlet_draws_ = 0;

@@ -171,10 +171,10 @@ bool scene::GltfLoader::load_model(const std::string &filename,
     }
 
     if (!warn.empty()) {
-        std::cerr << "[GLTF] Warning while loading '" << filename << "': " << warn << std::endl;
+        LOG_VERBOSE("[GLTF] Warning while loading '" << filename << "': " << warn);
     }
     if (!err.empty()) {
-        std::cerr << "[GLTF] Error while loading '" << filename << "': " << err << std::endl;
+        LOG_ERROR("[GLTF] Error while loading '" << filename << "': " << err);
     }
 
     return ret;
@@ -237,8 +237,8 @@ scene::GltfLoader::extract_material_data(const std::string &filename,
             }
         }
 
-        std::cerr << "[GLTF] Warning: could not resolve texture source "
-                  << tex.source << " ('" << key << "') — skipping.\n";
+        LOG_VERBOSE("[GLTF] could not resolve texture source "
+                  << tex.source << " ('" << key << "') — skipping");
         return gfx::TextureID{};
     };
 
@@ -463,7 +463,7 @@ scene::GltfLoader::extract_material_data(const std::string &filename,
                 (mat.alphaCutoff > 0.0) ? static_cast<float>(mat.alphaCutoff) : 0.5f;
         } else if (mat.alphaMode == "BLEND") {
             material.flags |= gfx::Material::kFlagAlphaBlend;
-            LOG_INFO("[Mat] '" << mat.name
+            LOG_VERBOSE("[Mat] '" << mat.name
                      << "' alphaMode=BLEND — transparent path (no depth write, unsorted)");
         }
 
@@ -553,6 +553,10 @@ scene::GltfLoader::extract_mesh_data(const tinygltf::Model &model,
     uint32_t meshlet_prims = 0;
     uint32_t meshlet_count = 0;
     uint32_t meshlet_cull_prims = 0;
+    uint32_t index16_prims = 0;
+    uint64_t index16_count = 0;
+    uint32_t index32_prims = 0;
+    uint64_t index32_count = 0;
 
     for (const auto &mesh : model.meshes) {
         for (const auto &primitive : mesh.primitives) {
@@ -993,20 +997,33 @@ scene::GltfLoader::extract_mesh_data(const tinygltf::Model &model,
                 if (mesh_data.allow_meshlet_cull)
                     ++meshlet_cull_prims;
             }
+            mesh_data.index16 = !mesh_data.indices.empty() &&
+                                mesh_data.vertices.size() <= 65536u &&
+                                mesh_data.vertices.size() > 0;
+            if (mesh_data.index16) {
+                ++index16_prims;
+                index16_count += mesh_data.indices.size();
+            } else if (!mesh_data.indices.empty()) {
+                ++index32_prims;
+                index32_count += mesh_data.indices.size();
+            }
 
             meshes.push_back(renderer.mesh_manager.add_mesh(mesh_data));
         }
     }
     if (optimize_meshes) {
-        LOG_INFO("[MeshOpt] prims=" << opt_totals.primitives << " skipped="
+        LOG_VERBOSE("[MeshOpt] prims=" << opt_totals.primitives << " skipped="
                                     << opt_totals.skipped << " verts "
                                     << opt_totals.vertices_in << " -> "
                                     << opt_totals.vertices_out << " indices="
                                     << opt_totals.indices);
     }
-    LOG_INFO("[Meshlet] prims=" << meshlet_prims << " meshlets=" << meshlet_count
+    LOG_VERBOSE("[Meshlet] prims=" << meshlet_prims << " meshlets=" << meshlet_count
                                 << " cone_cull_prims=" << meshlet_cull_prims
                                 << " (skin/morph draw whole mesh)");
+    LOG_VERBOSE("[Index] u16 prims=" << index16_prims << " indices=" << index16_count
+                                << " u32 prims=" << index32_prims
+                                << " indices=" << index32_count);
     return meshes;
 }
 

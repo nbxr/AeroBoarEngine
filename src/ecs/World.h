@@ -16,6 +16,9 @@ class World {
     Entity create_entity();
     void destroy_entity(Entity e);
     [[nodiscard]] bool is_alive(Entity e) const;
+    [[nodiscard]] uint32_t entity_capacity() const {
+        return static_cast<uint32_t>(alive_.size());
+    }
 
     // First PlayerTag in spawn order (first wins).
     void resolve_active_player();
@@ -43,6 +46,10 @@ class World {
     std::vector<Entity> game_object_to_entity;
 
     void clear();
+
+    // Rebuild the entity roster after clear(). alive[i] != 0 keeps entity i.
+    // Dead ids go on the free list. Components are filled by the caller.
+    void restore_roster(uint32_t count, const std::vector<uint8_t>& alive);
 
   private:
     std::vector<bool> alive_;

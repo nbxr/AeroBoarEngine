@@ -33,6 +33,23 @@ namespace core {
         core::write_to_log_file(s);                             \
     } while (0)
 
+inline bool g_log_verbose = false;
+inline bool g_log_cull = false;
+
+#define LOG_VERBOSE(value)                                      \
+    do {                                                        \
+        if (core::g_log_verbose) {                              \
+            LOG_INFO(value);                                    \
+        }                                                       \
+    } while (0)
+
+#define LOG_CULL(value)                                         \
+    do {                                                        \
+        if (core::g_log_cull) {                                 \
+            LOG_INFO(value);                                    \
+        }                                                       \
+    } while (0)
+
 // Optional file sink for logs (and specifically for Vulkan validation layer
 // debug messages). Call early (e.g. start of main) to enable. The file is
 // opened in append mode and every write is flushed to maximize survival
@@ -70,6 +87,20 @@ inline std::string init_file_log(const std::string& filename = "aero_boar.log") 
         std::cerr << "[Log] WARNING: Failed to open log file at " << path_str << std::endl;
     }
 
+    return path_str;
+}
+
+inline std::string reopen_file_log_trunc(const std::string& filename = "aero_boar.log") {
+    namespace fs = std::filesystem;
+    if (g_log_file.is_open())
+        g_log_file.close();
+    fs::path log_path = fs::absolute(fs::current_path() / fs::path(filename));
+    g_log_file.open(log_path, std::ios::out | std::ios::trunc);
+    std::string path_str = log_path.string();
+    if (g_log_file.is_open()) {
+        g_log_file << "=== AeroBoar log started (truncated) ===" << std::endl;
+        g_log_file.flush();
+    }
     return path_str;
 }
 

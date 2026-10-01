@@ -79,6 +79,15 @@ const char* state_name(LocomotionAnim::State s) {
 
 void bind_player_animation_masks(World& world, scene::SceneManager& scene,
                                  const tinygltf::Model& model) {
+    std::vector<std::string> names;
+    names.reserve(model.nodes.size());
+    for (const auto& node : model.nodes)
+        names.push_back(node.name);
+    bind_player_animation_masks(world, scene, names);
+}
+
+void bind_player_animation_masks(World& world, scene::SceneManager& scene,
+                                 const std::vector<std::string>& node_names) {
     const Entity player = world.active_player();
     if (player == kInvalidEntity)
         return;
@@ -92,7 +101,7 @@ void bind_player_animation_masks(World& world, scene::SceneManager& scene,
 
     const auto& n2x = scene.gltf_node_to_transform();
     uint32_t masked_root = scene::TransformManager::kInvalid;
-    for (size_t i = 0; i < model.nodes.size(); ++i) {
+    for (size_t i = 0; i < node_names.size(); ++i) {
         if (i >= n2x.size())
             continue;
         const uint32_t xi = n2x[i];
@@ -101,13 +110,13 @@ void bind_player_animation_masks(World& world, scene::SceneManager& scene,
             continue;
         if (!is_under(xforms, xi, link->transform_index))
             continue;
-        if (name_ieq(model.nodes[i].name, "root")) {
+        if (name_ieq(node_names[i], "root")) {
             anims.ignore_transform_translation(xi);
             masked_root = xi;
         }
     }
 
-    LOG_INFO("[Anim] player root TRS masked xform=" << link->transform_index
+    LOG_VERBOSE("[Anim] player root TRS masked xform=" << link->transform_index
              << " skeleton_root_T="
              << (masked_root == scene::TransformManager::kInvalid
                      ? -1
@@ -138,7 +147,7 @@ void locomotion_anim_bind_clips(World& world, scene::AnimationSystem& anims) {
         if (idle != ~0u)
             anims.play_exclusive(idle, true, 1.0f);
 
-        LOG_INFO("[ECS] locomotion clips entity=" << e << " idle="
+        LOG_VERBOSE("[ECS] locomotion clips entity=" << e << " idle="
                  << static_cast<int>(loco.idle_clip) << " walk="
                  << static_cast<int>(loco.walk_clip) << " run="
                  << static_cast<int>(loco.run_clip) << " walk_th="
@@ -194,7 +203,7 @@ void locomotion_anim_system_update(World& world, scene::AnimationSystem& anims) 
             continue;
         loco.state = next;
         anims.crossfade(clip, std::max(0.0f, loco.fade), true, 1.0f);
-        LOG_INFO("[Loco] " << state_name(next) << " speed=" << speed << " clip='"
+        LOG_VERBOSE("[Loco] " << state_name(next) << " speed=" << speed << " clip='"
                  << anims.clip(clip).name << "'");
     }
 }

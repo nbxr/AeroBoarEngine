@@ -6,10 +6,22 @@
 
 namespace core {
 
+struct DebugOptions {
+    int exit_after_frames = 0;
+    bool hidden_window = false;
+    bool clear_log_on_start = false;
+    bool verbose = false;
+    bool log_cull = false;
+    bool queen_shadow_probe = false;
+    std::string shadow_map_dump = "off";
+    std::string shadow_probe_target = "Queen_B";
+};
+
 class Configuration {
   public:
     static Configuration &get_instance();
     static nlohmann::json &get_root();
+    DebugOptions debug;
 
     Configuration(const Configuration &) = delete;
     Configuration &operator=(const Configuration &) = delete;

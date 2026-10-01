@@ -190,7 +190,7 @@ bool gfx::Engine::init_vulkan() {
     }
 
     if (!gpu_times.create(renderer.vk.device.device, renderer.vk.physical_device)) {
-        LOG_INFO("[Init] GPU timestamps unavailable — HUD gpu lines will show --");
+        LOG_VERBOSE("[Init] GPU timestamps unavailable — HUD gpu lines will show --");
     }
     gpu_times.init_tracy(renderer.vk.physical_device, renderer.vk.device.device,
                          renderer.vk.graphics_queue, renderer.vk.generic_command_pool);
@@ -314,7 +314,7 @@ bool gfx::Engine::init_resource_managers() {
                 }
                 renderer.ibl.equirect_hdr_path = hdr;
                 if (!hdr.empty())
-                    LOG_INFO("[IBL] environmentHdr = " << hdr);
+                    LOG_VERBOSE("[IBL] environmentHdr = " << hdr);
             }
         }
     }
@@ -353,9 +353,11 @@ void gfx::Engine::configure_shadows(uint32_t& out_resolution) {
 #endif
     renderer.shadow_map.enabled = true;
     renderer.shadow_map.bias = 0.002f;
+    renderer.shadow_map.silhouette = true;
+    renderer.shadow_map.depth_bias_enable = true;
     const auto& root = core::Configuration::get_root();
     if (!root.contains("shadows") || !root["shadows"].is_object()) {
-        LOG_INFO("[Shadow] enabled=" << renderer.shadow_map.enabled
+        LOG_VERBOSE("[Shadow] enabled=" << renderer.shadow_map.enabled
                  << " res=" << out_resolution);
         return;
     }
@@ -366,25 +368,30 @@ void gfx::Engine::configure_shadows(uint32_t& out_resolution) {
         out_resolution = std::max(64u, s["resolution"].get<uint32_t>());
     if (s.contains("bias") && s["bias"].is_number())
         renderer.shadow_map.bias = s["bias"].get<float>();
+    if (s.contains("silhouette") && s["silhouette"].is_boolean())
+        renderer.shadow_map.silhouette = s["silhouette"].get<bool>();
+    if (s.contains("depthBias") && s["depthBias"].is_boolean())
+        renderer.shadow_map.depth_bias_enable = s["depthBias"].get<bool>();
 #ifdef AERO_TARGET_ADRENO
     out_resolution = std::min(out_resolution, 1024u);
 #endif
-    LOG_INFO("[Shadow] enabled=" << renderer.shadow_map.enabled
+    LOG_VERBOSE("[Shadow] enabled=" << renderer.shadow_map.enabled
              << " res=" << out_resolution << "x3 CSM bias="
-             << renderer.shadow_map.bias);
+             << renderer.shadow_map.bias << " silhouette="
+             << (renderer.shadow_map.silhouette ? "on" : "off"));
 }
 
 void gfx::Engine::configure_occlusion_cull() {
     // Default off: frustum always; extra depth prepass is optional on desktop.
 #ifdef AERO_TARGET_ADRENO
     occlusion_cull_enabled_ = false;
-    LOG_INFO("[Cull] occlusionCull forced OFF (AERO_TARGET_ADRENO / GMEM)");
+    LOG_VERBOSE("[Cull] occlusionCull forced OFF (AERO_TARGET_ADRENO / GMEM)");
     return;
 #else
     const auto& cfg = core::Configuration::get_instance();
     // find<bool> accepts a root bool or { "enabled": bool }. Missing → false.
     occlusion_cull_enabled_ = cfg.is_loaded() && cfg.find<bool>("occlusionCull");
-    LOG_INFO("[Cull] occlusionCull="
+    LOG_VERBOSE("[Cull] occlusionCull="
              << (occlusion_cull_enabled_ ? "ON (same-frame Hi-Z)" : "OFF (frustum only)"));
 #endif
 }
@@ -395,7 +402,7 @@ void gfx::Engine::configure_meshlet_cull() {
     if (cfg.is_loaded() && core::Configuration::get_root().contains("meshletCull"))
         on = cfg.find<bool>("meshletCull");
     renderer.gpu_culling.set_meshlet_cull(on);
-    LOG_INFO("[Cull] meshletCull=" << (on ? "ON (cone+frustum, indexed MDI)"
+    LOG_VERBOSE("[Cull] meshletCull=" << (on ? "ON (cone+frustum, indexed MDI)"
                                           : "OFF (whole-mesh draws)"));
 }
 

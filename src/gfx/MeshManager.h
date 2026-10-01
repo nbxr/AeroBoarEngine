@@ -42,6 +42,7 @@ class MeshManager {
     [[nodiscard]] uint32_t get_primitive_vertex_offset(uint32_t index) const;
     [[nodiscard]] uint32_t get_primitive_index_offset(uint32_t index) const;
     [[nodiscard]] uint32_t get_primitive_index_count(uint32_t index) const;
+    [[nodiscard]] bool primitive_index16(uint32_t index) const;
     [[nodiscard]] core::AABB get_primitive_local_aabb(uint32_t index) const;
 
     // Runtime morph / skinning helpers: read/write full Vertex arrays for a prim.
@@ -51,6 +52,9 @@ class MeshManager {
 
     [[nodiscard]] AllocatedBuffer& get_render_index_buffer() {
         return index_buffers_.render();
+    }
+    [[nodiscard]] AllocatedBuffer& get_render_index16_buffer() {
+        return index16_buffers_.render();
     }
     [[nodiscard]] AllocatedBuffer& get_render_vertex_buffer() {
         return vertex_buffers_.render();
@@ -64,7 +68,9 @@ class MeshManager {
 
     DoubleBufferedBuffer vertex_buffers_{};
     DoubleBufferedBuffer index_buffers_{};
+    DoubleBufferedBuffer index16_buffers_{};
     DoubleBufferedBuffer ssbo_buffers_{};
+    uint64_t index16_count_ = 0;
 
     std::vector<MeshData> mesh_cache_{};
     std::vector<MeshPrimitiveSSBO> mesh_ssbo_cache_{};

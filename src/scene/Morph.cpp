@@ -124,6 +124,13 @@ bool pack_morph_weld_bytes(const tinygltf::Model& model,
     return true;
 }
 
+void MorphSystem::install(std::vector<MorphInstance> instances,
+                          std::vector<uint32_t> node_to_morph) {
+    clear();
+    instances_ = std::move(instances);
+    gltf_node_to_morph_ = std::move(node_to_morph);
+}
+
 void MorphSystem::clear() {
     instances_.clear();
     gltf_node_to_morph_.clear();
@@ -217,7 +224,7 @@ uint32_t MorphSystem::load_from_gltf(const tinygltf::Model& model,
         }
     }
 
-    LOG_INFO("[Morph] Loaded " << loaded << " morph primitive(s)");
+    LOG_VERBOSE("[Morph] Loaded " << loaded << " morph primitive(s)");
     return loaded;
 }
 

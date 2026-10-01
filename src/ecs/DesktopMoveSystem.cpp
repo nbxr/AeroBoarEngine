@@ -141,7 +141,7 @@ void place_camera_on_player(const World& world, Entity player,
     if (rig && rig->third_person) {
         apply_follow_boom(camera, root_pos, rig->boom_offset);
         const glm::vec3 eye = camera.get_position();
-        LOG_INFO("[ECS] place_camera_on_player third_person root=("
+        LOG_VERBOSE("[ECS] place_camera_on_player third_person root=("
                  << root_pos.x << ", " << root_pos.y << ", " << root_pos.z
                  << ") eye=(" << eye.x << ", " << eye.y << ", " << eye.z
                  << ") boom=(" << rig->boom_offset.x << ", " << rig->boom_offset.y
@@ -165,7 +165,7 @@ void place_camera_on_player(const World& world, Entity player,
     else
         camera.set_position(eye);
 
-    LOG_INFO("[ECS] place_camera_on_player root=("
+    LOG_VERBOSE("[ECS] place_camera_on_player root=("
              << root_pos.x << ", " << root_pos.y << ", " << root_pos.z
              << ") eye=(" << eye.x << ", " << eye.y << ", " << eye.z
              << ") offset=(" << offset.x << ", " << offset.y << ", " << offset.z
@@ -219,7 +219,8 @@ void desktop_move_system_update(World& world, const core::InputFrame& frame,
         camera.invert_pitch = rig->invert_pitch;
     }
 
-    camera.apply_desktop_input(frame);
+    if (!camera.pose_locked)
+        camera.apply_desktop_input(frame);
 
     if (!transforms) {
         static bool once = false;

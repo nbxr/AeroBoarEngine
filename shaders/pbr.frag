@@ -85,8 +85,9 @@ layout(set = 0, binding = 0) uniform FrameConstants {
     uvec4 iblIndices;       // x = specularEnvMapIndex, y = brdfLutIndex
     mat4  shadowViewProj[3];
     vec4  shadowSplits;     // xy = split distances (view m), z = cascade count
-    vec4  shadowParams;     // x=texel UV, y=enabled, z=light index, w=bias
+    vec4  shadowParams;     // x=texel UV, y=enabled, z=light index
     vec4  cameraForward;    // xyz
+    vec4  shadowTexelWorld; // xyz = meters per texel, per cascade
 } globals;
 
 // Single SSBO + runtime array (std430). Matches gfx::GpuLight (64 bytes).
@@ -166,18 +167,18 @@ vec3 getNormalFromMap(vec3 N, vec3 T, vec3 B, vec2 uv, uint normalTexIdx, float 
 }
 
 // Reverse-Z directional map: COMPARE_OP_GREATER_OR_EQUAL.
-// 8-tap Vogel PCF (~1.25 texels): anti-aliases the silhouette without a fat penumbra.
-// LINEAR compare still does a 2x2 filter per tap. Cheap enough for stereo later.
+// 8-tap Vogel, half a texel. Wider than that, plus a hardware 2x2, erased the
+// pawn's self-shadow and left a gray that flickered between nearby views.
 float sample_cascade_map(vec3 worldPos, uint cascade) {
     vec4 sc = globals.shadowViewProj[cascade] * vec4(worldPos, 1.0);
     sc.xyz /= max(sc.w, 1e-6);
     vec2 uv = sc.xy * 0.5 + 0.5;
-    // Keep a 2% UV margin so PCF taps at the edge don't miss and light up.
-    if (uv.x < 0.02 || uv.x > 0.98 || uv.y < 0.02 || uv.y > 0.98 ||
+    // Reject true off-map; PCF taps use clamp-to-border (lit).
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 ||
         sc.z < 0.0 || sc.z > 1.0)
         return -1.0;
-    float z = sc.z + globals.shadowParams.w;
-    float t = max(globals.shadowParams.x, 1e-6) * 1.25;
+    float z = sc.z;
+    float t = max(globals.shadowParams.x, 1e-6) * 0.5;
     const vec2 kOff[8] = vec2[](
         vec2( 0.1250,  0.0000),
         vec2(-0.1585,  0.1970),
@@ -194,7 +195,20 @@ float sample_cascade_map(vec3 worldPos, uint cascade) {
     return s * 0.125;
 }
 
-float sample_shadow(vec3 worldPos, float NdotL) {
+// Meters along the light. The PCF kernel is ~1.25 texels of XY; the depth
+// error that causes is (kernel * slope) texels. A flat floor of 2 texels was
+// ~8 mm on cascade 2, which is the pawn's self-shadow gap, so one texel of
+// map snap turned that shadow on and off between nearby views. Slope is the
+// geometric normal only (the normal map printed a pattern on lit surfaces).
+float receiver_offset_m(uint cascade, float NdotLGeom) {
+    float texel = globals.shadowTexelWorld[min(cascade, 2u)];
+    float ndl = clamp(NdotLGeom, 0.2, 1.0);
+    float slope = sqrt(max(1.0 - ndl * ndl, 0.0)) / ndl;
+    // Half-texel kernel: depth error is about 0.5 * slope texels.
+    return texel * max(0.75 * slope, 0.2);
+}
+
+float sample_shadow(vec3 worldPos, vec3 L, float NdotL, float NdotLGeom) {
     if (globals.shadowParams.y < 0.5 || NdotL <= 0.0)
         return 1.0;
     vec3 fwd = globals.cameraForward.xyz;
@@ -203,7 +217,8 @@ float sample_shadow(vec3 worldPos, float NdotL) {
     float split1 = globals.shadowSplits.y;
     uint ncas = uint(globals.shadowSplits.w + 0.5);
     if (ncas < 2u) {
-        float s = sample_cascade_map(worldPos, 0u);
+        vec3 p = worldPos + L * receiver_offset_m(0u, NdotLGeom);
+        float s = sample_cascade_map(p, 0u);
         return s >= 0.0 ? s : 1.0;
     }
 
@@ -213,25 +228,35 @@ float sample_shadow(vec3 worldPos, float NdotL) {
     else if (vz < split1)
         c0 = 1u;
     uint c1 = min(c0 + 1u, 2u);
-    float a = sample_cascade_map(worldPos, c0);
-    float b = sample_cascade_map(worldPos, c1);
+    vec3 p0 = worldPos + L * receiver_offset_m(c0, NdotLGeom);
+    vec3 p1 = worldPos + L * receiver_offset_m(c1, NdotLGeom);
+    float a = sample_cascade_map(p0, c0);
+    float b = sample_cascade_map(p1, c1);
     float hi = split0;
     if (c0 == 1u)
         hi = split1;
+    // Must match gfx::kShadowSplitBlend / kShadowSplitBlendMin (receiver overlap).
     float band = max(hi * 0.18, 0.35);
     float t = 0.0;
     if (c0 < 2u)
         t = clamp((vz - (hi - band)) / max(band, 1e-3), 0.0, 1.0);
 
     if (a < 0.0 && b < 0.0) {
-        float c = sample_cascade_map(worldPos, 2u);
+        vec3 p2 = worldPos + L * receiver_offset_m(2u, NdotLGeom);
+        float c = sample_cascade_map(p2, 2u);
         return c >= 0.0 ? c : 1.0;
     }
     if (a < 0.0)
         return b;
     if (b < 0.0)
         return a;
-    return mix(a, b, t);
+    // Outside the split band, the selected cascade only. Inside it, both maps
+    // cover this receiver; the coarser one lifts thin self-shadows (larger
+    // texel bias). mix() was fading those out as the camera crossed the band
+    // (Pawn_Body_W4 feet blend 0.97 vs 0.68). Keep the darker sample.
+    if (t <= 0.0)
+        return a;
+    return min(a, b);
 }
 
 void main() {
@@ -290,10 +315,10 @@ void main() {
         sampledMetal *= orm.b;
     }
 
-    vec3 N = normalize(inNormal);
+    vec3 Ngeom = normalize(inNormal);
     vec3 T = normalize(inTangent.xyz);
-    vec3 B = normalize(cross(N, T) * inTangent.w);
-    N = getNormalFromMap(N, T, B, UV_FOR(1u), normalIdx, normalStr, matFlags);
+    vec3 B = normalize(cross(Ngeom, T) * inTangent.w);
+    vec3 N = getNormalFromMap(Ngeom, T, B, UV_FOR(1u), normalIdx, normalStr, matFlags);
 
     float exposure = globals.cameraPosition.w;
     vec3 V = normalize(globals.cameraPosition.xyz - inWorldPos);
@@ -344,6 +369,7 @@ void main() {
 
         vec3 H = normalize(L + V);
         float NdotL = max(dot(N, L), 0.0);
+        float NdotLGeom = max(dot(Ngeom, L), 0.0);
         float NdotH = max(dot(N, H), 0.0);
         float LdotH = max(dot(L, H), 0.0);
 
@@ -362,7 +388,7 @@ void main() {
         float lightScale = intensity * attenuation * exposure;
         if (globals.shadowParams.y > 0.5 &&
             i == uint(globals.shadowParams.z + 0.5))
-            lightScale *= sample_shadow(inWorldPos, NdotL);
+            lightScale *= sample_shadow(inWorldPos, L, NdotL, NdotLGeom);
 
         color += (diff + spec) * lightColor * lightScale;
 

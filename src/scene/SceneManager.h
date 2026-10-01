@@ -9,6 +9,7 @@
 #include "scene/Skin.h"
 #include "scene/TransformManager.h"
 #include <cstdint>
+#include <string>
 #include <glm/glm.hpp>
 #include <shared_mutex>
 #include <utility>
@@ -54,7 +55,8 @@ class SceneManager {
     // the full hierarchy is built.
     uint32_t create_game_object(uint32_t root_transform_index,
                                 uint32_t gltf_node_index = ~0u,
-                                uint32_t skin_index = ~0u);
+                                uint32_t skin_index = ~0u,
+                                std::string name = {});
 
     // Append a RenderMesh owned by game_object_index (shares GO root transform by default).
     uint32_t add_render_mesh(uint32_t game_object_index, uint32_t mesh_index,

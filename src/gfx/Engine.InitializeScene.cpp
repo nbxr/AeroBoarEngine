@@ -1,8 +1,10 @@
 #include "gfx/Engine.h"
 #include "gfx/BufferUtils.h"
+#include "gfx/Material.h"
 #include "gfx/Renderer.h"
 #include "gfx/TextureManager.h"
 #include "gfx/DrawBatch.h"
+#include "gfx/ShadowCasterVolume.h"
 #include "core/AABB.h"
 #include "core/Configuration.h"
 #include "core/Frustum.h"
@@ -18,6 +20,7 @@
 #include <functional>
 #include <iostream>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <cstring>
@@ -25,20 +28,20 @@
 #include <vector>
 
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/quaternion.hpp>  // for mat3_cast in pointing debug
 
 bool gfx::Engine::load_default_scene() {
     AERO_ZONE_NAMED("load.scene");
     const auto &config = core::Configuration::get_instance();
     if (!config.is_loaded()) {
-        std::cerr << "Configuration has not been loaded" << std::endl;
+        LOG_ERROR("Configuration has not been loaded");
         return false;
     }
 
     const std::string default_scene = config.find<std::string>("defaultScene");
     if (default_scene.empty()) {
-        std::cerr << "defaultScene not found in configuration.json"
-                  << std::endl;
+        LOG_ERROR("defaultScene not found in configuration.json");
         return false;
     }
 
@@ -50,7 +53,7 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     mark_lights_dirty();
     const auto &config = core::Configuration::get_instance();
     if (!config.is_loaded()) {
-        std::cerr << "Configuration has not been loaded" << std::endl;
+        LOG_ERROR("Configuration has not been loaded");
         return false;
     }
 
@@ -73,13 +76,13 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     }
 
     if (home_path.empty()) {
-        std::cerr << "No home path configured for activeSystem '" << active_system
-                  << "' in configuration.json" << std::endl;
+        LOG_ERROR("No home path configured for activeSystem '" << active_system
+                  << "' in configuration.json");
         return false;
     }
 
     if (!root.contains("scenes") || !root["scenes"].is_array()) {
-        std::cerr << "scenes array not found in configuration.json" << std::endl;
+        LOG_ERROR("scenes array not found in configuration.json");
         return false;
     }
 
@@ -95,13 +98,40 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     }
 
     if (!found_scene) {
-        std::cerr << "Scene name '" << scene_name
-                  << "' not found in configuration.json" << std::endl;
+        LOG_ERROR("Scene name '" << scene_name
+                  << "' not found in configuration.json");
         return false;
     }
 
     const std::string resolved_filename =
         (std::filesystem::path(home_path) / filename).make_preferred().string();
+
+    float world_scale = 1.0f;
+    if (root.contains("worldScale") && root["worldScale"].is_number())
+        world_scale = static_cast<float>(root["worldScale"].get<double>());
+    else if (root.contains("debugWorldScale") &&
+             root["debugWorldScale"].is_number())
+        world_scale = static_cast<float>(root["debugWorldScale"].get<double>());
+    if (world_scale < 1e-6f)
+        world_scale = 1.0f;
+
+    bool optimize_meshes = true;
+    if (root.contains("optimizeMeshes"))
+        optimize_meshes = config.find<bool>("optimizeMeshes");
+
+    bool enable_scene_phys = true;
+    if (root.contains("scenePhysics") && root["scenePhysics"].is_boolean())
+        enable_scene_phys = root["scenePhysics"].get<bool>();
+
+    bool native_gpu_dirty = false;
+    if (try_load_native_cache(scene_name, resolved_filename, world_scale,
+                              optimize_meshes, enable_scene_phys,
+                              native_gpu_dirty))
+        return true;
+    if (native_gpu_dirty)
+        return false;
+
+    const auto scene_t0 = std::chrono::steady_clock::now();
 
     // extract mesh data and create GPU buffers
     tinygltf::Model model{};
@@ -138,9 +168,6 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     }
 
     // get meshes using lookup to store material ID on MeshData
-    bool optimize_meshes = true;
-    if (root.contains("optimizeMeshes"))
-        optimize_meshes = config.find<bool>("optimizeMeshes");
     std::vector<MeshPrimitiveID> mesh_lookup =
         scene::GltfLoader::extract_mesh_data(model, renderer, optimize_meshes);
 
@@ -255,7 +282,7 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
 
                 // One GameObject per mesh node; share the node's transform.
                 const uint32_t go_id = renderer.scene_manager.create_game_object(
-                    xform, static_cast<uint32_t>(node_idx), skin_index);
+                    xform, static_cast<uint32_t>(node_idx), skin_index, node.name);
 
                 // Mesh node transform for inv(meshWorld) * joint * IBM skinning.
                 // SkinSystem is filled after the hierarchy walk; stash on GO for now
@@ -335,7 +362,7 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     // Compose world = parent_world * local for every node (load-time full dirty).
     xforms.mark_all_dirty();
     xforms.propagate();
-    LOG_INFO("[Transform] Propagated hierarchy (" << xforms.count()
+    LOG_VERBOSE("[Transform] Propagated hierarchy (" << xforms.count()
              << " transform slots)");
 
     // worldScale: uniform load-time scale of scene roots (visual + physics).
@@ -343,17 +370,7 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     // (e.g. ~2 cm penetration slop) are tuned for larger props — scale them up
     // in sim space, keep gravity 9.81. Omit or 1.0 = identity. Mass × S³ in
     // spawn_scene_physics. Legacy key: debugWorldScale.
-    float world_scale = 1.0f;
-    {
-        if (root.contains("worldScale") && root["worldScale"].is_number())
-            world_scale = static_cast<float>(root["worldScale"].get<double>());
-        else if (root.contains("debugWorldScale") &&
-                 root["debugWorldScale"].is_number())
-            world_scale =
-                static_cast<float>(root["debugWorldScale"].get<double>());
-        if (world_scale < 1e-6f)
-            world_scale = 1.0f;
-    }
+    // The value was read above so the native cache key matches this apply.
     if (std::abs(world_scale - 1.0f) > 1e-5f) {
         uint32_t n_roots = 0;
         for (uint32_t i = 0; i < xforms.count(); ++i) {
@@ -369,7 +386,7 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
         }
         xforms.mark_all_dirty();
         xforms.propagate();
-        LOG_INFO("[Scene] worldScale=" << world_scale << " applied to "
+        LOG_VERBOSE("[Scene] worldScale=" << world_scale << " applied to "
                  << n_roots << " root transform(s) (mesh + physics)");
     }
 
@@ -414,11 +431,11 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
             // must not play all channels at once.
             anims.play_default_clip(/*loop=*/true);
             if (nclips > 1) {
-                LOG_INFO("[Anim] " << nclips
+                LOG_VERBOSE("[Anim] " << nclips
                          << " clips loaded — press N to cycle (exclusive play)");
             }
         } else {
-            LOG_INFO("[Anim] No node animations in this scene");
+            LOG_VERBOSE("[Anim] No node animations in this scene");
         }
     }
 
@@ -443,52 +460,11 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
             loaded_camera.world_transform = xforms.get_world_matrix(xi);
     }
 
-    // Refresh dual-written SceneInstance worlds (were written before propagate).
-    renderer.scene_manager.refresh_instance_worlds();
-
-    // Upload CPU data (populated by GltfLoader) into the persistently-mapped
-    // GPU buffers on the "upload" side of each double-buffered manager.
-    renderer.scene_manager.update_buffers();
-    renderer.material_manager.update_buffers();
-    renderer.mesh_manager.update_buffers();
-    renderer.texture_manager.upload_textures();
-
-    // Mesh templates + GPU cull resources (fixed per-batch instance regions).
-    // (Descriptors for instances rebinding happens after toggle below as well.)
-    if (!rebuild_draw_batches())
+    // Copy decoded pixels before upload_textures moves them into staging.
+    std::vector<gfx::CachedImage> cache_images;
+    renderer.texture_manager.copy_images_for_cache(cache_images);
+    if (!upload_scene_resources(scene_name))
         return false;
-
-    {
-        last_scene_name_ = scene_name;
-        LOG_INFO("[Scene] Loaded scene '" << scene_name << "':"
-                 << " textures=" << renderer.texture_manager.get_uploaded_count()
-                 << " materials=" << renderer.material_manager.get_material_count()
-                 << " meshPrims=" << renderer.mesh_manager.get_primitive_count()
-                 << " gameObjects=" << renderer.scene_manager.game_object_count()
-                 << " renderMeshes=" << renderer.scene_manager.render_mesh_count()
-                 << " transforms=" << renderer.scene_manager.transforms().count()
-                 << " verts=" << renderer.mesh_manager.get_total_vertex_count()
-                 << " indices=" << renderer.mesh_manager.get_total_index_count());
-    }
-
-    // Commit double-buffered managers + bind descriptors.
-    renderer.scene_manager.toggle_buffers();
-    renderer.material_manager.toggle_buffers();
-    renderer.mesh_manager.toggle_buffers();
-
-    for (uint32_t i = 0; i < renderer.vk.bindless_descriptor_sets.size(); ++i) {
-        auto& set = renderer.vk.bindless_descriptor_sets[i];
-        // Binding 1: GPU-written instance buffer for this frame slot
-        if (renderer.gpu_culling.is_ready()) {
-            auto& inst = renderer.gpu_culling.out_instances(i);
-            gfx::BufferUtils::update_descriptor(
-                renderer.vk.device.device, inst, set, inst.info.size,
-                Renderer::BINDING_DRAW_INSTANCES);
-        }
-        renderer.material_manager.bind_descriptor(2, set);
-        renderer.mesh_manager.bind_descriptor(3, 4, 5, set);
-        renderer.texture_manager.bind_descriptor(Renderer::BINDING_TEXTURES, set);
-    }
 
     // glTF camera support: if the scene contains a camera node, use its
     // world transform + projection parameters for the initial view.
@@ -504,11 +480,11 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
                                         loaded_camera.znear,
                                         loaded_camera.zfar,
                                         loaded_camera.aspectRatio);
-            LOG_INFO("[Camera] Initial view from glTF camera node index "
+            LOG_VERBOSE("[Camera] Initial view from glTF camera node index "
                      << loaded_camera.gltf_camera_index);
         } else {
             camera.frame(center, radius);
-            LOG_INFO("[Camera] Initial view from scene AABB frame: center=("
+            LOG_VERBOSE("[Camera] Initial view from scene AABB frame: center=("
                      << center.x << ", " << center.y << ", " << center.z
                      << ") radius=" << radius);
         }
@@ -517,7 +493,7 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     {
         const glm::vec3 pos = camera.get_position();
         const glm::vec3 fwd = camera.get_forward();
-        LOG_INFO("[Camera] pose after load: pos=(" << pos.x << ", " << pos.y
+        LOG_VERBOSE("[Camera] pose after load: pos=(" << pos.x << ", " << pos.y
                  << ", " << pos.z << ") forward=(" << fwd.x << ", " << fwd.y
                  << ", " << fwd.z << ")");
     }
@@ -571,7 +547,7 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
                 const glm::vec3 boom =
                     rig ? rig->boom_offset : glm::vec3(0.f);
                 const bool tp = rig && rig->third_person;
-                LOG_INFO("[ECS] Player camera at "
+                LOG_VERBOSE("[ECS] Player camera at "
                          << (tp ? "third_person" : "first_person") << " pos=("
                          << pos.x << ", " << pos.y << ", " << pos.z
                          << ") eye_offset=(" << eye.x << ", " << eye.y << ", "
@@ -595,13 +571,13 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
 
     // Log scene lights (after world transforms) for import / exposure debugging.
     if (!renderer.lights.empty()) {
-        LOG_INFO("[Lights] scene lights=" << renderer.lights.size()
+        LOG_VERBOSE("[Lights] scene lights=" << renderer.lights.size()
                  << " scene_center=(" << renderer.scene_center.x << ", "
                  << renderer.scene_center.y << ", " << renderer.scene_center.z
                  << ")");
         for (size_t i = 0; i < renderer.lights.size(); ++i) {
             const auto& L = renderer.lights[i];
-            LOG_INFO("[Lights]   [" << i << "] type=" << static_cast<uint32_t>(L.type)
+            LOG_VERBOSE("[Lights]   [" << i << "] type=" << static_cast<uint32_t>(L.type)
                      << " pos=(" << L.position.x << ", " << L.position.y << ", "
                      << L.position.z << ") dir=(" << L.direction.x << ", "
                      << L.direction.y << ", " << L.direction.z
@@ -610,25 +586,23 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
                      << "] xform=" << L.transform_index << " contrib~"
                      << gfx::estimate_light_contribution(L, renderer.scene_center));
         }
-        LOG_INFO("[Lights] auto exposure="
+        LOG_VERBOSE("[Lights] auto exposure="
                  << gfx::compute_auto_exposure(renderer.lights, renderer.scene_center));
     } else {
-        LOG_INFO("[Lights] no KHR_lights_punctual — using engine global directional");
+        LOG_VERBOSE("[Lights] no KHR_lights_punctual — using engine global directional");
     }
 
     camera.reset_mouse_state();
 
     // Scene physics from KHR_physics_rigid_bodies. Child meshes without their
     // own body follow the parent body's node.
+    bool physics_spawned = true;
     {
-        bool enable_scene_phys = true;
-        const nlohmann::json& cfg = core::Configuration::get_root();
-        if (cfg.contains("scenePhysics") && cfg["scenePhysics"].is_boolean())
-            enable_scene_phys = cfg["scenePhysics"].get<bool>();
         if (enable_scene_phys) {
             if (!spawn_scene_physics(model)) {
                 LOG_ERROR("[Physics] spawn_scene_physics failed "
                           "(continuing without colliders)");
+                physics_spawned = false;
             }
             configure_kill_floor();
         } else {
@@ -637,16 +611,45 @@ bool gfx::Engine::load_scene(const std::string &scene_name) {
     }
 
     // Seed both frame slots with lighting, then bind descriptors.
-    for (uint32_t i = 0; i < Renderer::MAX_FRAMES_IN_FLIGHT; ++i) {
+    for (uint32_t i = 0; i < Renderer::MAX_FRAMES_IN_FLIGHT; ++i)
         write_frame_lighting(i);
-    }
     bind_frame_lighting_to_all_sets();
+
+    {
+        const int scene_ms = static_cast<int>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - scene_t0)
+                .count());
+        log_scene_load("gltf", scene_ms);
+
+        if (physics_spawned) {
+            std::vector<std::string> node_names;
+            node_names.reserve(model.nodes.size());
+            for (const auto& node : model.nodes)
+                node_names.emplace_back(node.name);
+            uint32_t cam_xform = scene::TransformManager::kInvalid;
+            if (loaded_camera.valid && camera_node_index >= 0 &&
+                static_cast<size_t>(camera_node_index) < node_to_xform.size()) {
+                cam_xform = node_to_xform[static_cast<size_t>(camera_node_index)];
+            }
+            if (!store_native_cache(
+                    scene_name, resolved_filename, world_scale, optimize_meshes,
+                    enable_scene_phys, node_names, loaded_camera.valid,
+                    loaded_camera.yfov, loaded_camera.aspectRatio,
+                    loaded_camera.znear, loaded_camera.zfar,
+                    loaded_camera.gltf_camera_index, cam_xform, cache_images)) {
+                LOG_ERROR("[Native] cache was not written");
+            }
+        } else {
+            LOG_ERROR("[Native] skipped cache write because physics spawn failed");
+        }
+    }
 
     return true;
 }
 
 void gfx::Engine::write_frame_lighting(uint32_t frame_index,
-                                       const glm::mat4* view_proj) {
+                                       const glm::mat4* /*view_proj*/) {
     if (frame_index >= Renderer::MAX_FRAMES_IN_FLIGHT)
         return;
 
@@ -726,51 +729,82 @@ void gfx::Engine::write_frame_lighting(uint32_t frame_index,
             scene.min = c - glm::vec3(1.0f);
             scene.max = c + glm::vec3(1.0f);
         }
-        glm::vec3 full[8];
-        bool have_frustum = view_proj && gfx::ShadowMap::frustum_corners(*view_proj, full);
         const float npl = std::max(camera.near_plane, 0.01f);
-        float fpl = std::max(camera.far_plane, npl + 1.0f);
-        const glm::vec3 sext = glm::max(scene.extents(), glm::vec3(1.0f));
-        fpl = std::min(fpl, glm::length(sext) + npl);
+        const glm::vec3 cam_p = camera.get_position();
+        const glm::vec3 cam_f = camera.get_forward();
+        float max_vz = npl;
+        for (int i = 0; i < 8; ++i) {
+            const glm::vec3 p = glm::vec3((i & 1) ? scene.max.x : scene.min.x,
+                                          (i & 2) ? scene.max.y : scene.min.y,
+                                          (i & 4) ? scene.max.z : scene.min.z);
+            max_vz = std::max(max_vz, glm::dot(p - cam_p, cam_f));
+        }
+        // Last receiver distance = farthest scene corner along the view, not
+        // camera far (~1 km) which would make a tabletop map ~1 texel.
+        const float cam_far = std::max(camera.far_plane, npl + 1.0f);
+        const float fpl = std::min(cam_far, std::max(max_vz, npl + 1.0f));
         constexpr float kLambda = 0.7f;
         auto split_at = [&](float p) {
             const float uni = npl + (fpl - npl) * p;
             const float logv = npl * std::pow(fpl / npl, p);
             return glm::mix(uni, logv, kLambda);
         };
-        // Nested ranges (0..s0, 0..s1, 0..fpl). Disjoint slices drop near casters
-        // from farther maps, which cuts umbras at the split (hard line).
         float s0 = split_at(1.0f / 3.0f);
         float s1 = split_at(2.0f / 3.0f);
-        s0 = std::max(s0, std::min(12.0f, 0.12f * fpl));
-        s1 = std::max(s1, s0 * 2.0f);
-        const float edges[4] = {npl, s0, s1, fpl};
-        auto t_of = [&](float d) {
-            return std::clamp((d - npl) / std::max(fpl - npl, 1e-3f), 0.0f, 1.0f);
-        };
+        if (s1 <= s0)
+            s1 = std::min(fpl, s0 + 0.05f);
+        const float band0 =
+            std::max(s0 * gfx::kShadowSplitBlend, gfx::kShadowSplitBlendMin);
+        const float band1 =
+            std::max(s1 * gfx::kShadowSplitBlend, gfx::kShadowSplitBlendMin);
+        // Cut pyramids: cascade 0 = near..s0; 1 and 2 overlap the blend band
+        // so receivers that sample two maps are inside both receiver volumes.
+        // Far-cascade casters still include near objects via the caster volume
+        // (front planes dropped) — do not nest 0..s0 / 0..s1.
+        const float z0[gfx::kShadowCascades] = {npl, std::max(npl, s0 - band0),
+                                                std::max(npl, s1 - band1)};
+        const float z1[gfx::kShadowCascades] = {s0, s1, fpl};
 
+        float aspect = 16.0f / 9.0f;
+        if (renderer.vk.swap_chain_extent.height > 0)
+            aspect = static_cast<float>(renderer.vk.swap_chain_extent.width) /
+                     static_cast<float>(renderer.vk.swap_chain_extent.height);
+        const glm::mat4 cam_view = camera.get_view_matrix();
         uint32_t active = 0;
         for (uint32_t c = 0; c < gfx::kShadowCascades; ++c) {
-            core::AABB bounds = scene;
-            if (have_frustum) {
-                const float d1 = edges[c + 1];
-                glm::vec3 slice[8];
-                gfx::ShadowMap::slice_frustum_corners(full, 0.0f, t_of(d1), slice);
-                bounds = gfx::ShadowMap::caster_bounds_from_corners(
-                    slice, to_light, scene.min, scene.max);
-                if (!bounds.is_valid())
-                    bounds = scene;
+            const glm::mat4 slice_vp = gfx::cascade_receiver_view_proj(
+                cam_view, camera.fov_degrees, aspect, z0[c], z1[c]);
+            renderer.shadow_map.last_receiver_vp[c] = slice_vp;
+            renderer.shadow_map.last_caster[c] =
+                gfx::build_caster_volume(slice_vp, to_light);
+            glm::vec3 slice[8];
+            glm::mat4 vp;
+            if (gfx::ShadowMap::frustum_corners(slice_vp, slice)) {
+                vp = renderer.shadow_map.fit_view_proj_from_corners(
+                    to_light, slice, scene.min, scene.max);
+            } else {
+                vp = renderer.shadow_map.fit_view_proj(to_light, scene.min, scene.max);
             }
-            constants->shadowViewProj[c] =
-                renderer.shadow_map.fit_view_proj(to_light, bounds.min, bounds.max);
-            renderer.shadow_map.last_view_proj[c] = constants->shadowViewProj[c];
+            constants->shadowViewProj[c] = vp;
+            renderer.shadow_map.last_view_proj[c] = vp;
             ++active;
         }
         constants->shadowSplits =
             glm::vec4(s0, s1, fpl, static_cast<float>(active));
+        constants->shadowTexelWorld = glm::vec4(0.0f);
+        const float res = static_cast<float>(std::max(1u, renderer.shadow_map.resolution()));
+        for (uint32_t c = 0; c < active && c < gfx::kShadowCascades; ++c) {
+            const glm::mat4 inv = glm::inverse(constants->shadowViewProj[c]);
+            auto unproj = [&](float x, float y, float z) {
+                glm::vec4 q = inv * glm::vec4(x, y, z, 1.0f);
+                return glm::vec3(q) / std::max(std::abs(q.w), 1e-6f);
+            };
+            const float xw = glm::length(unproj(1.0f, 0.0f, 0.5f) - unproj(-1.0f, 0.0f, 0.5f));
+            constants->shadowTexelWorld[c] = xw / res;
+        }
         constants->shadowParams =
             glm::vec4(renderer.shadow_map.texel_uv(), 1.0f,
-                      static_cast<float>(shadow_idx), renderer.shadow_map.bias);
+                      static_cast<float>(shadow_idx), 0.0f);
         renderer.shadow_map.last_splits = constants->shadowSplits;
         renderer.shadow_map.last_to_light = to_light;
         renderer.shadow_map.last_cascade_count = active;

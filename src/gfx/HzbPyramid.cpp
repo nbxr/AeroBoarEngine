@@ -312,7 +312,7 @@ bool HzbPyramid::resize(VkDevice device, VmaAllocator allocator, VkExtent2D exte
 
     ready_ = true;
     needs_layout_init_ = true;
-    LOG_INFO("[Hzb] Pyramid " << width_ << "x" << height_ << " (" << mip_count_
+    LOG_VERBOSE("[Hzb] Pyramid " << width_ << "x" << height_ << " (" << mip_count_
              << " mips), same-frame double-buffered");
     return true;
 }

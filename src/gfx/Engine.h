@@ -14,9 +14,14 @@
 #include <stdio.h>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace tinygltf {
 class Model;
+}
+
+namespace scene {
+struct NativeSceneFile;
 }
 
 namespace gfx {
@@ -151,6 +156,26 @@ class Engine {
 
     // Rebuild mesh_draw_infos + GpuCulling after runtime instance changes.
     bool rebuild_draw_batches();
+
+    // Native scene cache (build/cache/<scene>.abn). gpu_dirty is set when a
+    // failed load already uploaded GPU resources and glTF fallback is unsafe.
+    bool apply_native_cpu(scene::NativeSceneFile& file);
+    // False when CPU managers could not be dropped (GPU textures already live).
+    bool rollback_native_cpu();
+    bool try_load_native_cache(const std::string& scene_name,
+                               const std::string& source_path,
+                               float world_scale, bool optimize_meshes,
+                               bool scene_physics, bool& gpu_dirty);
+    bool store_native_cache(const std::string& scene_name,
+                            const std::string& source_path, float world_scale,
+                            bool optimize_meshes, bool scene_physics,
+                            const std::vector<std::string>& node_names,
+                            bool cam_valid, float yfov, float aspect,
+                            float znear, float zfar, int cam_gltf,
+                            uint32_t cam_xform,
+                            const std::vector<gfx::CachedImage>& images);
+    bool upload_scene_resources(const std::string& scene_name);
+    void log_scene_load(const char* how, int scene_ms);
 
     void destroy_sync_primitives();
     void destroy_descriptor_pool();

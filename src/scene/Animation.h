@@ -65,6 +65,10 @@ class AnimationSystem {
   public:
     void clear();
 
+    // Replace clips (players and masks cleared). Used by the native scene cache.
+    void install_clips(std::vector<AnimationClip> clips);
+    [[nodiscard]] const std::vector<AnimationClip>& clips() const { return clips_; }
+
     // Build clips from tinygltf; resolve channel targets via gltf_node_to_transform.
     // Optional morphs: enables path "weights" channels.
     // Returns number of clips loaded.

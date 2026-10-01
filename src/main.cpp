@@ -86,14 +86,16 @@ int main() {
             core::close_file_log();
             return -1;
         }
+        const auto& dbg = core::Configuration::get_instance().debug;
+        if (dbg.clear_log_on_start)
+            core::reopen_file_log_trunc();
 
         AeroBoar aero_boar;
         int ret = aero_boar.fly();
 
-        // Keep the console window open if we created one and the user
-        // launched by double-click (common for standalone runs).
+        const bool auto_quit = dbg.exit_after_frames > 0 || dbg.hidden_window;
 #ifdef _WIN32
-        if (GetConsoleWindow()) {
+        if (!auto_quit && GetConsoleWindow()) {
             log_line("Press Enter to close this console...");
             std::cin.get();
         }

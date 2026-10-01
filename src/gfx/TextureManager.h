@@ -9,6 +9,16 @@
 #include <vk_mem_alloc.h>
 
 namespace gfx {
+
+// Decoded RGBA8 image kept so a native scene file can skip stb/tinygltf.
+struct CachedImage {
+    std::string name;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint8_t srgb = 0;
+    std::vector<uint8_t> rgba;
+};
+
 class TextureManager {
 
   private:
@@ -70,6 +80,11 @@ class TextureManager {
 
     void remove_texture(const TextureID texture_id);
     void upload_textures();
+
+    // Copy CPU pixels (or decode filepath) before upload_textures moves them.
+    void copy_images_for_cache(std::vector<CachedImage>& out) const;
+    // Drop CPU entries that have not been uploaded. False if a GPU image exists.
+    bool clear_unuploaded();
     void transfer_queue_ownership();
     void bind_descriptor(uint32_t index, VkDescriptorSet target_set);
     void shutdown();

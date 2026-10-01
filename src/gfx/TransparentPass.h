@@ -38,6 +38,7 @@ class TransparentPass {
         uint32_t index_count = 0;
         uint32_t index_offset = 0;
         int32_t vertex_offset = 0;
+        bool index16 = false;
     };
 
     bool create(VkDevice device, VmaAllocator allocator, Renderer& renderer);

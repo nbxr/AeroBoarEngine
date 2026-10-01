@@ -30,8 +30,8 @@ layout(set = 0, binding = 0, std140) uniform CullGlobals {
     uint  emit_filter;
     uint  instance_base_offset;
     uint  extra_plane_count;
-    uint  pad2;
-    vec4  extra_planes[8];
+    uint  skip_frustum_cull;
+    vec4  extra_planes[16];
 } globals;
 
 layout(set = 0, binding = 3, std430) readonly buffer BatchCounts {

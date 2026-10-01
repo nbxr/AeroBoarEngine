@@ -70,10 +70,13 @@ struct FrameConstants {
     // Directional CSM (3 cascades, shared by both eyes later).
     glm::mat4 shadowViewProj[3]{glm::mat4(1.0f), glm::mat4(1.0f), glm::mat4(1.0f)};
     glm::vec4 shadowSplits{0.0f}; // x,y = split distances (view m), z = cascade count
-    glm::vec4 shadowParams{0.0f}; // x=texel UV, y=enabled, z=light index, w=bias
+    glm::vec4 shadowParams{0.0f}; // x=texel UV, y=enabled, z=light index, w unused
     glm::vec4 cameraForward{0.0f, 0.0f, -1.0f, 0.0f};
+    // Meters per shadow texel, per cascade. Receiver bias uses this, not a
+    // fixed NDC offset (that grows with the light-space depth range).
+    glm::vec4 shadowTexelWorld{0.0f};
 };
-static_assert(sizeof(FrameConstants) == 432, "FrameConstants size mismatch");
+static_assert(sizeof(FrameConstants) == 448, "FrameConstants size mismatch");
 static_assert(offsetof(FrameConstants, lightMeta) == 16, "FrameConstants layout");
 static_assert(offsetof(FrameConstants, shCoefficients) == 32, "FrameConstants layout");
 static_assert(offsetof(FrameConstants, iblIndices) == 176, "FrameConstants layout");
@@ -81,6 +84,7 @@ static_assert(offsetof(FrameConstants, shadowViewProj) == 192, "FrameConstants l
 static_assert(offsetof(FrameConstants, shadowSplits) == 384, "FrameConstants layout");
 static_assert(offsetof(FrameConstants, shadowParams) == 400, "FrameConstants layout");
 static_assert(offsetof(FrameConstants, cameraForward) == 416, "FrameConstants layout");
+static_assert(offsetof(FrameConstants, shadowTexelWorld) == 432, "FrameConstants layout");
 
 // Estimate unshaded peak contribution used for auto-exposure (before NdotL / PI).
 inline float estimate_light_contribution(const Light& L, const glm::vec3& scene_center) {

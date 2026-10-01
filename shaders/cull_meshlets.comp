@@ -42,8 +42,8 @@ layout(set = 0, binding = 0, std140) uniform CullGlobals {
     uint  emit_filter;
     uint  instance_base_offset;
     uint  extra_plane_count;
-    uint  pad2;
-    vec4  extra_planes[8];
+    uint  skip_frustum_cull;
+    vec4  extra_planes[16];
 } globals;
 
 layout(set = 0, binding = 2, std430) readonly buffer OutInstances {
@@ -62,12 +62,20 @@ layout(set = 0, binding = 8, std430) readonly buffer Meshlets {
     Meshlet meshlets[];
 };
 
-layout(set = 0, binding = 9, std430) writeonly buffer MeshletCmds {
-    uint cmds[];
+layout(set = 0, binding = 9, std430) writeonly buffer MeshletCmds16 {
+    uint cmds16[];
 };
 
-layout(set = 0, binding = 10, std430) buffer DrawCount {
-    uint draw_count;
+layout(set = 0, binding = 10, std430) buffer DrawCount16 {
+    uint draw_count16;
+};
+
+layout(set = 0, binding = 11, std430) writeonly buffer MeshletCmds32 {
+    uint cmds32[];
+};
+
+layout(set = 0, binding = 12, std430) buffer DrawCount32 {
+    uint draw_count32;
 };
 
 layout(push_constant) uniform PC {
@@ -104,17 +112,26 @@ bool cone_backfacing(mat4 model, vec3 apex, vec3 axis, float cutoff, vec3 cam_w)
     return dot(v * inversesqrt(len2), axis_w) >= cutoff;
 }
 
-void emit_draw(uint index_count, uint instance_count, uint first_index,
+void emit_draw(uint flags, uint index_count, uint instance_count, uint first_index,
                int vertex_offset, uint first_instance) {
-    uint out_i = atomicAdd(draw_count, 1u);
+    bool u16 = (flags & 1u) != 0u;
+    uint out_i = u16 ? atomicAdd(draw_count16, 1u) : atomicAdd(draw_count32, 1u);
     if (out_i >= pc.max_draws)
         return;
     uint o = out_i * 5u;
-    cmds[o + 0u] = index_count;
-    cmds[o + 1u] = instance_count;
-    cmds[o + 2u] = first_index;
-    cmds[o + 3u] = uint(vertex_offset);
-    cmds[o + 4u] = first_instance;
+    if (u16) {
+        cmds16[o + 0u] = index_count;
+        cmds16[o + 1u] = instance_count;
+        cmds16[o + 2u] = first_index;
+        cmds16[o + 3u] = uint(vertex_offset);
+        cmds16[o + 4u] = first_instance;
+    } else {
+        cmds32[o + 0u] = index_count;
+        cmds32[o + 1u] = instance_count;
+        cmds32[o + 2u] = first_index;
+        cmds32[o + 3u] = uint(vertex_offset);
+        cmds32[o + 4u] = first_instance;
+    }
 }
 
 void main() {
@@ -133,7 +150,8 @@ void main() {
     if (b.meshlet_count == 0u) {
         if (mx != 0u)
             return;
-        emit_draw(b.index_count, visible, b.first_index, b.vertex_offset, inst_base);
+        emit_draw(b.flags, b.index_count, visible, b.first_index, b.vertex_offset,
+                  inst_base);
         return;
     }
     if (mx >= b.meshlet_count)
@@ -157,7 +175,7 @@ void main() {
         if (cone_backfacing(di.model, m.cone_apex_cutoff.xyz, m.cone_axis_radius.xyz,
                             m.cone_apex_cutoff.w, cam))
             continue;
-        emit_draw(m.index_count, 1u, b.first_index + m.first_index, b.vertex_offset,
-                  inst_base + slot);
+        emit_draw(b.flags, m.index_count, 1u, b.first_index + m.first_index,
+                  b.vertex_offset, inst_base + slot);
     }
 }

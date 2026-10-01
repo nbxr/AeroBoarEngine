@@ -22,10 +22,11 @@
 #include <GLFW/glfw3.h>
 
 int AeroBoar::fly() {
+    const auto startup_boot = std::chrono::steady_clock::now();
 
     // Initialize GLFW
     if (!glfwInit()) {
-        std::cerr << "Failed to initialize GLFW" << std::endl;
+        LOG_ERROR("Failed to initialize GLFW");
         return -1;
     }
 
@@ -36,11 +37,13 @@ int AeroBoar::fly() {
     // Set GLFW window hints
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+    if (core::Configuration::get_instance().debug.hidden_window)
+        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
 
     // Create the window
     engine.renderer.window.glfw_handle = glfwCreateWindow(640, 480, "Aero Boar", NULL, NULL);
     if (!engine.renderer.window.glfw_handle) {
-        std::cerr << "Failed to create GLFW window" << std::endl;
+        LOG_ERROR("Failed to create GLFW window");
         glfwTerminate();
         return -1;
     }
@@ -72,6 +75,8 @@ int AeroBoar::fly() {
     glfwMakeContextCurrent(engine.renderer.window.glfw_handle);
     glfwSwapInterval(1);
 
+    const auto startup_window = std::chrono::steady_clock::now();
+
     // initialize
     if (!engine.initialize()) {
         LOG_ERROR("Engine initialize() failed");
@@ -79,14 +84,25 @@ int AeroBoar::fly() {
         glfwTerminate();
         return -1;
     }
+    const auto startup_init = std::chrono::steady_clock::now();
 
     // load the default scene defined in configuration.yaml
     if (!engine.load_default_scene()) {
-        std::cerr << "Failed to load default scene" << std::endl;
+        LOG_ERROR("Failed to load default scene");
         engine.destroy();
         glfwTerminate();
         return -1;
     }
+    const auto startup_scene = std::chrono::steady_clock::now();
+    const auto startup_ms = [](std::chrono::steady_clock::time_point a,
+                               std::chrono::steady_clock::time_point b) {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(b - a).count();
+    };
+    LOG_INFO("[Startup] window_ms="
+             << startup_ms(startup_boot, startup_window)
+             << " init_ms=" << startup_ms(startup_window, startup_init)
+             << " scene_ms=" << startup_ms(startup_init, startup_scene)
+             << " ready_ms=" << startup_ms(startup_boot, startup_scene));
 
     // Physics collider wireframes (F3 toggles at runtime). Scene KHR bodies
     // are built during load_scene; kill floor is configured there too.
@@ -110,22 +126,34 @@ int AeroBoar::fly() {
             const nlohmann::json* node = &root["cameraOverride"];
             if (node->is_array() && !node->empty())
                 node = &(*node)[0];
-            if (node->is_object() && node->value("enabled", false) &&
-                node->contains("position") && (*node)["position"].is_array() &&
-                (*node)["position"].size() >= 3 &&
-                node->contains("forward") && (*node)["forward"].is_array() &&
-                (*node)["forward"].size() >= 3) {
-                const auto& p = (*node)["position"];
-                const auto& f = (*node)["forward"];
+            const nlohmann::json* pose = node;
+            if (node->is_object() && node->contains("pose") && (*node)["pose"].is_string()) {
+                const std::string name = (*node)["pose"].get<std::string>();
+                if (node->contains(name) && (*node)[name].is_object())
+                    pose = &(*node)[name];
+                else if (node->contains("poses") && (*node)["poses"].is_object() &&
+                         (*node)["poses"].contains(name))
+                    pose = &(*node)["poses"][name];
+            }
+            if (node->is_object() && node->value("enabled", false) && pose &&
+                pose->contains("position") && (*pose)["position"].is_array() &&
+                (*pose)["position"].size() >= 3 &&
+                pose->contains("forward") && (*pose)["forward"].is_array() &&
+                (*pose)["forward"].size() >= 3) {
+                const auto& p = (*pose)["position"];
+                const auto& f = (*pose)["forward"];
                 const glm::vec3 pos(p[0].get<float>(), p[1].get<float>(),
                                     p[2].get<float>());
                 const glm::vec3 fwd(f[0].get<float>(), f[1].get<float>(),
                                     f[2].get<float>());
                 engine.camera.set_position_and_forward(pos, fwd);
+                engine.camera.pose_locked = true;
+                const glm::vec3 got_p = engine.camera.get_position();
+                const glm::vec3 got_f = engine.camera.get_forward();
                 LOG_INFO("[Camera] Override from configuration.json: pos=("
-                         << pos.x << ", " << pos.y << ", " << pos.z
-                         << ") forward=(" << fwd.x << ", " << fwd.y << ", "
-                         << fwd.z << ")");
+                         << got_p.x << ", " << got_p.y << ", " << got_p.z
+                         << ") forward=(" << got_f.x << ", " << got_f.y << ", "
+                         << got_f.z << ") (pose locked)");
             }
         }
     }
@@ -145,6 +173,8 @@ int AeroBoar::fly() {
     // Main render loop — order matches ecs-plan §9
     double last_frame_time = glfwGetTime();
 
+    int frames_drawn = 0;
+    const int exit_after = core::Configuration::get_instance().debug.exit_after_frames;
     while (!glfwWindowShouldClose(engine.renderer.window.glfw_handle)) {
         double current_time = glfwGetTime();
         float delta_time = static_cast<float>(current_time - last_frame_time);
@@ -179,7 +209,7 @@ int AeroBoar::fly() {
             if (width > 0 && height > 0) {
                 if (width != engine.renderer.window.width ||
                     height != engine.renderer.window.height) {
-                    LOG_INFO("[Main] Window size changed: "
+                    LOG_VERBOSE("[Main] Window size changed: "
                              << engine.renderer.window.width << "x"
                              << engine.renderer.window.height << " -> " << width
                              << "x" << height << " (triggering swapchain recreate)");
@@ -264,6 +294,10 @@ int AeroBoar::fly() {
         if (width > 0 && height > 0) {
             cpu_frame.disarm();
             engine.render();
+            ++frames_drawn;
+            if (exit_after > 0 && frames_drawn >= exit_after) {
+                glfwSetWindowShouldClose(engine.renderer.window.glfw_handle, GLFW_TRUE);
+            }
         }
         FrameMark;
 

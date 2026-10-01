@@ -97,9 +97,9 @@ bool gfx::Engine::init_render_pass() {
         vkGetPhysicalDeviceProperties2(renderer.vk.device.physical_device, &props2);
         if (ds_props.supportedDepthResolveModes & VK_RESOLVE_MODE_MAX_BIT) {
             depth_resolve_mode = VK_RESOLVE_MODE_MAX_BIT;
-            LOG_INFO("[HiZ] Depth MSAA resolve mode: MAX (reverse-Z closest)");
+            LOG_VERBOSE("[HiZ] Depth MSAA resolve mode: MAX (reverse-Z closest)");
         } else {
-            LOG_INFO("[HiZ] Depth MSAA resolve mode: SAMPLE_ZERO (MAX unsupported)");
+            LOG_VERBOSE("[HiZ] Depth MSAA resolve mode: SAMPLE_ZERO (MAX unsupported)");
         }
     }
 
@@ -517,7 +517,7 @@ bool gfx::Engine::init_depth_prepass() {
         }
     }
 
-    LOG_INFO("[HiZ] Depth prepass ready (" << renderer.vk.swap_chain_extent.width
+    LOG_VERBOSE("[HiZ] Depth prepass ready (" << renderer.vk.swap_chain_extent.width
              << "x" << renderer.vk.swap_chain_extent.height << ", 1x samples)");
     return true;
 }

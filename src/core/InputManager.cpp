@@ -229,12 +229,12 @@ void InputManager::initialize(GLFWwindow *window) {
 #ifdef _WIN32
     if (uses_hidden_capture()) {
         install_windows_raw_look(window_, &raw_look_active_);
-        LOG_INFO("[Input] remote_session=" << (remote_session_ ? "yes" : "no")
+        LOG_VERBOSE("[Input] remote_session=" << (remote_session_ ? "yes" : "no")
                  << " windows_raw_look=" << (raw_look_active_ ? "yes" : "no"));
     } else
 #endif
     {
-        LOG_INFO("[Input] remote_session=" << (remote_session_ ? "yes" : "no"));
+        LOG_VERBOSE("[Input] remote_session=" << (remote_session_ ? "yes" : "no"));
     }
 
     // Initialize mouse position and tracking baseline
@@ -415,7 +415,7 @@ void InputManager::recenter_hidden_cursor(bool force) {
         pending_recenter_ = false;
         if (!g_logged_warp_fail) {
             g_logged_warp_fail = true;
-            LOG_INFO("[Input] cursor warp not honored (typical RDP). "
+            LOG_VERBOSE("[Input] cursor warp not honored (typical RDP). "
                      "Look uses the full desktop until the screen edge.");
         }
     }
@@ -479,7 +479,7 @@ void InputManager::cursor_position_callback(GLFWwindow *window, double xpos,
 
         const float mag = glm::length(delta);
 #if AERO_DEBUG_FORCE_NORMAL_CURSOR
-        LOG_INFO("[Input] captured raw |delta|=" << mag << " d=(" << delta.x
+        LOG_VERBOSE("[Input] captured raw |delta|=" << mag << " d=(" << delta.x
                  << ", " << delta.y << ")");
 #endif
 

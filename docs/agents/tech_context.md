@@ -17,7 +17,8 @@
 - **Physics (runtime)**: Jolt Physics v5.3.0 (`physics::PhysicsWorld`, FetchContent target `Jolt`)
 - **Profiler (optional)**: Tracy v0.14.1 (`TracyClient`, FetchContent). CMake `-DAERO_TRACY=ON` sets `TRACY_ENABLE` + on-demand on **both** TracyClient and the engine (otherwise `ZoneScoped` is a no-op). Header `src/core/Profiler.h`. Instrumented: `FrameMark` per loop, `CpuScope` zones (`cpu.input` … `cpu.present`), load (`load.scene` / `load.meshes`), Vulkan GPU zones via `GpuTimestamps` (`gpu.shadow` …), plots `cull.vis` / `meshlet.drawn`. GUI is the GitHub release binary (port 8086), not built by this project.
 - **HUD / overlay text**: `gfx::HudTextPass` — 8×8 atlas, alpha-blended quads. `HudSpace::Screen` (pixels, top-left) for desktop overlay; `HudSpace::View` (meters on a camera-space plane) for a later head-locked VR HUD. Drawn after WBOIT on the swapchain (1×, load color → present). Not bindless. `shaders/hud_text.{vert,frag}`.
-- **Frame stats**: `core::FrameStats` (`src/core/FrameStats.h`) CPU RAII scopes (`CpuStage`) + `gfx::GpuTimestamps` query pool (`src/gfx/GpuTimestamps.{h,cpp}`, `GpuStage`). Overlay (F4) shows wall FPS, **busy vs gpu-wait**, EMA (α=0.1) + min/max, auto ns/µs/ms, **vis** (instances) and **ml** (meshlet cone/frustum: drawn/tested). CPU rows are the previous frame (`n-1`); GPU timestamps are one FIF slot old (`n-2`). Timestamps are written at compute / vertex / color-attachment (depth+HZB ends BOTTOM_OF_PIPE). Stored values are still milliseconds. Extend by adding a `GpuStage` and `gpu_times.scope(cmd, fi, stage)`. Unused GPU stages stay `--`. Instance/meshlet cull **lines** also go to `aero_boar.log` on change. Tracy (`AERO_TRACY`) records the same CPU/GPU stage names plus `FrameMark`.
+- **Frame stats**: `core::FrameStats` (`src/core/FrameStats.h`) CPU RAII scopes (`CpuStage`) + `gfx::GpuTimestamps` query pool (`src/gfx/GpuTimestamps.{h,cpp}`, `GpuStage`). Overlay (F4) shows wall FPS, **busy vs gpu-wait**, EMA (α=0.1) + min/max, auto ns/µs/ms, **vis** (instances) and **ml** (meshlet cone/frustum: drawn/tested). CPU rows are the previous frame (`n-1`); GPU timestamps are one FIF slot old (`n-2`). Timestamps are written at compute / vertex / color-attachment (depth+HZB ends BOTTOM_OF_PIPE). Stored values are still milliseconds. Extend by adding a `GpuStage` and `gpu_times.scope(cmd, fi, stage)`. Unused GPU stages stay `--`. Load/startup chatter is `debug.verbose`; instance/meshlet cull lines are `debug.logCull`. Tracy (`AERO_TRACY`) records the same CPU/GPU stage names plus `FrameMark`.
+- **Debug config** (`assets/scenes/configuration.json` `debug` + `cameraOverride`): `verbose` / `logCull`; `queenShadowProbe` + `shadowMapDump` (`off`|`texel`|`patch17`|`layer`) + `shadowProbeTarget`; `exitAfterFrames` / `hiddenWindow` / `clearLogOnStart`. **P** dumps a pasteable camera pose. `pose_locked` blocks FpsMove/boom. Full shadow pickup log: `docs/architecture/shadow-caster.md` §11. CWD = `build/`.
 - **Physics (planned asset authoring)**: Khronos glTF extensions — see § Physics assets below
 - **glTF extension matrix**: `docs/architecture/gltf-extensions.md` (supported vs backlog; AnimationPointerUVs, materials, physics)
 - **VR chess product plan**: `docs/architecture/vr-chess-physics-plan.md`
@@ -45,6 +46,22 @@
 - **Runtime:** `Engine::spawn_scene_physics` → Jolt (`PhysicsWorld`).
 - **Status:** MVP (box/capsule/implicit + mesh convex hulls). Compound / triangle mesh later.
 - **Authoring tip:** multi-material pieces → joined mesh + one RB; share mesh indices for GPU instancing; Blender “Render off” is **not** read by the engine.
+
+### Native scene cache (`.abn`)
+
+A successful `Engine::load_scene` writes `cache/<scene>.abn` relative to the process CWD (`build/cache/` when the exe is launched from `build/`). The next load with the same stamp reads that file and skips tinygltf, image decode, meshoptimizer, and Jolt hull cooking. GPU upload of the stored RGBA8 and vertex bytes still runs.
+
+**Stamp** (every field must match, or the cache is rewritten from glTF): source file size, source mtime, exact `worldScale` bits, `optimizeMeshes`, `scenePhysics`, `JPH_VERSION_ID`. Magic `ABN1`, `kNativeSceneVersion` = 2, little-endian. The stamp header stays uncompressed. The rest of the file is one zstd frame (level 3, content checksum) of the logical document: section directory plus section bytes. Library: zstd 1.5.7, built optimized and linked into every engine config (`aero_zstd` in `CMakeLists.txt`). Bump the version when `gfx::Material` (256 B), `gfx::Vertex` (64 B), `gfx::MeshletDesc` (64 B), or a section layout changes, and delete the old `.abn`.
+
+**Sections:** textures (RGBA8), materials, meshes (verts, indices, meshlets, local AABB), transforms, node names, game objects, render meshes, skins, animation clips, morphs, lights, camera, ECS roster, cooked Jolt bodies. The snapshot is taken after `worldScale` and ECS scale. The native path restores that snapshot and does not scale again. Script components store the script name; `script_system_bind` recreates the instance on load.
+
+**Failure:** the file is parsed fully before managers are mutated. A failure before GPU upload rolls the CPU scene back and loads glTF. A failure after upload sets the recovery path (`gpu_dirty`) and leaves the cooked file in place.
+
+**Logs** (`LOG_INFO`, always on): `[Native] cache missing|mismatch`, `[Native] wrote <path> bytes= raw_bytes= level= compress_ms= write_ms=`, `[Native] zstd raw_bytes= comp_bytes= decompress_ms=`, `[Native] load read_ms= cpu_ms= upload_ms= physics_ms= total_ms=`, `[Scene] how=gltf|native` census (counts, AABB, body 0), `[Startup] window_ms= init_ms= scene_ms= ready_ms=`. `[Scene] how=native` is ingest through GPU upload, physics, and ECS. Window creation, device init, shader compile, and IBL stay in `window_ms` and `init_ms`.
+
+**Measured** (Debug, ABeautifulGameGame, `worldScale` 10, physics on, meshopt on, WD Black SN850X, 2026-09-29): glTF ingest 6652 ms; zstd level 3 wrote 139,634,090 bytes from 592,981,340 raw bytes in 1144 ms (`write_ms` 69). Native reload: decompress 357 ms, read 592 ms, cpu 79 ms, upload 362 ms, physics 3 ms, total 1039 ms; startup `scene_ms` 1069. Census matched the glTF load (34 textures, 16 materials, 22 meshes, 40 game objects, 56 render meshes, 64 transforms, 376729 verts, 2524203 indices, 53 bodies, 11 clips, 1 skin, 23 joints, same AABB and body 0). The uncompressed cache of the same scene reloaded in 924 ms; the extra time is inflate of the decoded RGBA.
+
+Code: `src/scene/NativeScene.{h,cpp}`, `src/gfx/Engine.NativeScene.cpp`, hook in `Engine::load_scene`.
 
 ### Shader tooling (future)
 Today shaders are compiled with **`glslc`** via the CMake `compile_shaders` target. That is intentional while development is desktop-first.
@@ -158,6 +175,8 @@ See `docs/architecture/desktop-inputs.md` for the full design (singleton + user-
 
 **Rule of thumb**: Immutable or rarely-changing objects → global. Data written by the CPU and read by the GPU in the same frame → per-frame-in-flight.
 
+**Payload sizes / why / compaction:** `docs/architecture/gpu-payload.md`.
+
 ## Global Bindless Descriptor Bindings
 The single bindless descriptor set (allocated once, UPDATE_AFTER_BIND) uses these bindings. The texture array must be the highest binding number due to VARIABLE_DESCRIPTOR_COUNT requirements.
 
@@ -173,7 +192,7 @@ The single bindless descriptor set (allocated once, UPDATE_AFTER_BIND) uses thes
 | 7       | COMBINED_IMAGE_SAMPLER        | 1      | Prefiltered specular env cubemap | `gfx::IblEnvironment` |
 | 8       | COMBINED_IMAGE_SAMPLER        | 1      | BRDF integration LUT (2D) | `gfx::IblEnvironment` |
 | 9       | STORAGE_BUFFER                | 1      | Joint palettes (skin) | `SkinSystem` |
-| 10      | COMBINED_IMAGE_SAMPLER        | 1      | Directional CSM (`sampler2DArrayShadow`) | `gfx::ShadowMap` 3 layers; silhouette extra planes; reverse-Z |
+| 10      | COMBINED_IMAGE_SAMPLER        | 1      | Directional CSM (`sampler2DArrayShadow`) | `gfx::ShadowMap` 3 layers; caster-volume extra planes; reverse-Z |
 | 11      | COMBINED_IMAGE_SAMPLER        | 10000 (variable) | Bindless textures | `gfx::TextureManager`; **must** be last binding |
 
 These are written once at scene load (after `update_buffers` + `toggle` + `bind_descriptor`). Shaders will access via the indices stored in the instance/material data.

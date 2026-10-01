@@ -29,6 +29,8 @@ class MaterialManager {
     void bind_descriptor(uint32_t binding_index, VkDescriptorSet target_set);
     void toggle_buffers();
     void shutdown();
+    // Drop CPU materials only (GPU buffer storage stays). For a failed native load.
+    void clear_cpu();
 
     [[nodiscard]] uint32_t get_material_count() const { return material_count_; }
     [[nodiscard]] uint32_t get_material_flags(uint32_t material_id) const;

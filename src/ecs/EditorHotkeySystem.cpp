@@ -37,7 +37,11 @@ void editor_hotkey_system_update(const core::InputFrame& frame,
         const glm::vec3 fwd = ctx.camera->get_forward();
         LOG_INFO("[Camera] pos=(" << pos.x << ", " << pos.y << ", " << pos.z
                  << ") forward=(" << fwd.x << ", " << fwd.y << ", " << fwd.z
-                 << ")");
+                 << ")" << (ctx.camera->pose_locked ? " locked" : ""));
+        LOG_INFO("[Camera] cameraOverride paste: { \"enabled\": true, "
+                 "\"position\": [" << pos.x << ", " << pos.y << ", " << pos.z
+                 << "], \"forward\": [" << fwd.x << ", " << fwd.y << ", "
+                 << fwd.z << "] }");
     }
 
     // N: cycle glTF clips with a short crossfade (works without a player body).

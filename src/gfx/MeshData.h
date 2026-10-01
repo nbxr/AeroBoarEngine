@@ -34,6 +34,8 @@ struct MeshData {
     std::vector<MeshletDesc> meshlets;
     // GPU meshlet cone cull is bind-pose; skip for skin / morph.
     bool allow_meshlet_cull = true;
+    // Packed as UINT16 when vertex_count <= 65536 (indices 0..65535). Else UINT32.
+    bool index16 = false;
 };
 } // namespace gfx
 

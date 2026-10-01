@@ -14,7 +14,19 @@
   "shadows": {
     "enabled": true,
     "resolution": 2048,
-    "bias": 0.002
+    "bias": 0.002,
+    "depthBias": false,
+    "silhouette": true
+  },
+  "debug": {
+    "exitAfterFrames": 0,
+    "hiddenWindow": false,
+    "clearLogOnStart": true,
+    "verbose": false,
+    "logCull": false,
+    "queenShadowProbe": false,
+    "shadowMapDump": "off",
+    "shadowProbeTarget": "Queen_B"
   },
   "home": [
     {
@@ -662,20 +674,53 @@
       "enabled": false
     }
   ],
-  "cameraOverride": [
-    {
-      "position": [
-        0.23877,
-        0.0715668,
-        -0.257649
-      ],
-      "forward": [
-        -0.566242,
-        -0.136671,
-        0.812829
-      ],
-      "enabled": false
+  "cameraOverride": {
+    "enabled": false,
+    "pose": "U",
+    "A": {
+      "position": [1.15448, 1.79696, 0.49221],
+      "forward": [-0.84065, -0.541206, 0.0200931]
+    },
+    "B": {
+      "position": [1.14592, 1.80585, 0.611355],
+      "forward": [-0.834941, -0.547131, -0.0593371]
+    },
+    "P": {
+      "position": [-0.607231, 1.76588, 1.12771],
+      "forward": [0.404821, -0.520483, -0.751809]
+    },
+    "G": {
+      "position": [0.2, 1.15, -2.8],
+      "forward": [0.02, -0.18, 0.983]
+    },
+    "C": {
+      "position": [0.0953334, 1.86555, 1.49403],
+      "forward": [-0.18806, -0.586935, -0.78749]
+    },
+    "D": {
+      "position": [0.224376, 1.86002, 1.45978],
+      "forward": [-0.274088, -0.583246, -0.764657]
+    },
+    "E": {
+      "position": [1.45941, 1.48103, -0.572183],
+      "forward": [-0.825813, -0.330585, 0.456887]
+    },
+    "F": {
+      "position": [1.43031, 1.47978, -0.623171],
+      "forward": [-0.806412, -0.329754, 0.490879]
+    },
+    "S": {
+      "position": [-1.0117, 1.75021, -0.135719],
+      "forward": [0.788004, -0.510042, 0.344829]
+    },
+    "T": {
+      "position": [-1.08764, 1.70254, -0.00952265],
+      "forward": [0.838632, -0.47826, 0.260698]
+    },
+    "U": {
+      "position": [0.0395198, 1.72504, -1.50562],
+      "forward": [-0.380616, -0.49326, 0.782193]
     }
-  ],
+  },
   "environmentHdr": ""
 }

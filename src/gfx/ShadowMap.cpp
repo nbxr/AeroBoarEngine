@@ -1,10 +1,10 @@
 #include "gfx/ShadowMap.h"
+#include "gfx/BufferUtils.h"
 #include "gfx/Depth.h"
 #include "core/Log.h"
 
 #include <algorithm>
 #include <cmath>
-#include <vector>
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -38,6 +38,46 @@ void image_barrier(VkCommandBuffer cmd, VkImage image, uint32_t layers,
     vkCmdPipelineBarrier(cmd, src_st, dst_st, 0, 0, nullptr, 0, nullptr, 1, &bar);
 }
 
+// Rotation depends only on the light. The eye sits far enough on the light
+// side of `origin` that extruded casters stay in front of it. `origin` must
+// not follow the camera, or world points slide in light space and a thin
+// self-shadow pops.
+glm::mat4 stable_light_view(const glm::vec3& to_light, const glm::vec3& origin,
+                            float reach) {
+    const glm::vec3 up = (std::abs(to_light.y) > 0.99f) ? glm::vec3(1.0f, 0.0f, 0.0f)
+                                                        : glm::vec3(0.0f, 1.0f, 0.0f);
+    return glm::lookAt(origin + to_light * reach, origin, up);
+}
+
+// Snap the ortho window onto a texel grid whose size only changes in 0.25 mm
+// steps. A 1% frustum wobble then does not rescale the map.
+void snap_ortho_xy(glm::vec3& mins, glm::vec3& maxs, float resolution) {
+    constexpr float kQuantum = 0.00025f;
+    const float need = std::max(maxs.x - mins.x, maxs.y - mins.y);
+    const float raw = std::max(need / std::max(resolution, 1.0f), kQuantum);
+    float texel = std::ceil(raw / kQuantum) * kQuantum;
+    const float res = std::max(resolution, 1.0f);
+    if (texel * res < need + 2.0f * texel)
+        texel += kQuantum;
+    const float size = texel * res;
+    const float cx = std::floor((0.5f * (mins.x + maxs.x)) / texel) * texel;
+    const float cy = std::floor((0.5f * (mins.y + maxs.y)) / texel) * texel;
+    mins.x = cx - 0.5f * size;
+    maxs.x = cx + 0.5f * size;
+    mins.y = cy - 0.5f * size;
+    maxs.y = cy + 0.5f * size;
+}
+
+// GLM ortho is [0,1] depth and Y-up. Reverse-Z flips the Z row, including its
+// translation. Vulkan Y must negate both the scale and the translation;
+// negating the scale alone is only right when top == -bottom.
+void vulkan_shadow_ortho(glm::mat4& proj) {
+    proj[2][2] = -proj[2][2];
+    proj[3][2] = 1.0f - proj[3][2];
+    proj[1][1] = -proj[1][1];
+    proj[3][1] = -proj[3][1];
+}
+
 } // namespace
 
 bool ShadowMap::create_image(VkDevice device, VmaAllocator allocator, VkFormat format,
@@ -54,7 +94,8 @@ bool ShadowMap::create_image(VkDevice device, VmaAllocator allocator, VkFormat f
     info.samples = VK_SAMPLE_COUNT_1_BIT;
     info.tiling = VK_IMAGE_TILING_OPTIMAL;
     info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
-                 (sampled ? VK_IMAGE_USAGE_SAMPLED_BIT : 0);
+                 (sampled ? (VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT)
+                          : 0);
     info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
@@ -103,6 +144,26 @@ bool ShadowMap::create(VkDevice device, VmaAllocator allocator, VkFormat depth_f
         destroy(device, allocator);
         return false;
     }
+    texel_device_ = device;
+    texel_allocator_ = allocator;
+    {
+        VkBufferCreateInfo bi{};
+        bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bi.size = 4096;
+        bi.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        VmaAllocationCreateInfo ai{};
+        ai.usage = VMA_MEMORY_USAGE_AUTO;
+        ai.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT |
+                   VMA_ALLOCATION_CREATE_MAPPED_BIT;
+        if (vmaCreateBuffer(allocator, &bi, &ai, &texel_readback_.buffer,
+                            &texel_readback_.allocation,
+                            &texel_readback_.info) != VK_SUCCESS) {
+            LOG_ERROR("[Shadow] texel readback buffer failed");
+            destroy(device, allocator);
+            return false;
+        }
+        texel_readback_.mapped_data = texel_readback_.info.pMappedData;
+    }
 
     for (uint32_t i = 0; i < kShadowCascades; ++i) {
         VkImageViewCreateInfo view{};
@@ -123,8 +184,10 @@ bool ShadowMap::create(VkDevice device, VmaAllocator allocator, VkFormat depth_f
 
     VkSamplerCreateInfo sci{};
     sci.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    sci.magFilter = VK_FILTER_LINEAR;
-    sci.minFilter = VK_FILTER_LINEAR;
+    // Nearest compare: a hardware 2x2 PCF blurs a self-shadow that is only a
+    // couple of texels wide down to a gray that flickers as the camera moves.
+    sci.magFilter = VK_FILTER_NEAREST;
+    sci.minFilter = VK_FILTER_NEAREST;
     sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
     sci.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
     sci.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
@@ -193,7 +256,7 @@ bool ShadowMap::create(VkDevice device, VmaAllocator allocator, VkFormat depth_f
     if (graphics_queue != VK_NULL_HANDLE && pool != VK_NULL_HANDLE)
         one_shot_clear(device, graphics_queue, pool);
 
-    LOG_INFO("[Shadow] CSM ready " << resolution_ << "x" << resolution_ << " x"
+    LOG_VERBOSE("[Shadow] CSM ready " << resolution_ << "x" << resolution_ << " x"
                                    << kShadowCascades);
     return true;
 }
@@ -253,6 +316,9 @@ void ShadowMap::destroy(VkDevice device, VmaAllocator allocator) {
     }
     destroy_image(device, allocator, image_);
     destroy_image(device, allocator, dummy_);
+    BufferUtils::destroy_buffer(device, allocator, texel_readback_);
+    texel_allocator_ = VK_NULL_HANDLE;
+    texel_device_ = VK_NULL_HANDLE;
     resolution_ = 0;
 }
 
@@ -282,13 +348,9 @@ glm::mat4 ShadowMap::fit_view_proj(const glm::vec3& to_light, const glm::vec3& a
     glm::vec3 L = glm::normalize(to_light);
     if (!std::isfinite(L.x) || glm::length(L) < 1e-5f)
         L = glm::vec3(0.0f, 1.0f, 0.0f);
-    const glm::vec3 up =
-        (std::abs(L.y) > 0.99f) ? glm::vec3(1.0f, 0.0f, 0.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
-    const glm::vec3 center = 0.5f * (aabb_min + aabb_max);
-    const glm::vec3 ext = glm::max(aabb_max - aabb_min, glm::vec3(0.05f));
-    const float r = 0.5f * glm::length(ext);
-    const glm::vec3 eye = center + L * (r * 2.0f + 1.0f);
-    const glm::mat4 view = glm::lookAt(eye, center, up);
+    const glm::vec3 origin = 0.5f * (aabb_min + aabb_max);
+    const float reach = glm::length(aabb_max - aabb_min) + 10.0f;
+    const glm::mat4 view = stable_light_view(L, origin, reach);
 
     glm::vec3 mins(1.0e9f);
     glm::vec3 maxs(-1.0e9f);
@@ -300,31 +362,56 @@ glm::mat4 ShadowMap::fit_view_proj(const glm::vec3& to_light, const glm::vec3& a
         mins = glm::min(mins, ls);
         maxs = glm::max(maxs, ls);
     }
-    const float margin = r * 0.02f + 0.02f;
-    mins -= glm::vec3(margin);
-    maxs += glm::vec3(margin);
-
     const float res = static_cast<float>(std::max(resolution_, 1u));
-    const float texel_x = std::max(maxs.x - mins.x, 1e-3f) / res;
-    const float texel_y = std::max(maxs.y - mins.y, 1e-3f) / res;
-    mins.x = std::floor(mins.x / texel_x) * texel_x;
-    mins.y = std::floor(mins.y / texel_y) * texel_y;
-    maxs.x = mins.x + std::ceil(std::max(maxs.x - mins.x, texel_x) / texel_x) * texel_x;
-    maxs.y = mins.y + std::ceil(std::max(maxs.y - mins.y, texel_y) / texel_y) * texel_y;
+    snap_ortho_xy(mins, maxs, res);
 
     const float z_near = std::max(0.01f, -maxs.z);
     const float z_far = std::max(z_near + 0.05f, -mins.z);
     glm::mat4 proj = glm::ortho(mins.x, maxs.x, mins.y, maxs.y, z_near, z_far);
-    proj[2][2] = -proj[2][2];
-    proj[3][2] = 1.0f - proj[3][2];
-    proj[1][1] *= -1.0f;
+    vulkan_shadow_ortho(proj);
+    return proj * view;
+}
+
+glm::mat4 ShadowMap::fit_view_proj_from_corners(const glm::vec3& to_light,
+                                                const glm::vec3 corners[8],
+                                                const glm::vec3& scene_min,
+                                                const glm::vec3& scene_max) const {
+    glm::vec3 L = glm::normalize(to_light);
+    if (!std::isfinite(L.x) || glm::length(L) < 1e-5f)
+        L = glm::vec3(0.0f, 1.0f, 0.0f);
+    const glm::vec3 sext = glm::max(scene_max - scene_min, glm::vec3(0.05f));
+    const float along =
+        std::abs(L.x) * sext.x + std::abs(L.y) * sext.y + std::abs(L.z) * sext.z;
+    const glm::vec3 origin = 0.5f * (scene_min + scene_max);
+    const float reach = glm::length(sext) + along + 10.0f;
+    const glm::mat4 view = stable_light_view(L, origin, reach);
+
+    glm::vec3 mins(1.0e9f);
+    glm::vec3 maxs(-1.0e9f);
+    for (int i = 0; i < 8; ++i) {
+        const glm::vec3 p = corners[i];
+        const glm::vec3 toward = p + L * along;
+        const glm::vec3 ls0 = glm::vec3(view * glm::vec4(p, 1.0f));
+        const glm::vec3 ls1 = glm::vec3(view * glm::vec4(toward, 1.0f));
+        mins = glm::min(mins, glm::min(ls0, ls1));
+        maxs = glm::max(maxs, glm::max(ls0, ls1));
+    }
+    if (!std::isfinite(mins.x) || maxs.x - mins.x < 1e-4f || maxs.y - mins.y < 1e-4f)
+        return fit_view_proj(to_light, scene_min, scene_max);
+    const float res = static_cast<float>(std::max(resolution_, 1u));
+    snap_ortho_xy(mins, maxs, res);
+
+    const float z_near = std::max(0.01f, -maxs.z);
+    const float z_far = std::max(z_near + 0.05f, -mins.z);
+    glm::mat4 proj = glm::ortho(mins.x, maxs.x, mins.y, maxs.y, z_near, z_far);
+    vulkan_shadow_ortho(proj);
     return proj * view;
 }
 
 bool ShadowMap::frustum_corners(const glm::mat4& view_proj, glm::vec3 out[8]) {
     const glm::mat4 inv = glm::inverse(view_proj);
     int n = 0;
-    // Reverse-Z: ndc.z = 1 near, 0 far. Near first so slice mix is near→far.
+    // Reverse-Z: ndc.z = 1 near, 0 far.
     const float zs[2] = {1.0f, 0.0f};
     for (int z = 0; z < 2; ++z) {
         for (int y = -1; y <= 1; y += 2) {
@@ -338,139 +425,6 @@ bool ShadowMap::frustum_corners(const glm::mat4& view_proj, glm::vec3 out[8]) {
         }
     }
     return true;
-}
-
-void ShadowMap::slice_frustum_corners(const glm::vec3 full[8], float t0, float t1,
-                                      glm::vec3 out[8]) {
-    t0 = std::clamp(t0, 0.0f, 1.0f);
-    t1 = std::clamp(t1, 0.0f, 1.0f);
-    if (t1 < t0)
-        std::swap(t0, t1);
-    for (int i = 0; i < 4; ++i) {
-        out[i] = glm::mix(full[i], full[i + 4], t0);
-        out[i + 4] = glm::mix(full[i], full[i + 4], t1);
-    }
-}
-
-core::AABB ShadowMap::caster_bounds_from_corners(const glm::vec3 corners[8],
-                                                 const glm::vec3& to_light,
-                                                 const glm::vec3& scene_min,
-                                                 const glm::vec3& scene_max) {
-    core::AABB frustum{};
-    for (int i = 0; i < 8; ++i)
-        frustum.expand(corners[i]);
-    if (!frustum.is_valid())
-        return {scene_min, scene_max};
-
-    const glm::vec3 fext = glm::max(frustum.extents(), glm::vec3(0.05f));
-    const glm::vec3 pad = glm::max(fext * 0.02f, glm::vec3(0.05f));
-    frustum.min -= pad;
-    frustum.max += pad;
-
-    glm::vec3 L = glm::normalize(to_light);
-    if (!std::isfinite(L.x) || glm::length(L) < 1e-5f)
-        L = glm::vec3(0.0f, 1.0f, 0.0f);
-    const glm::vec3 sext = glm::max(scene_max - scene_min, glm::vec3(0.05f));
-    const float along =
-        std::abs(L.x) * sext.x + std::abs(L.y) * sext.y + std::abs(L.z) * sext.z;
-    const glm::vec3 toward = L * along;
-    frustum.expand(frustum.min + toward);
-    frustum.expand(frustum.max + toward);
-    frustum.expand(frustum.min - L * pad);
-    frustum.expand(frustum.max - L * pad);
-
-    core::AABB out{};
-    out.min = glm::max(frustum.min, scene_min);
-    out.max = glm::min(frustum.max, scene_max);
-    if (!out.is_valid())
-        return frustum;
-    return out;
-}
-
-uint32_t ShadowMap::silhouette_planes(const glm::vec3 corners[8],
-                                      const glm::vec3& to_light, glm::vec4* out,
-                                      uint32_t max_out) {
-    if (!out || max_out == 0)
-        return 0;
-    glm::vec3 L = glm::normalize(to_light);
-    if (!std::isfinite(L.x) || glm::length(L) < 1e-5f)
-        return 0;
-
-    glm::vec3 T = (std::abs(L.y) > 0.99f) ? glm::vec3(1.0f, 0.0f, 0.0f)
-                                          : glm::vec3(0.0f, 1.0f, 0.0f);
-    T = glm::normalize(glm::cross(T, L));
-    const glm::vec3 B = glm::cross(L, T);
-
-    struct Pt {
-        float x, y;
-        int idx;
-    };
-    Pt pts[8];
-    for (int i = 0; i < 8; ++i)
-        pts[i] = {glm::dot(corners[i], T), glm::dot(corners[i], B), i};
-
-    std::sort(pts, pts + 8, [](const Pt& a, const Pt& b) {
-        if (a.x != b.x)
-            return a.x < b.x;
-        return a.y < b.y;
-    });
-    auto cross2 = [](const Pt& o, const Pt& a, const Pt& b) {
-        return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
-    };
-    Pt hull[16];
-    int h = 0;
-    for (int i = 0; i < 8; ++i) {
-        while (h >= 2 && cross2(hull[h - 2], hull[h - 1], pts[i]) <= 0.0f)
-            --h;
-        hull[h++] = pts[i];
-    }
-    const int lower = h + 1;
-    for (int i = 6; i >= 0; --i) {
-        while (h >= lower && cross2(hull[h - 2], hull[h - 1], pts[i]) <= 0.0f)
-            --h;
-        hull[h++] = pts[i];
-    }
-    --h; // last == first
-    if (h < 3)
-        return 0;
-
-    // 2D interior (hull average) — the 3D frustum centroid can sit on the
-    // wrong side of a supporting plane when the pyramid is very perspective.
-    float hx = 0.0f, hy = 0.0f;
-    for (int i = 0; i < h; ++i) {
-        hx += hull[i].x;
-        hy += hull[i].y;
-    }
-    hx /= static_cast<float>(h);
-    hy /= static_cast<float>(h);
-    const glm::vec3 interior = T * hx + B * hy;
-
-    uint32_t n = 0;
-    for (int i = 0; i < h && n < max_out; ++i) {
-        const glm::vec3 a = corners[hull[i].idx];
-        const glm::vec3 b = corners[hull[(i + 1) % h].idx];
-        glm::vec3 nn = glm::cross(b - a, L);
-        const float len = glm::length(nn);
-        if (len < 1e-6f)
-            continue;
-        nn /= len;
-        if (glm::dot(nn, interior - a) < 0.0f)
-            nn = -nn;
-        // Push the plane outward so casters on the hull aren't dropped.
-        const float inflate = 0.08f + 0.02f * glm::length(b - a);
-        out[n++] = glm::vec4(nn, -glm::dot(nn, a) + inflate);
-    }
-    return n;
-}
-
-core::AABB ShadowMap::camera_caster_bounds(const glm::mat4& view_proj,
-                                           const glm::vec3& to_light,
-                                           const glm::vec3& scene_min,
-                                           const glm::vec3& scene_max) {
-    glm::vec3 corners[8];
-    if (!frustum_corners(view_proj, corners))
-        return {scene_min, scene_max};
-    return caster_bounds_from_corners(corners, to_light, scene_min, scene_max);
 }
 
 void ShadowMap::prepare(VkCommandBuffer cmd, bool from_undefined) {
@@ -525,6 +479,184 @@ void ShadowMap::finish(VkCommandBuffer cmd) {
                   VK_ACCESS_SHADER_READ_BIT,
                   VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
                   VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+}
+
+void ShadowMap::copy_texel(VkCommandBuffer cmd, uint32_t layer, uint32_t x,
+                           uint32_t y, uint32_t buffer_offset) {
+    if (image_.handle == VK_NULL_HANDLE || texel_readback_.buffer == VK_NULL_HANDLE)
+        return;
+    layer = std::min(layer, kShadowCascades - 1u);
+    x = std::min(x, resolution_ - 1u);
+    y = std::min(y, resolution_ - 1u);
+    const int32_t ox = static_cast<int32_t>(x > 0 ? x - 1 : 0);
+    const int32_t oy = static_cast<int32_t>(y > 0 ? y - 1 : 0);
+    const int32_t max_o = static_cast<int32_t>(resolution_ >= 3 ? resolution_ - 3 : 0);
+    const int32_t x0 = std::min(ox, max_o);
+    const int32_t y0 = std::min(oy, max_o);
+    image_barrier(cmd, image_.handle, kShadowCascades,
+                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                  VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_SHADER_READ_BIT,
+                  VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                  VK_PIPELINE_STAGE_TRANSFER_BIT);
+    VkBufferImageCopy region{};
+    region.bufferOffset = buffer_offset;
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    region.imageSubresource.baseArrayLayer = layer;
+    region.imageSubresource.layerCount = 1;
+    region.imageOffset = {x0, y0, 0};
+    region.imageExtent = {3, 3, 1};
+    vkCmdCopyImageToBuffer(cmd, image_.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           texel_readback_.buffer, 1, &region);
+    VkBufferMemoryBarrier bb{};
+    bb.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+    bb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    bb.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+    bb.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    bb.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    bb.buffer = texel_readback_.buffer;
+    bb.size = VK_WHOLE_SIZE;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+                         0, 0, nullptr, 1, &bb, 0, nullptr);
+    image_barrier(cmd, image_.handle, kShadowCascades,
+                  VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT,
+                  VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                  VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+}
+
+float ShadowMap::read_copied_texel() const {
+    float t[9];
+    read_copied_3x3(t);
+    return t[4];
+}
+
+void ShadowMap::read_copied_3x3(float out[9], uint32_t float_offset) const {
+    for (int i = 0; i < 9; ++i)
+        out[i] = -1.0f;
+    if (!texel_readback_.mapped_data || !texel_allocator_ ||
+        texel_readback_.allocation == VK_NULL_HANDLE)
+        return;
+    vmaInvalidateAllocation(texel_allocator_, texel_readback_.allocation, 0, 72);
+    const auto* p = static_cast<const float*>(texel_readback_.mapped_data);
+    for (int i = 0; i < 9; ++i)
+        out[i] = p[float_offset + i];
+}
+
+void ShadowMap::copy_patch(VkCommandBuffer cmd, uint32_t layer, uint32_t x,
+                           uint32_t y, uint32_t n) {
+    if (image_.handle == VK_NULL_HANDLE || n == 0 || resolution_ < n)
+        return;
+    if (!ensure_texel_buffer((VkDeviceSize)n * n * 4u) ||
+        texel_readback_.buffer == VK_NULL_HANDLE)
+        return;
+    layer = std::min(layer, kShadowCascades - 1u);
+    x = std::min(x, resolution_ - 1u);
+    y = std::min(y, resolution_ - 1u);
+    const int32_t half = static_cast<int32_t>(n / 2);
+    int32_t x0 = static_cast<int32_t>(x) - half;
+    int32_t y0 = static_cast<int32_t>(y) - half;
+    const int32_t max_o = static_cast<int32_t>(resolution_ - n);
+    x0 = std::max(0, std::min(x0, max_o));
+    y0 = std::max(0, std::min(y0, max_o));
+    image_barrier(cmd, image_.handle, kShadowCascades,
+                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                  VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_SHADER_READ_BIT,
+                  VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                  VK_PIPELINE_STAGE_TRANSFER_BIT);
+    VkBufferImageCopy region{};
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    region.imageSubresource.baseArrayLayer = layer;
+    region.imageSubresource.layerCount = 1;
+    region.imageOffset = {x0, y0, 0};
+    region.imageExtent = {n, n, 1};
+    vkCmdCopyImageToBuffer(cmd, image_.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           texel_readback_.buffer, 1, &region);
+    VkBufferMemoryBarrier bb{};
+    bb.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+    bb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    bb.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+    bb.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    bb.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    bb.buffer = texel_readback_.buffer;
+    bb.size = VK_WHOLE_SIZE;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+                         0, 0, nullptr, 1, &bb, 0, nullptr);
+    image_barrier(cmd, image_.handle, kShadowCascades,
+                  VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT,
+                  VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                  VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+}
+
+bool ShadowMap::ensure_texel_buffer(VkDeviceSize bytes) {
+    if (texel_readback_.buffer != VK_NULL_HANDLE && texel_readback_.info.size >= bytes)
+        return true;
+    if (!texel_allocator_ || !texel_device_)
+        return false;
+    BufferUtils::destroy_buffer(texel_device_, texel_allocator_, texel_readback_);
+    VkBufferCreateInfo bi{};
+    bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bi.size = bytes;
+    bi.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    VmaAllocationCreateInfo ai{};
+    ai.usage = VMA_MEMORY_USAGE_AUTO;
+    ai.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT |
+               VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    if (vmaCreateBuffer(texel_allocator_, &bi, &ai, &texel_readback_.buffer,
+                        &texel_readback_.allocation, &texel_readback_.info) != VK_SUCCESS)
+        return false;
+    texel_readback_.mapped_data = texel_readback_.info.pMappedData;
+    return true;
+}
+
+void ShadowMap::copy_layer(VkCommandBuffer cmd, uint32_t layer) {
+    if (image_.handle == VK_NULL_HANDLE || resolution_ == 0)
+        return;
+    const VkDeviceSize need =
+        (VkDeviceSize)resolution_ * (VkDeviceSize)resolution_ * 4u;
+    if (!ensure_texel_buffer(need))
+        return;
+    copy_patch(cmd, layer, resolution_ / 2, resolution_ / 2, resolution_);
+}
+
+void ShadowMap::read_patch_minmax(uint32_t n, float& mn, float& mx, uint32_t& n_hi,
+                                  float hi_lo) const {
+    uint32_t ix = 0, iy = 0;
+    read_patch_minmax(n, mn, mx, n_hi, hi_lo, &ix, &iy);
+}
+
+void ShadowMap::read_patch_minmax(uint32_t n, float& mn, float& mx, uint32_t& n_hi,
+                                  float hi_lo, uint32_t* argmax_x,
+                                  uint32_t* argmax_y) const {
+    mn = 1.0e9f;
+    mx = -1.0e9f;
+    n_hi = 0;
+    if (argmax_x)
+        *argmax_x = 0;
+    if (argmax_y)
+        *argmax_y = 0;
+    if (!texel_readback_.mapped_data || !texel_allocator_ ||
+        texel_readback_.allocation == VK_NULL_HANDLE || n == 0)
+        return;
+    const VkDeviceSize bytes = static_cast<VkDeviceSize>(n) * n * 4u;
+    vmaInvalidateAllocation(texel_allocator_, texel_readback_.allocation, 0, bytes);
+    const auto* p = static_cast<const float*>(texel_readback_.mapped_data);
+    const uint32_t count = n * n;
+    uint32_t imax = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        const float v = p[i];
+        mn = std::min(mn, v);
+        if (v > mx) {
+            mx = v;
+            imax = i;
+        }
+        if (v >= hi_lo)
+            ++n_hi;
+    }
+    if (argmax_x)
+        *argmax_x = imax % n;
+    if (argmax_y)
+        *argmax_y = imax / n;
 }
 
 } // namespace gfx

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace scene {
 
@@ -17,6 +18,7 @@ struct GameObject {
 
     uint32_t flags = 0;
     uint32_t gltf_node_index = ~0u; // debug / tooling
+    std::string name;
 };
 
 } // namespace scene

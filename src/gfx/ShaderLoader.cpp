@@ -1,8 +1,8 @@
 #include "gfx/ShaderLoader.h"
+#include "core/Log.h"
 #include <fstream>
 #include <stdexcept>
 #include <vector>
-#include <iostream>
 #include <sstream>
 #include <cstring>
 
@@ -14,7 +14,7 @@ bool gfx::load_shader_source(const std::string& filename, std::vector<unsigned i
     
     std::ifstream file(filename, std::ios::binary | std::ios::ate);
     if (!file.is_open()) {
-        std::cerr << "Failed to open shader file: " << filename << std::endl;
+        LOG_ERROR("Failed to open shader file: " << filename);
         return false;
     }
     

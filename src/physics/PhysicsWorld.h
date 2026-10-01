@@ -111,6 +111,17 @@ class PhysicsWorld {
     [[nodiscard]] bool is_body_alive(BodyHandle body) const;
     [[nodiscard]] MotionType get_motion_type(BodyHandle body) const;
 
+    // Jolt cooked-shape stamp. Native scene files store this and miss when it changes.
+    [[nodiscard]] static uint32_t jolt_binary_version();
+
+    // Cooked shape bytes plus the pose used to recreate the body (no hull rebuild).
+    struct CookedBody {
+        BodyPoseDesc pose{};
+        std::vector<uint8_t> shape_bytes;
+    };
+    bool export_cooked_bodies(std::vector<CookedBody>& out);
+    bool import_cooked_bodies(const std::vector<CookedBody>& in);
+
     [[nodiscard]] uint32_t body_count() const;
     // Highest handle index + 1 (includes destroyed slots). For iteration.
     [[nodiscard]] uint32_t body_slot_count() const;

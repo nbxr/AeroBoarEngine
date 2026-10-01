@@ -45,6 +45,34 @@ void read_mat4_accessor(const tinygltf::Model& model, int accessor_index,
 
 } // namespace
 
+void SkinSystem::install(std::vector<Skin> skins) {
+    clear();
+    total_joints_ = 0;
+    skins_.reserve(skins.size());
+    for (Skin& src : skins) {
+        Skin skin = std::move(src);
+        if (skin.joint_transform_indices.empty()) {
+            skins_.push_back(Skin{});
+            continue;
+        }
+        if (skin.inverse_bind_matrices.size() < skin.joint_transform_indices.size()) {
+            skin.inverse_bind_matrices.resize(skin.joint_transform_indices.size(),
+                                              glm::mat4(1.0f));
+        }
+        if (total_joints_ + skin.joint_transform_indices.size() > kMaxJointsTotal) {
+            LOG_ERROR("[Skin] native install exceeded kMaxJointsTotal ("
+                      << kMaxJointsTotal << ")");
+            skins_.push_back(Skin{});
+            continue;
+        }
+        skin.palette_offset = total_joints_;
+        skin.mesh_transform_index = TransformManager::kInvalid;
+        total_joints_ += static_cast<uint32_t>(skin.joint_transform_indices.size());
+        skins_.push_back(std::move(skin));
+    }
+    cpu_palette_.assign(std::max(1u, total_joints_), glm::mat4(1.0f));
+}
+
 void SkinSystem::clear() {
     skins_.clear();
     cpu_palette_.clear();
@@ -114,7 +142,7 @@ uint32_t SkinSystem::load_from_gltf(
     }
 
     cpu_palette_.assign(std::max(1u, total_joints_), glm::mat4(1.0f));
-    LOG_INFO("[Skin] Loaded " << loaded << " skin(s) (" << skins_.size()
+    LOG_VERBOSE("[Skin] Loaded " << loaded << " skin(s) (" << skins_.size()
              << " slots), " << total_joints_ << " joint(s)");
     return loaded;
 }
@@ -201,7 +229,7 @@ bool SkinSystem::create_gpu_buffers(VkDevice device, VmaAllocator allocator) {
         }
         return true;
     }
-    LOG_INFO("[Skin] GPU palette compute ready (" << total_joints_ << " joints)");
+    LOG_VERBOSE("[Skin] GPU palette compute ready (" << total_joints_ << " joints)");
     return true;
 }
 
