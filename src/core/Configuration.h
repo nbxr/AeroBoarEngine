@@ -12,9 +12,6 @@ struct DebugOptions {
     bool clear_log_on_start = false;
     bool verbose = false;
     bool log_cull = false;
-    bool queen_shadow_probe = false;
-    std::string shadow_map_dump = "off";
-    std::string shadow_probe_target = "Queen_B";
 };
 
 class Configuration {

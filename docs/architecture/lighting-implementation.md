@@ -91,7 +91,7 @@ Light-space reverse-Z ortho, texel-snapped. **Shared by both eyes later** (cyclo
 - First enabled directional (KHR or `globalLight`) casts. Other lights unshadowed. IBL unshadowed. Blend/transmission do not **cast**.
 - Frame per cascade: GPU instance cull (opaque, **whole-mesh**) → depth into array layer → then camera cull overwrites instances for shade. `GpuCullGlobals` is written with `vkCmdUpdateBuffer` so each dispatch keeps its own planes (host memcpy of the shared UBO would leave every dispatch with the camera frustum — `shadow-caster.md` §11).
 - Binding 10: `sampler2DArrayShadow`. `FrameConstants`: `shadowViewProj[3]`, `shadowSplits`, `shadowParams`, `cameraForward`, `shadowTexelWorld` (meters per texel, per cascade).
-- Compare `GREATER_OR_EQUAL`; clamp-to-border 0. **8-tap Vogel PCF**. Skip when `NdotL <= 0` or sample off-map.
+- Compare `GREATER_OR_EQUAL`; clamp-to-border 0. **8-tap Vogel PCF**. Skip when `NdotL <= 0` or the selected sample is off-map. An off-map sample stays lit; it is not replaced with another cascade.
 - Acne offset is `receiver_offset_m` in `pbr.frag`: `texel * max(0.75 * slope, 0.2)` along the light, slope from the **geometric** normal. Compare sampler is nearest; Vogel disk is half a texel so a thin pawn self-shadow is not blurred into a flickering gray. No raster slope bias and no fixed NDC bias (`shadows.bias` is unused). See `shadow-caster.md` §11.5.
 - Config: `"shadows": { "enabled", "resolution" (2048 desktop / 1024 Adreno cap), "bias" (unused), "depthBias" (**false**), "silhouette" (default **true** = caster-volume cull) }`.
 - Do **not** add a full-screen shadow mask pass (GMEM).

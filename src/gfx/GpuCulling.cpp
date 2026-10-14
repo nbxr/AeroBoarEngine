@@ -119,8 +119,6 @@ void GpuCulling::destroy(VkDevice device, VmaAllocator allocator) {
 void GpuCulling::clear_scene(VkDevice device, VmaAllocator allocator) {
     BufferUtils::destroy_buffer(device, allocator, batch_metas_);
     BufferUtils::destroy_buffer(device, allocator, meshlets_);
-    BufferUtils::destroy_buffer(device, allocator, inst_readback_);
-    inst_readback_alloc_ = VK_NULL_HANDLE;
     for (uint32_t i = 0; i < kMaxFrames; ++i) {
         BufferUtils::destroy_buffer(device, allocator, cull_items_[i]);
         BufferUtils::destroy_buffer(device, allocator, worlds_[i]);
@@ -401,36 +399,13 @@ bool GpuCulling::build_scene(VkDevice device, VmaAllocator allocator,
         memset(meshlets_.mapped_data, 0, static_cast<size_t>(meshlets_bytes));
     }
 
-    {
-        const VkDeviceSize rb_bytes = std::max<VkDeviceSize>(
-            sizeof(DrawInstanceGPU),
-            static_cast<VkDeviceSize>(instance_slot_count_) * sizeof(DrawInstanceGPU));
-        VkBufferCreateInfo bi{};
-        bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        bi.size = rb_bytes;
-        bi.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-        VmaAllocationCreateInfo ai{};
-        ai.usage = VMA_MEMORY_USAGE_AUTO;
-        ai.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT |
-                   VMA_ALLOCATION_CREATE_MAPPED_BIT;
-        inst_readback_alloc_ = allocator;
-        if (vmaCreateBuffer(allocator, &bi, &ai, &inst_readback_.buffer,
-                            &inst_readback_.allocation, &inst_readback_.info) != VK_SUCCESS) {
-            LOG_ERROR("[GpuCulling] instance readback buffer failed");
-            inst_readback_alloc_ = VK_NULL_HANDLE;
-        } else {
-            inst_readback_.mapped_data = inst_readback_.info.pMappedData;
-        }
-    }
-
     for (uint32_t f = 0; f < kMaxFrames; ++f) {
         if (!BufferUtils::initialize_buffer(device, allocator, items_bytes,
                                             cull_items_[f]) ||
             !BufferUtils::initialize_buffer(device, allocator, worlds_bytes,
                                             worlds_[f]) ||
             !BufferUtils::initialize_buffer(
-                device, allocator, out_bytes, out_instances_[f],
-                VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                device, allocator, out_bytes, out_instances_[f], 0,
                 gpu_only_instances ? BufferUtils::BufferResidency::GpuOnly
                                    : BufferUtils::BufferResidency::HostWrite)) {
             LOG_ERROR("[GpuCulling] Failed to create per-frame cull item/instance buffers");
@@ -680,16 +655,22 @@ void GpuCulling::record(VkCommandBuffer cmd, uint32_t frame_index,
         for (uint32_t i = 0; i < g.extra_plane_count; ++i)
             g.extra_planes[i] = extra_planes[i];
     }
-    // One UBO per FIF/pass. Host memcpy during recording is overwritten by the
-    // next record() in this CB (cas0 → cas1 → cas2 → camera) before submit, so
-    // every dispatch would read the last upload. UpdateBuffer is on the GPU
-    // timeline — same reason batch counts are FillBuffer, not host memset.
+    // One UBO per FIF/pass, written with vkCmdUpdateBuffer (not a host memcpy):
+    // cas0 → cas1 → cas2 → camera share it and the upload must stay on the GPU
+    // timeline. The same record() also refills the instance SSBO and indirect
+    // commands. The previous draw in this CB read those from the vertex and
+    // draw-indirect stages. The shadow render pass has no external dependency,
+    // so this barrier is what orders those reads ahead of the overwrite.
     VkMemoryBarrier to_xfer{};
     to_xfer.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
     to_xfer.srcAccessMask = VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_SHADER_READ_BIT |
-                            VK_ACCESS_SHADER_WRITE_BIT;
+                            VK_ACCESS_SHADER_WRITE_BIT |
+                            VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
     to_xfer.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+    vkCmdPipelineBarrier(cmd,
+                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |
+                             VK_PIPELINE_STAGE_VERTEX_SHADER_BIT |
+                             VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
                          VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &to_xfer, 0, nullptr, 0,
                          nullptr);
 
@@ -887,93 +868,6 @@ uint32_t GpuCulling::read_visible_count(uint32_t frame_index) const {
             sum += counts[i];
     }
     return sum;
-}
-
-void GpuCulling::copy_opaque_instances(VkCommandBuffer cmd, uint32_t frame_index) {
-    if (!ready_ || frame_index >= kMaxFrames || inst_readback_.buffer == VK_NULL_HANDLE ||
-        out_instances_[frame_index].buffer == VK_NULL_HANDLE || instance_slot_count_ == 0)
-        return;
-    const VkDeviceSize bytes = static_cast<VkDeviceSize>(instance_slot_count_) *
-                               sizeof(DrawInstanceGPU);
-    VkBufferMemoryBarrier to_xfer{};
-    to_xfer.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-    to_xfer.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
-    to_xfer.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-    to_xfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    to_xfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    to_xfer.buffer = out_instances_[frame_index].buffer;
-    to_xfer.size = bytes;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |
-                                  VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
-                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 1, &to_xfer, 0,
-                         nullptr);
-    VkBufferCopy region{};
-    region.size = bytes;
-    vkCmdCopyBuffer(cmd, out_instances_[frame_index].buffer, inst_readback_.buffer, 1,
-                    &region);
-    VkBufferMemoryBarrier to_host{};
-    to_host.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-    to_host.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    to_host.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
-    to_host.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    to_host.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    to_host.buffer = inst_readback_.buffer;
-    to_host.size = bytes;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
-                         0, 0, nullptr, 1, &to_host, 0, nullptr);
-    VkBufferMemoryBarrier to_vs{};
-    to_vs.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-    to_vs.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-    to_vs.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    to_vs.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    to_vs.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    to_vs.buffer = out_instances_[frame_index].buffer;
-    to_vs.size = bytes;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, 0, 0, nullptr, 1, &to_vs, 0,
-                         nullptr);
-}
-
-bool GpuCulling::lookup_transform(uint32_t transform_index, uint32_t& batch,
-                                  uint32_t& base, uint32_t& capacity) const {
-    for (const auto& item : cpu_items_) {
-        if (item.skin.w != transform_index)
-            continue;
-        batch = item.meta.y;
-        base = item.meta.z;
-        capacity = item.meta.w;
-        return true;
-    }
-    return false;
-}
-
-glm::vec3 GpuCulling::world_translation(uint32_t frame_index,
-                                        uint32_t transform_index) const {
-    if (frame_index >= kMaxFrames || !worlds_[frame_index].mapped_data ||
-        transform_index >= world_count_)
-        return glm::vec3(1.0e9f);
-    const auto* w = static_cast<const glm::mat4*>(worlds_[frame_index].mapped_data);
-    return glm::vec3(w[transform_index][3]);
-}
-
-uint32_t GpuCulling::count_copied_models_near(const glm::vec3& translation,
-                                              float eps) const {
-    if (!inst_readback_.mapped_data || !inst_readback_alloc_ ||
-        inst_readback_.allocation == VK_NULL_HANDLE || instance_slot_count_ == 0)
-        return 0;
-    const VkDeviceSize bytes = static_cast<VkDeviceSize>(instance_slot_count_) *
-                               sizeof(DrawInstanceGPU);
-    vmaInvalidateAllocation(inst_readback_alloc_, inst_readback_.allocation, 0, bytes);
-    const auto* inst = static_cast<const DrawInstanceGPU*>(inst_readback_.mapped_data);
-    uint32_t n = 0;
-    const float e2 = eps * eps;
-    for (uint32_t i = 0; i < instance_slot_count_; ++i) {
-        const glm::vec3 p(inst[i].model[3]);
-        const glm::vec3 d = p - translation;
-        if (glm::dot(d, d) <= e2)
-            ++n;
-    }
-    return n;
 }
 
 } // namespace gfx

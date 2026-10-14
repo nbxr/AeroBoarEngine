@@ -180,14 +180,6 @@ class GpuCulling {
     };
     [[nodiscard]] MeshletStats read_meshlet_stats(uint32_t frame_index) const;
 
-    void copy_opaque_instances(VkCommandBuffer cmd, uint32_t frame_index);
-    [[nodiscard]] uint32_t count_copied_models_near(const glm::vec3& translation,
-                                                    float eps) const;
-    [[nodiscard]] bool lookup_transform(uint32_t transform_index, uint32_t& batch,
-                                        uint32_t& base, uint32_t& capacity) const;
-    [[nodiscard]] glm::vec3 world_translation(uint32_t frame_index,
-                                              uint32_t transform_index) const;
-
   private:
     static constexpr uint32_t kMaxFrames = 2;
 
@@ -223,8 +215,6 @@ class GpuCulling {
     std::array<std::array<AllocatedBuffer, kCullPassCount>, kMaxFrames> cull_globals_{};
     std::array<std::array<AllocatedBuffer, kCullPassCount>, kMaxFrames> batch_counts_{};
     std::array<AllocatedBuffer, kMaxFrames> out_instances_{};
-    AllocatedBuffer inst_readback_{};
-    VmaAllocator inst_readback_alloc_ = VK_NULL_HANDLE;
     std::array<std::array<AllocatedBuffer, kCullPassCount>, kMaxFrames> indirect_cmds_{};
     AllocatedBuffer meshlets_{};
     std::array<std::array<AllocatedBuffer, kCullPassCount>, kMaxFrames> meshlet_cmds_{};

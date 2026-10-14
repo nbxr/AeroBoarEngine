@@ -241,11 +241,11 @@ float sample_shadow(vec3 worldPos, vec3 L, float NdotL, float NdotLGeom) {
     if (c0 < 2u)
         t = clamp((vz - (hi - band)) / max(band, 1e-3), 0.0, 1.0);
 
-    if (a < 0.0 && b < 0.0) {
-        vec3 p2 = worldPos + L * receiver_offset_m(2u, NdotLGeom);
-        float c = sample_cascade_map(p2, 2u);
-        return c >= 0.0 ? c : 1.0;
-    }
+    // Off-map stays lit. A miss is not a reason to sample a coarser cascade:
+    // the receiver offset can push a finer-map UV just outside [0,1], and
+    // cascade 2 stores a different texel grid.
+    if (a < 0.0 && b < 0.0)
+        return 1.0;
     if (a < 0.0)
         return b;
     if (b < 0.0)

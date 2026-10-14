@@ -82,7 +82,7 @@ Update the `home` paths for your platform(s) before running. The `scenes[].filen
 - Optional Tracy: `cmake --preset windows-vs2026 -DAERO_TRACY=ON` then capture with the **v0.14.1** Tracy GUI (port 8086). CPU `CpuScope` zones, `FrameMark`, Vulkan GPU zones — `src/core/Profiler.h`.
 - Desktop overlay HUD (`HudTextPass`) shows frame-stats (busy/wait, EMA, auto units). **F4** toggles. See `docs/agents/tech_context.md`.
 - Check `docs/agents/current_state.md` for the latest implementation status and focus areas.
-- Shadow / CSM debug: `docs/architecture/shadow-caster.md` §11. `cameraOverride` + **P** freeze a pose; `debug.queenShadowProbe` / `shadowMapDump` in `configuration.json`. CWD is `build/`. Do not pad caster-volume planes.
+- Shadow / CSM: `docs/architecture/shadow-caster.md` §11. `cameraOverride` + **P** freeze a pose. CWD is `build/`. Do not pad caster-volume planes. The in-engine shadow probe and the offline probe programs have been removed.
 
 ## 4. Instructions for AI Agents
 

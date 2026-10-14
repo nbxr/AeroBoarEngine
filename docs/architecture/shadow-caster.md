@@ -116,7 +116,7 @@ Implemented in `gfx::build_caster_volume` (`ShadowCasterVolume.cpp`). Wiring: `l
 
 ## 11. Shadow troubleshooting log
 
-Pickup file for CSM / caster-volume work. Algorithm is §1–10. **This section is the status, harness, closed bugs, and next steps.** Date of last update: 2026-09-20.
+Pickup file for CSM / caster-volume work. Algorithm is §1–10. **This section is the status, harness, closed bugs, and next steps.** Date of last update: 2026-09-29.
 
 **Policy (do not regress):** implement the volume faithfully. If it still fails, that is a research problem — do not “fix” it with pads. Rejected: % pad on planes, nested `0..s0` ranges, small-scene one-map, union-all-casters, skip-frustum as emit-all, treating grazing near/far as front, post-hoc plane filters, depth clamp as a volume substitute.
 
@@ -124,10 +124,10 @@ Pickup file for CSM / caster-volume work. Algorithm is §1–10. **This section 
 
 | | State |
 |--|--------|
-| **Works** | Caster-volume construction (§2–5). Reverse-Z CSM, PCF, texel-snap ortho, GPU extra-plane cull. Off-screen Queen_B A/B (§11.3). On-screen pawn receivers vs cut pyramid (§11.4). Receiver acne offset in **meters per texel** (§11.5), so pawn shadow strength does not track cascade depth range. |
-| **Broken** | Nothing measured. Re-open from an on-screen `BAD` census line, or a locked pose where self-shadow / board contact still vanishes after §11.5. |
+| **Works** | Caster-volume construction (§2–5). Reverse-Z CSM, PCF, texel-snap ortho, GPU extra-plane cull. Off-screen Queen_B A/B (§11.3). On-screen pawn receivers vs cut pyramid (§11.4). Receiver acne offset in **meters per texel** (§11.5), so pawn shadow strength does not track cascade depth range. Cascade draws wait for vertex and draw-indirect before the next cull overwrites the instance buffer (§11.6). An off-map shadow sample stays lit; it does not fall through to cascade 2. |
+| **Broken** | Nothing measured. Re-open from a locked pose where self-shadow or board contact still vanishes after §11.5. |
 | **Not started** | TCF, CascadeBake / far-cascade cache, spot atlas. |
-| **As left in the repo** | `cameraOverride.enabled=false` (fly). Poses **A**, **B** (Queen), **P** (boom census), **G** (low far view). `shadows.depthBias=false`. Probe/dump off, window visible. |
+| **As left in the repo** | `cameraOverride.enabled=false` (fly). Poses **A**, **B** (Queen), **P** (boom census), **G** (low far view). `shadows.depthBias=false`. Window visible. The shadow probe and offline probe programs are gone. |
 
 ### 11.2 Harness (run this, do not invent a parallel path)
 
@@ -143,9 +143,6 @@ Pickup file for CSM / caster-volume work. Algorithm is §1–10. **This section 
 
 | Key | Role |
 |-----|------|
-| `queenShadowProbe` | Once per process, if `pose_locked`: `[ShadowProbe]` for `shadowProbeTarget` (default `Queen_B`). CPU extra-planes + ortho6, item `ti/batch/base/cap`, GPU instance count near translation. |
-| `shadowMapDump` | `off` / `texel` (HEAD 3×3) / `patch17` / `layer` (full 2048², ~16 MB hitch). Needs `pose_locked`. |
-| `shadowProbeTarget` | GameObject `name`. Queen_B is the chess queen. Pawn bodies are opaque; glass `Pawn_Top_*` is transmission and **does not cast**. |
 | `exitAfterFrames` / `hiddenWindow` | Headless A/B (`12` / `true` is enough). Restore `0` / `false` after. |
 | `clearLogOnStart` | Truncate `aero_boar.log` on boot. |
 | `verbose` / `logCull` | Load chatter / `[Cull]` lines. Keep off unless needed. Errors and P/F3/F4 stay `LOG_INFO`. |
@@ -156,12 +153,13 @@ Pickup file for CSM / caster-volume work. Algorithm is §1–10. **This section 
 cmake --build --preset windows-debug --target Aero_Boar_Engine
 # CWD = build/
 .\Debug\Aero_Boar_Engine.exe
-# grep [ShadowProbe] and [Camera] Override in aero_boar.log
 ```
+
+The in-engine `[ShadowProbe]` logger, shadow-map readback, and the offline programs `tools/shadow_volume_probe.cpp` / `tools/queen_ab_probe.cpp` were removed once the measured failures were closed. The tables below are that record. Do not reintroduce a probe to "check" a hunch; a new failure needs a new measurement, not the old harness.
 
 Flip `"pose": "A"` ↔ `"B"` in **both** source JSON and `build/assets/scenes/configuration.json` if you skip the copy target.
 
-**How to read `[ShadowProbe]`**
+**Historical `[ShadowProbe]` lines** (the logger that printed these is gone)
 
 - `R.board` = head projected along `L_shadow = -to_light` onto AABB min.y (board). `shade_i` = cascade `pbr.frag` would sample (`dot(p-cam, forward)` vs splits, 18% blend).
 - Per cascade: `pyr` = R in cut pyramid; `vol` = C AABB vs `last_caster`; `mapC`/`mapR` = AABB/point in shadow NDC; `head_uvz` from `last_view_proj * head` (ZCLIP if z∉[0,1]).
@@ -176,15 +174,14 @@ Flip `"pose": "A"` ↔ `"B"` in **both** source JSON and `build/assets/scenes/co
 | Piece | Where |
 |-------|--------|
 | Volume | `src/gfx/ShadowCasterVolume.{h,cpp}` |
-| Map / readback | `src/gfx/ShadowMap.{h,cpp}` (`last_view_proj`, `last_receiver_vp`, `last_caster`) |
+| Map | `src/gfx/ShadowMap.{h,cpp}` (`last_view_proj`, `last_receiver_vp`, `last_caster`) |
 | GPU cull + UBO | `src/gfx/GpuCulling.{h,cpp}`, `shaders/cull_frustum.comp` |
-| Probe + cascade loop | `src/gfx/Engine.Render.cpp` |
+| Cascade loop | `src/gfx/Engine.Render.cpp` |
 | Cut pyramids | `src/gfx/Engine.InitializeScene.cpp` |
 | Shadow raster / `depthBias` | `src/gfx/Engine.InitializePipeline.cpp` |
 | Shade cascade pick | `shaders/pbr.frag` (`kShadowSplitBlend=0.18`) |
 | Override / lock | `src/AeroBoar.cpp`, `FpsMoveSystem`, `DesktopMoveSystem`, `Camera::pose_locked` |
 | P paste | `src/ecs/EditorHotkeySystem.cpp` |
-| Offline plane dump | `tools/shadow_volume_probe.cpp`, `tools/queen_ab_probe.cpp` |
 
 `GpuCullGlobals` std140 (asserted): `skip_frustum_cull` @ 204, `extra_planes` @ 208, sizeof 464.
 
@@ -231,7 +228,7 @@ An **earlier** A/B pair (not in current JSON) used pos ≈ `(0.536, 2.123, 0.665
 
 **After the fix:** on-screen `Pawn_Body_W1`–`W6` are `pyr=1 vol=1 mapC=1 mapR=1` at feet, far, and past. Off-screen pawns still fail a side plane; they are not receivers. Queen_B poses A and B still GPU-count 1 with HEAD 3×3 equal to `head_z` (texel y shifted because the ortho refit).
 
-**If a cut comes back:** `shadowProbeTarget=pawns`, pose P (or a new **P**-key pose). An on-screen line tagged `BAD` is the next product. Do not pad. Queen regression: poses A/B, probe + `texel`; B HEAD must stay ~`head_z`, and `record()` must still `vkCmdUpdateBuffer`.
+**If a cut comes back:** freeze the view with **P** / `cameraOverride` (pose P is the boom census). Do not pad. Queen regression: poses A/B, and `record()` must still `vkCmdUpdateBuffer`.
 
 ### 11.5 Closed — pawn shadow strength changed with camera angle
 
@@ -261,3 +258,11 @@ Texel size only went from 0.6 mm (cas0) to 3–4 mm (cas2). The compare bias did
 **Follow-up (self-shadow pops between two nearby poses):** poses **C** and **D** in `cameraOverride`. `Pawn_Body_W4` is the on-screen pawn. Its feet stay in cascade 1, but the blend toward cascade 2 is **0.97** at C (shadow gone) and **0.68** at D (shadow visible). The pawn is in both volumes (`vol=6`). Cascade 2’s texel is ~4.5 mm, so the two-texel bias is ~9 mm and lifts the self-shadow; cascade 1’s bias is ~4 mm and keeps it. `mix` was dissolving the good sample into the lifted one. In the split band the shader now keeps `min` of the two compares (darker wins). Past the split only the coarser map remains, so detail smaller than that texel can still drop.
 
 **Poses E / F** (shadow looked present, then missing): the crosshair pawn is `Pawn_Body_B2`. It is cascade 2 in both, 2.5 m inside that volume, and the contact texel stores the pawn (F: 0.417 vs board 0.386). That shadow is in the map. The pawn nearest the barbarian is `Pawn_Body_W4` (bottom of this frame). Cascade 2’s tightest plane is **-9 mm** at E (still inside the 2 cm test) and **-45 mm** at F (culled). Its contact is cascade 1 in both, and that map still stores the pawn (F: 0.212 vs board 0.162). Do not pad cascade 2 to keep W4.
+
+### 11.6 Closed — cascade buffer race, off-map sample
+
+**Buffer race.** Each cascade culls into one opaque instance buffer and one indirect-command buffer, then draws. The next cascade's `GpuCulling::record` overwrites both. The shadow render pass has no external subpass dependency. `record` waited only on compute, so a GPU that overlaps the next dispatch with the previous draw could shade cascade 0 or 1 from a list the following cull had already started replacing. The depth prepass has the same shape: draw, then the Hi-Z cull refills the same buffers.
+
+**Fix:** the barrier at the start of `record` now sources `VERTEX_SHADER` and `DRAW_INDIRECT` as well as compute, with `INDIRECT_COMMAND_READ` in the source access. That orders the previous draw's reads ahead of `vkCmdUpdateBuffer` / `vkCmdFillBuffer`, and the existing transfer→compute barrier orders those ahead of the refill. The handoff after the last cascade (`Engine.Render.cpp`) includes draw-indirect too.
+
+**Off-map sample.** `sample_shadow` treated "both selected cascades missed the map" as a cue to sample cascade 2. A receiver offset can push a finer-map UV just outside `[0,1]` while the coarse map still contains that point, so the pixel took the wrong depth. A miss now stays lit (`1`). A hit on only one of the two selected cascades still uses that hit.

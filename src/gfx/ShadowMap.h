@@ -3,8 +3,6 @@
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_RADIANS
 
-#include "core/AABB.h"
-#include "gfx/AllocatedBuffer.h"
 #include "gfx/AllocatedImage.h"
 #include "gfx/ShadowCasterVolume.h"
 #include <cstdint>
@@ -49,22 +47,6 @@ class ShadowMap {
     void end(VkCommandBuffer cmd);
     void finish(VkCommandBuffer cmd);
 
-    // After finish(): copy one depth texel (cascade layer) for CPU read after fence.
-    void copy_texel(VkCommandBuffer cmd, uint32_t layer, uint32_t x, uint32_t y,
-                    uint32_t buffer_offset = 0);
-    void copy_patch(VkCommandBuffer cmd, uint32_t layer, uint32_t x, uint32_t y,
-                    uint32_t n);
-    void copy_layer(VkCommandBuffer cmd, uint32_t layer);
-    [[nodiscard]] float read_copied_texel() const;
-    void read_copied_3x3(float out[9], uint32_t float_offset = 0) const;
-    void read_patch_minmax(uint32_t n, float& mn, float& mx, uint32_t& n_hi,
-                           float hi_lo) const;
-    void read_patch_minmax(uint32_t n, float& mn, float& mx, uint32_t& n_hi,
-                           float hi_lo, uint32_t* argmax_x, uint32_t* argmax_y) const;
-    [[nodiscard]] const float* texel_readback_data() const {
-        return static_cast<const float*>(texel_readback_.mapped_data);
-    }
-
     [[nodiscard]] bool is_ready() const { return framebuffer_[0] != VK_NULL_HANDLE; }
     [[nodiscard]] uint32_t resolution() const { return resolution_; }
     [[nodiscard]] float texel_uv() const {
@@ -93,15 +75,10 @@ class ShadowMap {
                       VkImageViewType view_type, bool sampled) const;
     bool one_shot_clear(VkDevice device, VkQueue queue, VkCommandPool pool);
 
-    bool ensure_texel_buffer(VkDeviceSize bytes);
-
     uint32_t resolution_ = 0;
     VkFormat format_ = VK_FORMAT_UNDEFINED;
-    VkDevice texel_device_ = VK_NULL_HANDLE;
     AllocatedImage image_{};
     AllocatedImage dummy_{};
-    AllocatedBuffer texel_readback_{};
-    VmaAllocator texel_allocator_ = VK_NULL_HANDLE;
     VkImageView layer_view_[kShadowCascades]{};
     VkSampler sampler_ = VK_NULL_HANDLE;
     VkRenderPass render_pass_ = VK_NULL_HANDLE;

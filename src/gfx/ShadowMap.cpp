@@ -1,5 +1,4 @@
 #include "gfx/ShadowMap.h"
-#include "gfx/BufferUtils.h"
 #include "gfx/Depth.h"
 #include "core/Log.h"
 
@@ -94,8 +93,7 @@ bool ShadowMap::create_image(VkDevice device, VmaAllocator allocator, VkFormat f
     info.samples = VK_SAMPLE_COUNT_1_BIT;
     info.tiling = VK_IMAGE_TILING_OPTIMAL;
     info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
-                 (sampled ? (VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT)
-                          : 0);
+                 (sampled ? VK_IMAGE_USAGE_SAMPLED_BIT : 0);
     info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
@@ -144,27 +142,6 @@ bool ShadowMap::create(VkDevice device, VmaAllocator allocator, VkFormat depth_f
         destroy(device, allocator);
         return false;
     }
-    texel_device_ = device;
-    texel_allocator_ = allocator;
-    {
-        VkBufferCreateInfo bi{};
-        bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        bi.size = 4096;
-        bi.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-        VmaAllocationCreateInfo ai{};
-        ai.usage = VMA_MEMORY_USAGE_AUTO;
-        ai.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT |
-                   VMA_ALLOCATION_CREATE_MAPPED_BIT;
-        if (vmaCreateBuffer(allocator, &bi, &ai, &texel_readback_.buffer,
-                            &texel_readback_.allocation,
-                            &texel_readback_.info) != VK_SUCCESS) {
-            LOG_ERROR("[Shadow] texel readback buffer failed");
-            destroy(device, allocator);
-            return false;
-        }
-        texel_readback_.mapped_data = texel_readback_.info.pMappedData;
-    }
-
     for (uint32_t i = 0; i < kShadowCascades; ++i) {
         VkImageViewCreateInfo view{};
         view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -316,9 +293,6 @@ void ShadowMap::destroy(VkDevice device, VmaAllocator allocator) {
     }
     destroy_image(device, allocator, image_);
     destroy_image(device, allocator, dummy_);
-    BufferUtils::destroy_buffer(device, allocator, texel_readback_);
-    texel_allocator_ = VK_NULL_HANDLE;
-    texel_device_ = VK_NULL_HANDLE;
     resolution_ = 0;
 }
 
@@ -479,184 +453,6 @@ void ShadowMap::finish(VkCommandBuffer cmd) {
                   VK_ACCESS_SHADER_READ_BIT,
                   VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
                   VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
-}
-
-void ShadowMap::copy_texel(VkCommandBuffer cmd, uint32_t layer, uint32_t x,
-                           uint32_t y, uint32_t buffer_offset) {
-    if (image_.handle == VK_NULL_HANDLE || texel_readback_.buffer == VK_NULL_HANDLE)
-        return;
-    layer = std::min(layer, kShadowCascades - 1u);
-    x = std::min(x, resolution_ - 1u);
-    y = std::min(y, resolution_ - 1u);
-    const int32_t ox = static_cast<int32_t>(x > 0 ? x - 1 : 0);
-    const int32_t oy = static_cast<int32_t>(y > 0 ? y - 1 : 0);
-    const int32_t max_o = static_cast<int32_t>(resolution_ >= 3 ? resolution_ - 3 : 0);
-    const int32_t x0 = std::min(ox, max_o);
-    const int32_t y0 = std::min(oy, max_o);
-    image_barrier(cmd, image_.handle, kShadowCascades,
-                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                  VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_SHADER_READ_BIT,
-                  VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                  VK_PIPELINE_STAGE_TRANSFER_BIT);
-    VkBufferImageCopy region{};
-    region.bufferOffset = buffer_offset;
-    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-    region.imageSubresource.baseArrayLayer = layer;
-    region.imageSubresource.layerCount = 1;
-    region.imageOffset = {x0, y0, 0};
-    region.imageExtent = {3, 3, 1};
-    vkCmdCopyImageToBuffer(cmd, image_.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                           texel_readback_.buffer, 1, &region);
-    VkBufferMemoryBarrier bb{};
-    bb.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-    bb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    bb.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
-    bb.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    bb.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    bb.buffer = texel_readback_.buffer;
-    bb.size = VK_WHOLE_SIZE;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
-                         0, 0, nullptr, 1, &bb, 0, nullptr);
-    image_barrier(cmd, image_.handle, kShadowCascades,
-                  VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT,
-                  VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                  VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
-}
-
-float ShadowMap::read_copied_texel() const {
-    float t[9];
-    read_copied_3x3(t);
-    return t[4];
-}
-
-void ShadowMap::read_copied_3x3(float out[9], uint32_t float_offset) const {
-    for (int i = 0; i < 9; ++i)
-        out[i] = -1.0f;
-    if (!texel_readback_.mapped_data || !texel_allocator_ ||
-        texel_readback_.allocation == VK_NULL_HANDLE)
-        return;
-    vmaInvalidateAllocation(texel_allocator_, texel_readback_.allocation, 0, 72);
-    const auto* p = static_cast<const float*>(texel_readback_.mapped_data);
-    for (int i = 0; i < 9; ++i)
-        out[i] = p[float_offset + i];
-}
-
-void ShadowMap::copy_patch(VkCommandBuffer cmd, uint32_t layer, uint32_t x,
-                           uint32_t y, uint32_t n) {
-    if (image_.handle == VK_NULL_HANDLE || n == 0 || resolution_ < n)
-        return;
-    if (!ensure_texel_buffer((VkDeviceSize)n * n * 4u) ||
-        texel_readback_.buffer == VK_NULL_HANDLE)
-        return;
-    layer = std::min(layer, kShadowCascades - 1u);
-    x = std::min(x, resolution_ - 1u);
-    y = std::min(y, resolution_ - 1u);
-    const int32_t half = static_cast<int32_t>(n / 2);
-    int32_t x0 = static_cast<int32_t>(x) - half;
-    int32_t y0 = static_cast<int32_t>(y) - half;
-    const int32_t max_o = static_cast<int32_t>(resolution_ - n);
-    x0 = std::max(0, std::min(x0, max_o));
-    y0 = std::max(0, std::min(y0, max_o));
-    image_barrier(cmd, image_.handle, kShadowCascades,
-                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                  VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_SHADER_READ_BIT,
-                  VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                  VK_PIPELINE_STAGE_TRANSFER_BIT);
-    VkBufferImageCopy region{};
-    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-    region.imageSubresource.baseArrayLayer = layer;
-    region.imageSubresource.layerCount = 1;
-    region.imageOffset = {x0, y0, 0};
-    region.imageExtent = {n, n, 1};
-    vkCmdCopyImageToBuffer(cmd, image_.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                           texel_readback_.buffer, 1, &region);
-    VkBufferMemoryBarrier bb{};
-    bb.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-    bb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    bb.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
-    bb.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    bb.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    bb.buffer = texel_readback_.buffer;
-    bb.size = VK_WHOLE_SIZE;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
-                         0, 0, nullptr, 1, &bb, 0, nullptr);
-    image_barrier(cmd, image_.handle, kShadowCascades,
-                  VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT,
-                  VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                  VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
-}
-
-bool ShadowMap::ensure_texel_buffer(VkDeviceSize bytes) {
-    if (texel_readback_.buffer != VK_NULL_HANDLE && texel_readback_.info.size >= bytes)
-        return true;
-    if (!texel_allocator_ || !texel_device_)
-        return false;
-    BufferUtils::destroy_buffer(texel_device_, texel_allocator_, texel_readback_);
-    VkBufferCreateInfo bi{};
-    bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bi.size = bytes;
-    bi.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-    VmaAllocationCreateInfo ai{};
-    ai.usage = VMA_MEMORY_USAGE_AUTO;
-    ai.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT |
-               VMA_ALLOCATION_CREATE_MAPPED_BIT;
-    if (vmaCreateBuffer(texel_allocator_, &bi, &ai, &texel_readback_.buffer,
-                        &texel_readback_.allocation, &texel_readback_.info) != VK_SUCCESS)
-        return false;
-    texel_readback_.mapped_data = texel_readback_.info.pMappedData;
-    return true;
-}
-
-void ShadowMap::copy_layer(VkCommandBuffer cmd, uint32_t layer) {
-    if (image_.handle == VK_NULL_HANDLE || resolution_ == 0)
-        return;
-    const VkDeviceSize need =
-        (VkDeviceSize)resolution_ * (VkDeviceSize)resolution_ * 4u;
-    if (!ensure_texel_buffer(need))
-        return;
-    copy_patch(cmd, layer, resolution_ / 2, resolution_ / 2, resolution_);
-}
-
-void ShadowMap::read_patch_minmax(uint32_t n, float& mn, float& mx, uint32_t& n_hi,
-                                  float hi_lo) const {
-    uint32_t ix = 0, iy = 0;
-    read_patch_minmax(n, mn, mx, n_hi, hi_lo, &ix, &iy);
-}
-
-void ShadowMap::read_patch_minmax(uint32_t n, float& mn, float& mx, uint32_t& n_hi,
-                                  float hi_lo, uint32_t* argmax_x,
-                                  uint32_t* argmax_y) const {
-    mn = 1.0e9f;
-    mx = -1.0e9f;
-    n_hi = 0;
-    if (argmax_x)
-        *argmax_x = 0;
-    if (argmax_y)
-        *argmax_y = 0;
-    if (!texel_readback_.mapped_data || !texel_allocator_ ||
-        texel_readback_.allocation == VK_NULL_HANDLE || n == 0)
-        return;
-    const VkDeviceSize bytes = static_cast<VkDeviceSize>(n) * n * 4u;
-    vmaInvalidateAllocation(texel_allocator_, texel_readback_.allocation, 0, bytes);
-    const auto* p = static_cast<const float*>(texel_readback_.mapped_data);
-    const uint32_t count = n * n;
-    uint32_t imax = 0;
-    for (uint32_t i = 0; i < count; ++i) {
-        const float v = p[i];
-        mn = std::min(mn, v);
-        if (v > mx) {
-            mx = v;
-            imax = i;
-        }
-        if (v >= hi_lo)
-            ++n_hi;
-    }
-    if (argmax_x)
-        *argmax_x = imax % n;
-    if (argmax_y)
-        *argmax_y = imax / n;
 }
 
 } // namespace gfx
