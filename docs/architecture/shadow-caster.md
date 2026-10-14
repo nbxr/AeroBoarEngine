@@ -124,7 +124,7 @@ Pickup file for CSM / caster-volume work. Algorithm is §1–10. **This section 
 
 | | State |
 |--|--------|
-| **Works** | Caster-volume construction (§2–5). Reverse-Z CSM, PCF, texel-snap ortho, GPU extra-plane cull. Off-screen Queen_B A/B (§11.3). On-screen pawn receivers vs cut pyramid (§11.4). Receiver acne offset in **meters per texel** (§11.5), so pawn shadow strength does not track cascade depth range. Cascade draws wait for vertex and draw-indirect before the next cull overwrites the instance buffer (§11.6). An off-map shadow sample stays lit; it does not fall through to cascade 2. |
+| **Works** | Caster-volume construction (§2–5). Reverse-Z CSM, PCF, texel-snap ortho, GPU extra-plane cull. Off-screen Queen_B A/B (§11.3). On-screen pawn receivers vs cut pyramid (§11.4). Receiver acne offset in **meters per texel** (§11.5), so pawn shadow strength does not track cascade depth range. Cascade draws wait for vertex and draw-indirect before the next cull overwrites the instance buffer (§11.6). The shaded cascade is the view-depth slice, and those slices are equal thirds of the scene in front of the camera (§11.7). |
 | **Broken** | Nothing measured. Re-open from a locked pose where self-shadow or board contact still vanishes after §11.5. |
 | **Not started** | TCF, CascadeBake / far-cascade cache, spot atlas. |
 | **As left in the repo** | `cameraOverride.enabled=false` (fly). Poses **A**, **B** (Queen), **P** (boom census), **G** (low far view). `shadows.depthBias=false`. Window visible. The shadow probe and offline probe programs are gone. |
@@ -179,7 +179,7 @@ Flip `"pose": "A"` ↔ `"B"` in **both** source JSON and `build/assets/scenes/co
 | Cascade loop | `src/gfx/Engine.Render.cpp` |
 | Cut pyramids | `src/gfx/Engine.InitializeScene.cpp` |
 | Shadow raster / `depthBias` | `src/gfx/Engine.InitializePipeline.cpp` |
-| Shade cascade pick | `shaders/pbr.frag` (`kShadowSplitBlend=0.18`) |
+| Shade cascade pick | `shaders/pbr.frag` — view-depth slice only (§11.7) |
 | Override / lock | `src/AeroBoar.cpp`, `FpsMoveSystem`, `DesktopMoveSystem`, `Camera::pose_locked` |
 | P paste | `src/ecs/EditorHotkeySystem.cpp` |
 
@@ -265,4 +265,16 @@ Texel size only went from 0.6 mm (cas0) to 3–4 mm (cas2). The compare bias did
 
 **Fix:** the barrier at the start of `record` now sources `VERTEX_SHADER` and `DRAW_INDIRECT` as well as compute, with `INDIRECT_COMMAND_READ` in the source access. That orders the previous draw's reads ahead of `vkCmdUpdateBuffer` / `vkCmdFillBuffer`, and the existing transfer→compute barrier orders those ahead of the refill. The handoff after the last cascade (`Engine.Render.cpp`) includes draw-indirect too.
 
-**Off-map sample.** `sample_shadow` treated "both selected cascades missed the map" as a cue to sample cascade 2. A receiver offset can push a finer-map UV just outside `[0,1]` while the coarse map still contains that point, so the pixel took the wrong depth. A miss now stays lit (`1`). A hit on only one of the two selected cascades still uses that hit.
+**Off-map sample.** `sample_shadow` treated "both selected cascades missed the map" as a cue to sample cascade 2. A receiver offset can push a finer-map UV just outside `[0,1]` while the coarse map still contains that point, so the pixel took the wrong depth. Superseded by §11.7: the shader walks cascades from fine to coarse and keeps the first map that contains the receiver.
+
+### 11.7 Closed — coarse cascade drawn over the table
+
+**Symptom:** shadows stayed present, but the texel size was the coarse map. The table looked like it was shaded from cascade 2.
+
+**Cause:** two selections stacked. PSSM `kLambda = 0.7` packs resolution at the clip near plane. That plane is centimetres of empty space (`Camera` near is clamped, then `worldScale`d), and the table is metres along the view, so cascade 0 covered air at well under a millimetre and the table fell in cascade 1 or 2 (about 2–5 mm). Inside the split band the shader also took `min` of the selected map and the next coarser one, so the coarse texel was displayed for the last 0.35 m of the finer cascade as well.
+
+**What the force-finest test showed.** Sampling only cascade 0 made the texel small where that map covered the surface, and the shadow vanished as the camera turned. The table's view-depth was past cascade 0, so the slice that owned it was a wide far map (pixelated). Forcing the near map samples a rectangle the table is outside of, and the compare misses.
+
+Starting the slices at the nearest AABB corner made this worse. Anything closer than that corner was still labeled cascade 0, but the map began at the corner, so those receivers were off the map and the shadow dropped.
+
+**Fix:** cascade 0 runs from the clip near plane to just past the view-depth of the scene center (`focus`, then `max(focus + 0.5 m, focus * 1.35)`). The subject, and everything between it and the lens, is inside that map. The far face of the map is the subject, so the texels stay small. Past that, cascades 1 and 2 split the remainder out to the farthest scene corner. `sample_shadow` uses the view-depth slice only. |

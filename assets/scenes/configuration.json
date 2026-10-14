@@ -13,7 +13,7 @@
   "meshletCull": true,
   "shadows": {
     "enabled": true,
-    "resolution": 2048,
+    "resolution": 4096,
     "bias": 0.002,
     "depthBias": false,
     "silhouette": true

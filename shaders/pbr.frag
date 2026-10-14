@@ -211,52 +211,28 @@ float receiver_offset_m(uint cascade, float NdotLGeom) {
 float sample_shadow(vec3 worldPos, vec3 L, float NdotL, float NdotLGeom) {
     if (globals.shadowParams.y < 0.5 || NdotL <= 0.0)
         return 1.0;
+    // The cascade is the view-depth slice. That is the map whose caster volume
+    // included the occluders. A finer map can still contain this point in
+    // light space and compare lit, because those occluders were never drawn
+    // into it. Do not search finer maps, and do not mix in the next coarser
+    // texel: that mix is what made the table look pixelated.
     vec3 fwd = globals.cameraForward.xyz;
     float vz = max(dot(worldPos - globals.cameraPosition.xyz, fwd), 0.0);
     float split0 = globals.shadowSplits.x;
     float split1 = globals.shadowSplits.y;
     uint ncas = uint(globals.shadowSplits.w + 0.5);
-    if (ncas < 2u) {
-        vec3 p = worldPos + L * receiver_offset_m(0u, NdotLGeom);
-        float s = sample_cascade_map(p, 0u);
-        return s >= 0.0 ? s : 1.0;
-    }
-
-    uint c0 = 2u;
-    if (vz < split0)
+    if (ncas < 1u)
+        ncas = 1u;
+    if (ncas > 3u)
+        ncas = 3u;
+    uint c0 = ncas - 1u;
+    if (ncas > 1u && vz < split0)
         c0 = 0u;
-    else if (vz < split1)
+    else if (ncas > 2u && vz < split1)
         c0 = 1u;
-    uint c1 = min(c0 + 1u, 2u);
-    vec3 p0 = worldPos + L * receiver_offset_m(c0, NdotLGeom);
-    vec3 p1 = worldPos + L * receiver_offset_m(c1, NdotLGeom);
-    float a = sample_cascade_map(p0, c0);
-    float b = sample_cascade_map(p1, c1);
-    float hi = split0;
-    if (c0 == 1u)
-        hi = split1;
-    // Must match gfx::kShadowSplitBlend / kShadowSplitBlendMin (receiver overlap).
-    float band = max(hi * 0.18, 0.35);
-    float t = 0.0;
-    if (c0 < 2u)
-        t = clamp((vz - (hi - band)) / max(band, 1e-3), 0.0, 1.0);
-
-    // Off-map stays lit. A miss is not a reason to sample a coarser cascade:
-    // the receiver offset can push a finer-map UV just outside [0,1], and
-    // cascade 2 stores a different texel grid.
-    if (a < 0.0 && b < 0.0)
-        return 1.0;
-    if (a < 0.0)
-        return b;
-    if (b < 0.0)
-        return a;
-    // Outside the split band, the selected cascade only. Inside it, both maps
-    // cover this receiver; the coarser one lifts thin self-shadows (larger
-    // texel bias). mix() was fading those out as the camera crossed the band
-    // (Pawn_Body_W4 feet blend 0.97 vs 0.68). Keep the darker sample.
-    if (t <= 0.0)
-        return a;
-    return min(a, b);
+    vec3 p = worldPos + L * receiver_offset_m(c0, NdotLGeom);
+    float s = sample_cascade_map(p, c0);
+    return s >= 0.0 ? s : 1.0;
 }
 
 void main() {

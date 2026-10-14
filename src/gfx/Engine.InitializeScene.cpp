@@ -732,38 +732,38 @@ void gfx::Engine::write_frame_lighting(uint32_t frame_index,
         const float npl = std::max(camera.near_plane, 0.01f);
         const glm::vec3 cam_p = camera.get_position();
         const glm::vec3 cam_f = camera.get_forward();
-        float max_vz = npl;
+        // Far bound is the farthest scene corner in front of the camera, not
+        // the camera far plane (~1 km). The fine slice still starts at the
+        // clip near plane: a slice that starts at the nearest corner leaves
+        // every closer receiver outside that map, so the shadow drops.
+        float content_far = npl;
         for (int i = 0; i < 8; ++i) {
             const glm::vec3 p = glm::vec3((i & 1) ? scene.max.x : scene.min.x,
                                           (i & 2) ? scene.max.y : scene.min.y,
                                           (i & 4) ? scene.max.z : scene.min.z);
-            max_vz = std::max(max_vz, glm::dot(p - cam_p, cam_f));
+            content_far = std::max(content_far, glm::dot(p - cam_p, cam_f));
         }
-        // Last receiver distance = farthest scene corner along the view, not
-        // camera far (~1 km) which would make a tabletop map ~1 texel.
         const float cam_far = std::max(camera.far_plane, npl + 1.0f);
-        const float fpl = std::min(cam_far, std::max(max_vz, npl + 1.0f));
-        constexpr float kLambda = 0.7f;
-        auto split_at = [&](float p) {
-            const float uni = npl + (fpl - npl) * p;
-            const float logv = npl * std::pow(fpl / npl, p);
-            return glm::mix(uni, logv, kLambda);
-        };
-        float s0 = split_at(1.0f / 3.0f);
-        float s1 = split_at(2.0f / 3.0f);
+        content_far = std::min(cam_far, std::max(content_far, npl + 1.0f));
+        // Look-at depth. The fine map ends just past this, so its far face is
+        // the subject and not the far corner of the scene. Everything from
+        // the lens to that face stays on cascade 0.
+        float focus = glm::dot(renderer.scene_center - cam_p, cam_f);
+        focus = std::clamp(focus, npl + 0.25f, content_far);
+        float s0 = std::min(content_far, std::max(focus + 0.5f, focus * 1.35f));
+        float s1 = s0 + 0.5f * (content_far - s0);
         if (s1 <= s0)
-            s1 = std::min(fpl, s0 + 0.05f);
+            s1 = std::min(content_far, s0 + 0.05f);
         const float band0 =
             std::max(s0 * gfx::kShadowSplitBlend, gfx::kShadowSplitBlendMin);
         const float band1 =
             std::max(s1 * gfx::kShadowSplitBlend, gfx::kShadowSplitBlendMin);
-        // Cut pyramids: cascade 0 = near..s0; 1 and 2 overlap the blend band
-        // so receivers that sample two maps are inside both receiver volumes.
-        // Far-cascade casters still include near objects via the caster volume
-        // (front planes dropped) — do not nest 0..s0 / 0..s1.
+        // Cascade 0: clip near .. just past the subject. Do not start it at
+        // the nearest AABB corner. Cascades 1 and 2 overlap the blend band.
+        // Do not nest 0..s0 / 0..s1.
         const float z0[gfx::kShadowCascades] = {npl, std::max(npl, s0 - band0),
                                                 std::max(npl, s1 - band1)};
-        const float z1[gfx::kShadowCascades] = {s0, s1, fpl};
+        const float z1[gfx::kShadowCascades] = {s0, s1, content_far};
 
         float aspect = 16.0f / 9.0f;
         if (renderer.vk.swap_chain_extent.height > 0)
@@ -790,7 +790,7 @@ void gfx::Engine::write_frame_lighting(uint32_t frame_index,
             ++active;
         }
         constants->shadowSplits =
-            glm::vec4(s0, s1, fpl, static_cast<float>(active));
+            glm::vec4(s0, s1, content_far, static_cast<float>(active));
         constants->shadowTexelWorld = glm::vec4(0.0f);
         const float res = static_cast<float>(std::max(1u, renderer.shadow_map.resolution()));
         for (uint32_t c = 0; c < active && c < gfx::kShadowCascades; ++c) {
